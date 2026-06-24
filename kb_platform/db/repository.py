@@ -100,11 +100,58 @@ class Repository:
         with session_scope(self.engine) as s:
             return list(s.scalars(select(Unit).where(Unit.step_id == step_id)))
 
-    def set_unit_succeeded(self, unit_id: int, result: str) -> None:
+    def set_unit_succeeded(self, unit_id: int, *, input_hash: str | None = None, cost_json: str | None = None, llm_raw_output: str | None = None) -> None:
         with session_scope(self.engine) as s:
             u = s.get(Unit, unit_id)
             u.status = UnitStatus.SUCCEEDED
-            u.result = result
+            u.input_hash, u.cost_json, u.llm_raw_output = input_hash, cost_json, llm_raw_output
+
+    def set_unit_failed(self, unit_id: int, error: str) -> None:
+        with session_scope(self.engine) as s:
+            u = s.get(Unit, unit_id)
+            u.status = UnitStatus.FAILED
+            u.error = error
+
+    def reset_unit_to_pending(self, unit_id: int) -> None:
+        with session_scope(self.engine) as s:
+            u = s.get(Unit, unit_id)
+            u.status = UnitStatus.PENDING
+            u.error = None
+
+    def reset_failed_units_to_pending(self, step_id: int) -> int:
+        with session_scope(self.engine) as s:
+            units = list(s.scalars(select(Unit).where(Unit.step_id == step_id, Unit.status == UnitStatus.FAILED)))
+            for u in units:
+                u.status = UnitStatus.PENDING
+                u.error = None
+            return len(units)
+
+    def get_unit_by_subject(self, step_id: int, subject_type: str, subject_id: str) -> Unit | None:
+        with session_scope(self.engine) as s:
+            return s.scalar(
+                select(Unit).where(
+                    Unit.step_id == step_id,
+                    Unit.subject_type == subject_type,
+                    Unit.subject_id == subject_id,
+                )
+            )
+
+    def add_unit(self, step_id: int, subject_type: str, subject_id: str) -> Unit:
+        with session_scope(self.engine) as s:
+            u = Unit(step_id=step_id, subject_type=subject_type, subject_id=subject_id, status=UnitStatus.PENDING, attempt_no=0)
+            s.add(u)
+            s.flush()
+            return u
+
+    def set_unit_running(self, unit_id: int) -> None:
+        with session_scope(self.engine) as s:
+            u = s.get(Unit, unit_id)
+            u.status = UnitStatus.RUNNING
+            u.attempt_no += 1
+
+    def mark_needs_reconsolidation(self, unit_id: int) -> None:
+        with session_scope(self.engine) as s:
+            s.get(Unit, unit_id).needs_reconsolidation = True
 
     def set_unit_failed(self, unit_id: int, error: str) -> None:
         with session_scope(self.engine) as s:

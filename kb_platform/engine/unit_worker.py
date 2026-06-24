@@ -58,7 +58,7 @@ class UnitWorker:
                 text = chunk.text if chunk else ""
             result = await self.adapter.extract_chunk(unit.subject_id, text)
             self._persist_extraction(unit.subject_id, result)  # 持久化,供结算/重试汇集
-            self.repo.set_unit_succeeded(unit.id, f"{len(result.entities)} entities")
+            self.repo.set_unit_succeeded(unit.id, llm_raw_output=f"{len(result.entities)} entities")
         except Exception as e:  # noqa: BLE001
             logger.warning("unit %s failed: %s", unit.id, e)
             self.repo.set_unit_failed(unit.id, str(e))

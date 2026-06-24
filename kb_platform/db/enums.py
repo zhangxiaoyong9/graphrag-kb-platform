@@ -33,6 +33,8 @@ class UnitStatus(StrEnum):
 
 class UnitKind(StrEnum):
     EXTRACT_GRAPH = "extract_graph"
+    SUMMARIZE_DESCRIPTIONS = "summarize_descriptions"
+    COMMUNITY_REPORT = "community_report"
 
 
 _TRANSITIONS: dict[StrEnum, set[StrEnum]] = {
