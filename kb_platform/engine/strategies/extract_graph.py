@@ -22,7 +22,7 @@ class ExtractGraphStrategy:
         pending = []
         for c in chunks:
             u = repo.get_unit_by_subject(step.id, "chunk", c.chunk_id)
-            if u is None or u.status != UnitStatus.SUCCEEDED:
+            if u is None or u.status == UnitStatus.PENDING:
                 pending.append(Subject("chunk", c.chunk_id))
         return pending or None
 

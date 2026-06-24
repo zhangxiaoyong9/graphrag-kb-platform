@@ -152,23 +152,3 @@ class Repository:
     def mark_needs_reconsolidation(self, unit_id: int) -> None:
         with session_scope(self.engine) as s:
             s.get(Unit, unit_id).needs_reconsolidation = True
-
-    def set_unit_failed(self, unit_id: int, error: str) -> None:
-        with session_scope(self.engine) as s:
-            u = s.get(Unit, unit_id)
-            u.status = UnitStatus.FAILED
-            u.error = error
-
-    def reset_unit_to_pending(self, unit_id: int) -> None:
-        with session_scope(self.engine) as s:
-            u = s.get(Unit, unit_id)
-            u.status = UnitStatus.PENDING
-            u.error = None
-
-    def reset_failed_units_to_pending(self, step_id: int) -> int:
-        with session_scope(self.engine) as s:
-            units = list(s.scalars(select(Unit).where(Unit.step_id == step_id, Unit.status == UnitStatus.FAILED)))
-            for u in units:
-                u.status = UnitStatus.PENDING
-                u.error = None
-            return len(units)

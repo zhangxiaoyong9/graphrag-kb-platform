@@ -24,12 +24,7 @@ class UnitWorker:
 
     async def run_unit_fanout(self, step, min_success_ratio: float = 1.0) -> None:
         strategy = STRATEGIES[step.name]
-        # Process one batch of pending (non-succeeded) units, then finalize.
-        # Idempotency across retries is provided by next_units_batch, which
-        # skips subjects whose unit already SUCCEEDED; a fresh run_unit_fanout
-        # call re-queries and re-runs only the still-pending/failed units.
-        batch = strategy.next_units_batch(self.repo, step)
-        if batch is not None:
+        while (batch := strategy.next_units_batch(self.repo, step)) is not None:
             await self._run_batch(strategy, step, batch)
         status = strategy.finalize(self.repo, self.adapter, step, self.data_root, min_success_ratio)
         self.repo.set_step_status(step.id, status)
