@@ -38,3 +38,10 @@ async def test_orchestrator_runs_pipeline_and_writes_parquet(setup):
     assert not entities.empty
     job2 = repo.get_job(job.id)
     assert job2.status == "succeeded"
+
+
+def test_plan_has_six_steps():
+    from kb_platform.engine.orchestrator import Orchestrator
+
+    names = [s.name for s in Orchestrator.plan()]
+    assert names == ["chunk_documents", "extract_graph", "summarize_descriptions", "finalize_graph", "create_communities", "community_reports"]

@@ -19,14 +19,21 @@ class Orchestrator:
 
     @staticmethod
     def plan() -> list[StepSpec]:
-        return [StepSpec("chunk_documents", StepKind.ATOMIC), StepSpec("extract_graph", StepKind.UNIT_FANOUT)]
+        return [
+            StepSpec("chunk_documents", StepKind.ATOMIC),
+            StepSpec("extract_graph", StepKind.UNIT_FANOUT),
+            StepSpec("summarize_descriptions", StepKind.UNIT_FANOUT),
+            StepSpec("finalize_graph", StepKind.ATOMIC),
+            StepSpec("create_communities", StepKind.ATOMIC),
+            StepSpec("community_reports", StepKind.UNIT_FANOUT),
+        ]
 
-    async def run(self, job_id: int) -> None:
+    async def run(self, job_id: int, min_success_ratio: float = 1.0) -> None:
         self.repo.set_job_status(job_id, JobStatus.RUNNING)
         try:
             for step in self.repo.get_steps(job_id):
-                await self._run_step(step)
-                if step.status != StepStatus.SUCCEEDED:
+                await self._run_step(step, min_success_ratio)
+                if self.repo.get_step(step.id).status != StepStatus.SUCCEEDED:
                     self.repo.set_job_status(job_id, JobStatus.FAILED)
                     return
             self.repo.set_job_status(job_id, JobStatus.SUCCEEDED)
@@ -35,22 +42,25 @@ class Orchestrator:
             self.repo.set_job_status(job_id, JobStatus.FAILED)
             raise
 
-    async def _run_step(self, step) -> None:
+    async def _run_step(self, step, min_success_ratio: float) -> None:
         self.repo.set_step_status(step.id, StepStatus.RUNNING)
-        from kb_platform.engine.unit_worker import UnitWorker
-
         if step.kind == StepKind.ATOMIC:
             await self._run_atomic(step)
         else:
+            from kb_platform.engine.unit_worker import UnitWorker
+
             worker = UnitWorker(repo=self.repo, adapter=self.adapter, data_root=self.data_root)
-            await worker.run_unit_fanout(step)
-        # 重新读取 step 状态(worker 已结算)
-        fresh = self.repo.get_step(step.id)
-        step.status = fresh.status
+            await worker.run_unit_fanout(step, min_success_ratio=min_success_ratio)
 
     async def _run_atomic(self, step) -> None:
+        from kb_platform.engine import atomic_steps
+
         if step.name == "chunk_documents":
             await self._chunk_documents(step)
+        elif step.name == "finalize_graph":
+            atomic_steps.finalize_graph(self.repo, self.adapter, step)
+        elif step.name == "create_communities":
+            atomic_steps.create_communities(self.repo, self.adapter, step)
         else:
             msg = f"unknown atomic step: {step.name}"
             raise ValueError(msg)
