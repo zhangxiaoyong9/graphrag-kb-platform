@@ -5,7 +5,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import selectinload
 
 from kb_platform.db.engine import session_scope
-from kb_platform.db.enums import JobStatus, StepKind, StepStatus, UnitStatus
+from kb_platform.db.enums import JobStatus, StepStatus, UnitStatus
 from kb_platform.db.models import Chunk, Document, Job, Step, Unit
 from kb_platform.engine.spec import StepSpec
 
@@ -57,11 +57,11 @@ class Repository:
             list(job.steps)
             return job
 
-    def get_job(self, job_id: int) -> Job:
+    def get_job(self, job_id: int) -> Job | None:
         with session_scope(self.engine) as s:
             return s.scalars(
                 select(Job).where(Job.id == job_id).options(selectinload(Job.steps))
-            ).one()
+            ).one_or_none()
 
     def get_step(self, step_id: int) -> Step:
         with session_scope(self.engine) as s:

@@ -2,7 +2,7 @@
 
 import pandas as pd  # noqa: F401  (kept for parity with brief / future assertions)
 
-from kb_platform.graph.graphrag_adapter import GraphRagAdapter, build_default_adapter
+from kb_platform.graph.graphrag_adapter import build_default_adapter
 
 # graphrag extraction output structured format (## delimits records, <|> delimits fields)
 CANNED = (

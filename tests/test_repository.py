@@ -1,7 +1,7 @@
 import pytest
 
 from kb_platform.db.engine import create_engine, session_scope
-from kb_platform.db.enums import StepKind, StepStatus, UnitStatus
+from kb_platform.db.enums import StepKind, UnitStatus
 from kb_platform.db.models import Base, KnowledgeBase, Chunk
 from kb_platform.db.repository import Repository
 from kb_platform.engine.spec import StepSpec

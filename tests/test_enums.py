@@ -2,7 +2,6 @@ import pytest
 
 from kb_platform.db.enums import (
     JobStatus,
-    StepStatus,
     UnitStatus,
     allowed_transitions,
     transition,

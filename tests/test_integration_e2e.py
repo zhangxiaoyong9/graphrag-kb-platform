@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 
 from kb_platform.db.engine import create_engine, session_scope
-from kb_platform.db.enums import StepKind, UnitStatus
+from kb_platform.db.enums import UnitStatus
 from kb_platform.db.models import Base, KnowledgeBase
 from kb_platform.db.repository import Repository
 from kb_platform.engine.orchestrator import Orchestrator
