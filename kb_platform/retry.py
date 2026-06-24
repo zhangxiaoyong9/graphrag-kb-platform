@@ -1,6 +1,6 @@
 """Manual retry of failed units and steps."""
 
-from kb_platform.db.enums import StepStatus
+from kb_platform.db.enums import StepStatus, UnitStatus
 from kb_platform.db.repository import Repository
 from kb_platform.engine.unit_worker import UnitWorker
 from kb_platform.graph.adapter import GraphAdapter
@@ -28,5 +28,12 @@ class RetryService:
     async def rerun_step(self, step_id: int) -> None:
         """Re-run a unit_fanout step's pending units and re-settle."""
         step = self.repo.get_step(step_id)
+        already_succeeded = self.repo.get_step(step_id).status == StepStatus.SUCCEEDED
         worker = self._worker_cls(repo=self.repo, adapter=self.adapter, data_root=self.data_root, concurrency=self.concurrency)
         await worker.run_unit_fanout(step)
+        if already_succeeded:
+            # A unit that succeeds only after its step was already finalized
+            # means downstream artifacts (communities/reports) are now stale.
+            for u in self.repo.list_units(step_id):
+                if u.status == UnitStatus.SUCCEEDED and u.attempt_no > 1:
+                    self.repo.mark_needs_reconsolidation(u.id)
