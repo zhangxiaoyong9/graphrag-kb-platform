@@ -40,7 +40,7 @@ class SummarizeDescriptionsStrategy:
             n = self._desc_count(desc)
             if n > 1:
                 u = repo.get_unit_by_subject(step.id, "entity", row["title"])
-                if u is None or u.status != UnitStatus.SUCCEEDED:
+                if u is None or u.status == UnitStatus.PENDING:
                     pending.append(Subject("entity", row["title"]))
         return pending or None
 
