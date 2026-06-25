@@ -51,10 +51,11 @@ class JobCreated(BaseModel):
 
 
 class UnitProgress(BaseModel):
-    total: int
-    done: int
+    pending: int
+    running: int
+    succeeded: int
     failed: int
-    ratio: float
+    total: int
 
 
 class StepOut(BaseModel):
