@@ -255,3 +255,202 @@ def test_last_succeeded_input_hash_isolated_per_kb(tmp_path):
     # has_succeeded_input_hash is also kb-scoped: kb=2 sees only its own hash.
     assert repo.has_succeeded_input_hash(2, "summarize_descriptions", "kb2-hash") is True
     assert repo.has_succeeded_input_hash(2, "summarize_descriptions", "kb1-hash") is False
+
+
+def test_job_cost_aggregates_by_step_and_model(tmp_path):
+    import json
+
+    from kb_platform.db.engine import create_engine, session_scope
+    from kb_platform.db.enums import JobStatus, StepStatus, UnitKind, UnitStatus
+    from kb_platform.db.models import Base, Job, KnowledgeBase, Step, Unit
+    from kb_platform.db.repository import Repository
+
+    engine = create_engine(f"sqlite:///{tmp_path}/db.sqlite")
+    Base.metadata.create_all(engine)
+    repo = Repository(engine)
+    with session_scope(repo.engine) as s:
+        s.add(KnowledgeBase(id=1, name="k", settings_json="{}", data_root=str(tmp_path)))
+        s.flush()
+        s.add(Job(id=1, kb_id=1, type="full", status=JobStatus.SUCCEEDED))
+        s.add(
+            Step(
+                id=10,
+                job_id=1,
+                name="extract_graph",
+                ordinal=0,
+                kind="unit_fanout",
+                status=StepStatus.SUCCEEDED,
+            )
+        )
+        s.add(
+            Step(
+                id=11,
+                job_id=1,
+                name="summarize_descriptions",
+                ordinal=1,
+                kind="unit_fanout",
+                status=StepStatus.SUCCEEDED,
+            )
+        )
+        s.flush()
+        s.add(
+            Unit(
+                step_id=10,
+                kind=UnitKind.EXTRACT_GRAPH,
+                subject_type="chunk",
+                subject_id="c1",
+                status=UnitStatus.SUCCEEDED,
+                cost_json=json.dumps(
+                    {
+                        "items": [
+                            {
+                                "model": "deepseek-chat",
+                                "prompt_tokens": 100,
+                                "completion_tokens": 20,
+                                "estimated_cost_usd": 0.01,
+                            }
+                        ],
+                        "total_usd": 0.01,
+                    }
+                ),
+            )
+        )
+        s.add(
+            Unit(
+                step_id=11,
+                kind=UnitKind.SUMMARIZE_DESCRIPTIONS,
+                subject_type="entity",
+                subject_id="E",
+                status=UnitStatus.SUCCEEDED,
+                cost_json=json.dumps(
+                    {
+                        "items": [
+                            {
+                                "model": "deepseek-chat",
+                                "prompt_tokens": 40,
+                                "completion_tokens": 10,
+                                "estimated_cost_usd": 0.004,
+                            }
+                        ],
+                        "total_usd": 0.004,
+                    }
+                ),
+            )
+        )
+        s.add(
+            Unit(
+                step_id=11,
+                kind=UnitKind.SUMMARIZE_DESCRIPTIONS,
+                subject_type="entity",
+                subject_id="F",
+                status=UnitStatus.SUCCEEDED,
+                cost_json=None,
+            )
+        )
+        s.flush()
+    out = repo.job_cost(1)
+    assert out["total_usd"] == 0.014
+    assert out["by_step"]["extract_graph"] == 0.01
+    assert out["by_step"]["summarize_descriptions"] == 0.004
+    assert out["by_model"]["deepseek-chat"]["prompt_tokens"] == 140
+    assert out["by_model"]["deepseek-chat"]["usd"] == 0.014
+
+
+def test_kb_cost_aggregates_across_jobs(tmp_path):
+    """Two jobs under one KB: kb_cost totals both, and by_job breaks them out."""
+    import json
+
+    from kb_platform.db.engine import create_engine, session_scope
+    from kb_platform.db.enums import JobStatus, StepStatus, UnitKind, UnitStatus
+    from kb_platform.db.models import Base, Job, KnowledgeBase, Step, Unit
+    from kb_platform.db.repository import Repository
+
+    engine = create_engine(f"sqlite:///{tmp_path}/db.sqlite")
+    Base.metadata.create_all(engine)
+    repo = Repository(engine)
+    with session_scope(repo.engine) as s:
+        s.add(KnowledgeBase(id=1, name="k", settings_json="{}", data_root=str(tmp_path)))
+        s.flush()
+        # Job 1: one extract_graph unit costing 0.02
+        s.add(Job(id=1, kb_id=1, type="full", status=JobStatus.SUCCEEDED))
+        s.add(
+            Step(
+                id=10,
+                job_id=1,
+                name="extract_graph",
+                ordinal=0,
+                kind="unit_fanout",
+                status=StepStatus.SUCCEEDED,
+            )
+        )
+        s.flush()
+        s.add(
+            Unit(
+                step_id=10,
+                kind=UnitKind.EXTRACT_GRAPH,
+                subject_type="chunk",
+                subject_id="c1",
+                status=UnitStatus.SUCCEEDED,
+                cost_json=json.dumps(
+                    {
+                        "items": [
+                            {
+                                "model": "deepseek-chat",
+                                "prompt_tokens": 200,
+                                "completion_tokens": 50,
+                                "estimated_cost_usd": 0.02,
+                            }
+                        ],
+                        "total_usd": 0.02,
+                    }
+                ),
+            )
+        )
+        # Job 2: one summarize_descriptions unit costing 0.005
+        s.add(Job(id=2, kb_id=1, type="incremental", status=JobStatus.SUCCEEDED))
+        s.add(
+            Step(
+                id=20,
+                job_id=2,
+                name="summarize_descriptions",
+                ordinal=0,
+                kind="unit_fanout",
+                status=StepStatus.SUCCEEDED,
+            )
+        )
+        s.flush()
+        s.add(
+            Unit(
+                step_id=20,
+                kind=UnitKind.SUMMARIZE_DESCRIPTIONS,
+                subject_type="entity",
+                subject_id="E",
+                status=UnitStatus.SUCCEEDED,
+                cost_json=json.dumps(
+                    {
+                        "items": [
+                            {
+                                "model": "deepseek-chat",
+                                "prompt_tokens": 60,
+                                "completion_tokens": 15,
+                                "estimated_cost_usd": 0.005,
+                            }
+                        ],
+                        "total_usd": 0.005,
+                    }
+                ),
+            )
+        )
+        s.flush()
+    out = repo.kb_cost(1)
+    # Overall totals sum both jobs
+    assert out["total_usd"] == 0.025
+    assert out["by_step"]["extract_graph"] == 0.02
+    assert out["by_step"]["summarize_descriptions"] == 0.005
+    # by_model aggregates tokens across both jobs
+    assert out["by_model"]["deepseek-chat"]["prompt_tokens"] == 260
+    assert out["by_model"]["deepseek-chat"]["completion_tokens"] == 65
+    assert out["by_model"]["deepseek-chat"]["usd"] == 0.025
+    # by_job breaks out per-job totals
+    assert out["by_job"][1] == 0.02
+    assert out["by_job"][2] == 0.005

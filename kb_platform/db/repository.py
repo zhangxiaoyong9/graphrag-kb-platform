@@ -336,3 +336,92 @@ class Repository:
             return {"last_heartbeat_at": None, "stale": False}
         stale = (datetime.now() - row).total_seconds() > stale_seconds
         return {"last_heartbeat_at": row.isoformat(), "stale": stale}
+
+    # ---- cost aggregation ----
+    @staticmethod
+    def _sum_cost(rows):
+        """Aggregate ``Unit.cost_json`` rows into a cost summary dict.
+
+        ``rows`` is an iterable of ``(step_name, cost_json_str)`` tuples (the
+        ``cost_json_str`` may be ``None`` for non-LLM units, which are skipped).
+
+        Returns ``{total_usd, by_step:{name:usd}, by_model:{model:{prompt_tokens,
+        completion_tokens, usd}}}``. A ``None`` ``estimated_cost_usd`` (or
+        ``total_usd``) latches that model's ``usd`` (and the overall total) to
+        ``None`` — the caller sees "unknown" rather than a misleading zero.
+        """
+        import json
+
+        total = 0.0
+        known = True
+        by_step: dict[str, float] = {}
+        by_model: dict[str, dict] = {}
+        for step_name, cj in rows:
+            if not cj:
+                continue
+            try:
+                data = json.loads(cj)
+            except Exception:  # noqa: BLE001
+                continue
+            if data.get("total_usd") is None:
+                known = False
+            else:
+                total += float(data["total_usd"])
+                by_step[step_name] = by_step.get(step_name, 0.0) + float(data["total_usd"])
+            for it in data.get("items", []):
+                m = it.get("model", "?")
+                slot = by_model.setdefault(
+                    m, {"prompt_tokens": 0, "completion_tokens": 0, "usd": 0.0, "known": True}
+                )
+                slot["prompt_tokens"] += int(it.get("prompt_tokens", 0) or 0)
+                slot["completion_tokens"] += int(it.get("completion_tokens", 0) or 0)
+                if it.get("estimated_cost_usd") is None:
+                    slot["known"] = False
+                else:
+                    slot["usd"] += float(it["estimated_cost_usd"])
+        for slot in by_model.values():
+            if not slot.pop("known", True):
+                slot["usd"] = None
+        return {"total_usd": total if known else None, "by_step": by_step, "by_model": by_model}
+
+    def job_cost(self, job_id: int) -> dict:
+        """Aggregate SUCCEEDED-unit costs for one job, by step name and model."""
+        with session_scope(self.engine) as s:
+            rows = s.execute(
+                select(Step.name, Unit.cost_json)
+                .join(Unit, Unit.step_id == Step.id)
+                .where(Step.job_id == job_id, Unit.status == UnitStatus.SUCCEEDED)
+            ).all()
+        return self._sum_cost(rows)
+
+    def kb_cost(self, kb_id: int) -> dict:
+        """Aggregate SUCCEEDED-unit costs across all jobs in a KB.
+
+        Same shape as :meth:`job_cost`, plus ``by_job:{job_id: usd}``.
+        """
+        with session_scope(self.engine) as s:
+            rows = s.execute(
+                select(Job.id, Step.name, Unit.cost_json)
+                .join(Step, Step.job_id == Job.id)
+                .join(Unit, Unit.step_id == Step.id)
+                .where(Job.kb_id == kb_id, Unit.status == UnitStatus.SUCCEEDED)
+            ).all()
+        # Aggregate overall (via _sum_cost) plus a per-job total breakout.
+        by_job: dict[int, float] = {}
+        overall_rows = []
+        for jid, step_name, cj in rows:
+            overall_rows.append((step_name, cj))
+            if not cj:
+                continue
+            try:
+                import json
+
+                d = json.loads(cj)
+                v = d.get("total_usd")
+                if v is not None:
+                    by_job[jid] = by_job.get(jid, 0.0) + float(v)
+            except Exception:  # noqa: BLE001
+                pass
+        out = self._sum_cost(overall_rows)
+        out["by_job"] = by_job
+        return out
