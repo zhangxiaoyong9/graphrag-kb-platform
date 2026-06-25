@@ -12,7 +12,11 @@ def kb(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path}/kb.db")
     Base.metadata.create_all(engine)
     with session_scope(engine) as s:
-        s.add(KnowledgeBase(name="kb1", method="standard", settings_json="{}", data_root=str(tmp_path)))
+        s.add(
+            KnowledgeBase(
+                name="kb1", method="standard", settings_json="{}", data_root=str(tmp_path)
+            )
+        )
     repo = Repository(engine)
     repo.add_document(kb_id=1, title="A", text="ACME Org Bob Foo Bar Baz " * 200)
     return repo, str(tmp_path)
@@ -44,3 +48,65 @@ async def test_full_then_incremental_only_llms_new_chunks(kb):
 
     ents = pd.read_parquet(f"{data_root}/entities.parquet")
     assert "GLOBEX" in set(ents["title"])
+
+
+def test_incremental_uses_delta_strategies():
+    """Incremental summarize/community_reports resolve to the Delta variants; full does not."""
+    from kb_platform.engine import orchestrator as orch_mod
+    from kb_platform.engine.strategies.delta import (
+        CommunityReportsDeltaStrategy,
+        SummarizeDeltaStrategy,
+    )
+
+    o = orch_mod.Orchestrator(repo=object(), adapter=object(), data_root=".", strategies=None)
+
+    class _Inc:
+        type = "incremental"
+
+    class _Full:
+        type = "full"
+
+    inc = o._strategies_for(_Inc())
+    assert isinstance(inc["summarize_descriptions"], SummarizeDeltaStrategy)
+    assert isinstance(inc["community_reports"], CommunityReportsDeltaStrategy)
+    full = o._strategies_for(_Full())
+    assert not isinstance(full["summarize_descriptions"], SummarizeDeltaStrategy)
+    assert not isinstance(full["community_reports"], CommunityReportsDeltaStrategy)
+
+
+def test_retry_resolves_delta_for_incremental_job(tmp_path):
+    """A retried unit in an incremental job uses the Delta strategies (esp. community_reports)."""
+    from kb_platform.engine.strategies.delta import CommunityReportsDeltaStrategy
+    from kb_platform.retry import RetryService
+
+    engine = create_engine(f"sqlite:///{tmp_path}/kb.db")
+    Base.metadata.create_all(engine)
+    with session_scope(engine) as s:
+        s.add(
+            KnowledgeBase(
+                name="kb1", method="standard", settings_json="{}", data_root=str(tmp_path)
+            )
+        )
+    repo = Repository(engine)
+    job = repo.create_job_pending(kb_id=1, method="standard", type="incremental")
+    step = repo.get_steps(job.id)[0]
+
+    retry = RetryService(repo=repo, adapter=FakeGraphAdapter(), data_root=str(tmp_path))
+    strats = retry._strategies(step)
+    assert isinstance(strats["community_reports"], CommunityReportsDeltaStrategy)
+
+    # Full job -> base strategies (not delta).
+    full_job = repo.create_job_pending(kb_id=1, method="standard", type="full")
+    full_step = repo.get_steps(full_job.id)[0]
+    assert not isinstance(
+        retry._strategies(full_step)["community_reports"], CommunityReportsDeltaStrategy
+    )
+
+    # Explicit override wins even for incremental jobs.
+    from kb_platform.engine.strategy import default_strategies
+
+    override = default_strategies()
+    retry2 = RetryService(
+        repo=repo, adapter=FakeGraphAdapter(), data_root=str(tmp_path), strategies=override
+    )
+    assert retry2._strategies(step) is override

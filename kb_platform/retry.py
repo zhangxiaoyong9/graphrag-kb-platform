@@ -24,10 +24,22 @@ class RetryService:
         self.concurrency = concurrency
         self._base = strategies
 
-    def _strategies(self) -> dict:
+    def _strategies(self, step=None) -> dict:
+        if self._base is not None:
+            # Explicit override wins; do not auto-resolve delta strategies.
+            return self._base
+        from kb_platform.engine.orchestrator import incremental_strategies
         from kb_platform.engine.strategy import default_strategies
 
-        return self._base if self._base is not None else default_strategies()
+        base = default_strategies()
+        # For incremental jobs, reuse the orchestrator's delta swap so a retried
+        # community_reports/summarize unit uses the Delta strategy (whose persist
+        # writes the reports_by_hash/ sidecar the delta finalize relies on).
+        if step is not None:
+            job = self.repo.get_job(step.job_id)
+            if job is not None and getattr(job, "type", "full") == "incremental":
+                return incremental_strategies(base)
+        return base
 
     def retry_unit(self, unit_id: int) -> None:
         """Reset a single failed unit to pending (does not run it)."""
@@ -48,7 +60,7 @@ class RetryService:
             adapter=self.adapter,
             data_root=self.data_root,
             concurrency=self.concurrency,
-            strategies=self._strategies(),
+            strategies=self._strategies(step),
         )
         await worker.run_unit_fanout(step)
         if already_succeeded:

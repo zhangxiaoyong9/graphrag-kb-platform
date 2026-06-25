@@ -17,6 +17,25 @@ def _resolved_base(strategies) -> dict:
     return strategies if strategies is not None else default_strategies()
 
 
+def incremental_strategies(base: dict) -> dict:
+    """Base strategy set with summarize/community_reports swapped to Delta variants.
+
+    Reused by RetryService so a retried unit in an incremental job resolves the
+    same delta strategies the orchestrator would (e.g. CommunityReportsDeltaStrategy,
+    whose persist writes the reports_by_hash/ sidecar the delta finalize reads).
+    """
+    from kb_platform.engine.strategies.delta import (
+        CommunityReportsDeltaStrategy,
+        SummarizeDeltaStrategy,
+    )
+
+    return {
+        **base,
+        "summarize_descriptions": SummarizeDeltaStrategy(),
+        "community_reports": CommunityReportsDeltaStrategy(),
+    }
+
+
 class Orchestrator:
     def __init__(
         self,
@@ -42,9 +61,10 @@ class Orchestrator:
         return _resolved_base(self._base)
 
     def _strategies_for(self, job) -> dict:
-        # Task 4: base for both full and incremental. Task 9 swaps delta
-        # summarize/community_reports in for incremental jobs.
-        return self._base_strategies()
+        base = self._base_strategies()
+        if getattr(job, "type", "full") == "incremental":
+            return incremental_strategies(base)
+        return base
 
     @staticmethod
     def plan_full() -> list[StepSpec]:
