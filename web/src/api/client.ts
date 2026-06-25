@@ -11,6 +11,17 @@ export const createKb = (b: KbCreate) => req<KbOut>("/kbs", { method: "POST", bo
 export const getKb = (id: number) => req<KbOut>(`/kbs/${id}`);
 export const listDocuments = (kbId: number) => req<DocumentOut[]>(`/kbs/${kbId}/documents`);
 export const addDocument = (kbId: number, b: DocumentCreate) => req<DocumentOut>(`/kbs/${kbId}/documents`, { method: "POST", body: JSON.stringify(b) });
+export const uploadFile = async (kbId: number, file: File): Promise<DocumentOut> => {
+  const form = new FormData();
+  form.append("file", file);
+  const r = await fetch(`/kbs/${kbId}/documents`, { method: "POST", body: form });
+  if (!r.ok) throw new Error(`${r.status} /kbs/${kbId}/documents`);
+  return r.json() as Promise<DocumentOut>;
+};
+export const deleteDocument = async (kbId: number, docId: number): Promise<void> => {
+  const r = await fetch(`/kbs/${kbId}/documents/${docId}`, { method: "DELETE" });
+  if (!r.ok && r.status !== 204) throw new Error(`${r.status} /kbs/${kbId}/documents/${docId}`);
+};
 export const listJobsByKb = (kbId: number) => req<{ id: number; status: string }[]>(`/kbs/${kbId}/jobs`);
 export const triggerJob = (kbId: number, method = "standard", type = "full") => req<{ id: number; status: string }>(`/kbs/${kbId}/jobs`, { method: "POST", body: JSON.stringify({ method, type }) });
 export const getJob = (id: number) => req<JobOut>(`/jobs/${id}`);

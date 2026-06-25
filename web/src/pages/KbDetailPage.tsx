@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { getKb, listDocuments, listJobsByKb, triggerJob, query as apiQuery, getKbCost } from "../api/client";
 import type { KbOut, DocumentOut, KbCost } from "../api/types";
-import DocumentUpload from "../components/DocumentUpload";
+import { DocumentManager } from "../components/DocumentManager";
 import StatusBadge from "../components/StatusBadge";
 import { CostPanel } from "../components/CostPanel";
 
@@ -27,8 +27,10 @@ export default function KbDetailPage() {
   return (
     <div className="p-4 space-y-4">
       <h1 className="text-xl font-bold">{kb.name} <span className="text-gray-500">({kb.method})</span></h1>
-      <section><h2 className="font-semibold">Documents</h2><ul>{docs.map((d) => <li key={d.id}>{d.title}</li>)}</ul>
-        <DocumentUpload kbId={kbId} onUploaded={reload} /></section>
+      <section>
+        <h2 className="font-semibold">Documents</h2>
+        <DocumentManager kbId={kbId} docs={docs} reload={reload} />
+      </section>
       <section><h2 className="font-semibold">Jobs</h2>
         <button onClick={async () => { await triggerJob(kbId); reload(); }} className="bg-green-600 text-white px-3 py-1 rounded">Trigger Index</button>
         <ul>{jobs.map((j) => <li key={j.id}><Link to={`/kbs/${kbId}/jobs/${j.id}`}>job {j.id}</Link> <StatusBadge status={j.status} /></li>)}</ul>

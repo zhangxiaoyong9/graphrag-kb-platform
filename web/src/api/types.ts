@@ -3,7 +3,7 @@ export type StepStatus = "pending" | "running" | "succeeded" | "partially_failed
 export type UnitStatus = "pending" | "running" | "succeeded" | "failed";
 
 export interface KbOut { id: number; name: string; method: string }
-export interface DocumentOut { id: number; title: string; status: string | null }
+export interface DocumentOut { id: number; title: string; status: string | null; bytes: number; chunk_count: number }
 export interface UnitProgress { pending: number; running: number; succeeded: number; failed: number; total: number }
 export interface StepOut { id: number; name: string; ordinal: number; kind: string; status: StepStatus; progress: UnitProgress | null }
 export interface JobOut { id: number; status: JobStatus; steps: StepOut[] }
