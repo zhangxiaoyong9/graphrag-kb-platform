@@ -50,6 +50,20 @@ The adapter resolves credentials from `llm.api_key_env` → `{PROVIDER}_API_KEY`
 | API server | `python -m kb_platform.server` | REST endpoints + SPA hosting |
 | Worker | `python -m kb_platform.worker` | Polls SQLite → runs/indexing jobs |
 
+## Frontend
+
+Open `http://127.0.0.1:8000` after starting the server — no extra config needed.
+
+| Page | What you can do |
+|------|----------------|
+| KB list | Create / browse knowledge bases |
+| KB detail | Upload documents, trigger full / incremental indexing, view jobs, query box |
+| Job detail | Step timeline + per-step progress bars (pending / running / succeeded / failed / total) + unit table |
+| Retry | Single-unit retry + batch retry all failed units in a step |
+| Query | Pick search method (local / global / drift / basic) → ask a question → see answer |
+
+Stack: React 18 + TypeScript + Vite + Tailwind CSS. The built SPA lives in `web/dist/`; the API server hosts it automatically (`/assets` static files + history fallback; API routes are registered first and always win).
+
 ## API
 
 | Method | Path | Description |

@@ -50,6 +50,20 @@ POST /kbs {
 | API 服务 | `python -m kb_platform.server` | REST 接口 + 前端页面 |
 | Worker | `python -m kb_platform.worker` | 轮询 SQLite → 执行索引任务 |
 
+## 前端界面
+
+API 服务启动后，访问 `http://127.0.0.1:8000` 即可打开管理后台，无需额外配置。
+
+| 页面 | 功能 |
+|------|------|
+| KB 列表 | 创建 / 查看知识库 |
+| KB 详情 | 上传文档、触发全量 / 增量索引、查看任务列表、查询框 |
+| 任务详情 | 步骤时间线 + 每步进度条（pending / running / succeeded / failed / total）+ unit 列表 |
+| 重试 | 单 unit 重试 + 整步批量重试失败的 unit |
+| 查询框 | 选择检索方式（local / global / drift / basic）→ 输入问题 → 查看答案 |
+
+技术栈：React 18 + TypeScript + Vite + Tailwind CSS。构建产物放在 `web/dist/`，API 服务自动托管（`/assets` 静态文件 + 前端路由兜底，API 路由优先命中）。
+
 ## API 接口
 
 | 方法 | 路径 | 说明 |
