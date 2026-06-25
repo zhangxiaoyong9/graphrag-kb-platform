@@ -44,6 +44,116 @@ _ENTITY_DESCRIPTION = "entity_description"
 _TEXT_UNIT_TEXT = "text_unit_text"
 
 
+def _join_cell(value) -> str:
+    """Flatten a parquet cell (str / list / numpy array) into a single string.
+
+    The platform's merge step aggregates ``description`` as a list; parquet
+    round-trips it as a numpy array. graphrag's readers call ``to_optional_str``
+    on ``description`` (which would otherwise stringify the list repr).
+    """
+    if value is None:
+        return ""
+    if isinstance(value, (list, tuple)):
+        return " ".join(str(v) for v in value)
+    try:
+        import numpy as np  # noqa: PLC0415
+
+        if isinstance(value, np.ndarray):
+            return " ".join(str(v) for v in value.tolist())
+    except Exception:  # noqa: BLE001
+        pass
+    return str(value)
+
+
+def _ensure_col(df, col: str, values):
+    """Set ``df[col]`` to ``values`` only when the column is absent."""
+    if col not in df.columns:
+        df[col] = values
+    return df
+
+
+def _norm_entities(df):
+    """Make the platform entities parquet match graphrag's reader schema.
+
+    graphrag keys entities by ``id``; the platform uses ``title`` as identity,
+    so ``id`` := ``title`` (which also aligns with ``communities.entity_ids``,
+    since clustering groups by title). ``description`` is flattened from a
+    list to a string. ``human_readable_id`` is required by ``to_optional_str``
+    even though it is cosmetic; synthesize a stable int.
+    """
+    df = df.copy()
+    if "id" not in df.columns and "title" in df.columns:
+        df["id"] = df["title"].astype(str)
+    df = _ensure_col(df, "human_readable_id", range(len(df)))
+    df = _ensure_col(df, "type", [""] * len(df))
+    if "description" in df.columns:
+        df["description"] = [_join_cell(v) for v in df["description"]]
+    df = _ensure_col(df, "degree", [0] * len(df))
+    return df
+
+
+def _norm_relationships(df):
+    df = df.copy()
+    if "id" not in df.columns:
+        df["id"] = [f"{s}->{t}" for s, t in zip(df["source"], df["target"], strict=False)]
+    df = _ensure_col(df, "human_readable_id", range(len(df)))
+    if "description" in df.columns:
+        df["description"] = [_join_cell(v) for v in df["description"]]
+    return df
+
+
+def _to_int_comm(value):
+    """Coerce a community id to int (graphrag merges communities↔reports on the
+    int-typed ``community`` column). Platform ids are numeric strings like "0".
+    Non-numeric ids fall back to a stable hash so the merge key stays consistent
+    across the communities and reports frames."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return abs(hash(str(value))) % (2**31)
+
+
+def _norm_communities(df):
+    """The platform stores the community id as ``community_id``; graphrag's
+    readers (and the reports merge) key on an int ``community``. ``id`` mirrors
+    it, and ``title``/``children`` are required (``children`` must be a list)."""
+    df = df.copy()
+    if "community" not in df.columns and "community_id" in df.columns:
+        df["community"] = df["community_id"]
+    if "community" in df.columns:
+        df["community"] = [_to_int_comm(c) for c in df["community"]]
+        df = _ensure_col(df, "id", df["community"].astype(str))
+        df = _ensure_col(df, "title", [f"Community {c}" for c in df["community"]])
+    df = _ensure_col(df, "children", [[] for _ in range(len(df))])
+    return df
+
+
+def _norm_reports(df):
+    """graphrag keys reports by ``id`` and merges them with communities on the
+    int ``community`` column; the platform keys reports by a (string) community."""
+    df = df.copy()
+    if "community" in df.columns:
+        df["community"] = [_to_int_comm(c) for c in df["community"]]
+    if "id" not in df.columns and "community" in df.columns:
+        df["id"] = df["community"].astype(str)
+    if "full_content" not in df.columns and "summary" in df.columns:
+        df["full_content"] = df["summary"].astype(str)
+    return df
+
+
+def _norm_text_units(df):
+    """graphrag's reader requires a scalar ``document_id`` (to_optional_str);
+    the platform stores ``document_ids`` as a list — take the first."""
+    df = df.copy()
+    if "document_id" not in df.columns and "document_ids" in df.columns:
+        df["document_id"] = [
+            (str(d[0]) if (hasattr(d, "__len__") and len(d) > 0) else "") or str(d)
+            for d in df["document_ids"]
+        ]
+    df = _ensure_col(df, "document_id", [""] * len(df))
+    return df
+
+
 class GraphRagQueryEngine:
     """QueryEngine backed by graphrag's four search engines.
 
@@ -114,15 +224,15 @@ class GraphRagQueryEngine:
                 raise FileNotFoundError(f"missing index artifact: {name} under {root}")
             return pd.read_parquet(path)
 
-        entities_df = _read("entities.parquet")
-        communities_df = _read("communities.parquet")
-        reports_df = _read("community_reports.parquet")
-        text_units_df = (
+        entities_df = _norm_entities(_read("entities.parquet"))
+        communities_df = _norm_communities(_read("communities.parquet"))
+        reports_df = _norm_reports(_read("community_reports.parquet"))
+        text_units_df = _norm_text_units(
             _read("text_unit_ids.parquet")
             if os.path.exists(os.path.join(root, "text_unit_ids.parquet"))
             else _read("text_units.parquet")
         )
-        relationships_df = _read("relationships.parquet")
+        relationships_df = _norm_relationships(_read("relationships.parquet"))
 
         communities = read_indexer_communities(communities_df, reports_df)
         reports = read_indexer_reports(
