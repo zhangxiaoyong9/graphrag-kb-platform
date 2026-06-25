@@ -99,3 +99,61 @@ async def test_crash_recovery_skips_succeeded_atomic_step(tmp_path):
     assert repo.get_job(job.id).status == "succeeded"
     # chunk_documents was SUCCEEDED -> skipped -> NO duplicate chunks.
     assert len(repo.get_chunks(kb_id=1)) == chunks_before
+
+
+@pytest.mark.asyncio
+async def test_worker_orphan_job_marked_failed_not_crash(tmp_path):
+    """An orphan job (kb_id points at a missing KB) is marked FAILED and the
+    worker returns normally instead of crashing and starving all other jobs.
+    """
+    from kb_platform.worker import run_worker_once
+
+    repo = _repo(tmp_path)
+    # Create a pending job whose kb_id points at a KB that does not exist.
+    # (FK enforcement would normally reject this; bypass it by inserting the
+    # job row with a bogus kb_id via a raw connection with FKs off, simulating
+    # a legacy orphan that predates the FK pragma.)
+    import sqlite3
+
+    conn = sqlite3.connect(f"{tmp_path}/t.db")
+    conn.execute("PRAGMA foreign_keys=OFF")
+    conn.execute("DELETE FROM job")
+    conn.execute("INSERT INTO job (id, kb_id, type, method, status) VALUES (999, 777777, 'full', 'standard', 'pending')")
+    conn.commit()
+    conn.close()
+
+    # Worker must NOT raise; the orphan job must be marked FAILED.
+    await run_worker_once(
+        repo=repo,
+        adapter_factory=lambda kb: FakeGraphAdapter(),
+        heartbeat_interval=0.01,
+        recover=False,
+    )
+    job = repo.get_job(999)
+    assert job is not None
+    assert job.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_recover_stale_units_resets_null_heartbeat(tmp_path):
+    """A RUNNING unit with heartbeat_at IS NULL is recovered (otherwise SQL
+    ``NULL < x`` is falsy and the unit is stranded forever)."""
+    from datetime import datetime
+
+    from sqlalchemy import select
+
+    from kb_platform.db.enums import UnitStatus
+    from kb_platform.engine.spec import StepKind, StepSpec
+
+    repo = _repo(tmp_path)
+    job = repo.create_job(kb_id=1, type="full", specs=[StepSpec("extract_graph", StepKind.UNIT_FANOUT)])
+    step = job.steps[0]
+    repo.add_units(step.id, [("chunk", "c1")])
+    with session_scope(repo.engine) as s:
+        u = s.scalar(select(Unit).where(Unit.step_id == step.id).limit(1))
+        u.status = UnitStatus.RUNNING
+        u.worker_id = "dead"
+        u.heartbeat_at = None  # crashed before first heartbeat tick
+    recovered = repo.recover_stale_units(datetime.now())
+    assert recovered == 1
+    assert repo.list_units(step.id)[0].status == UnitStatus.PENDING

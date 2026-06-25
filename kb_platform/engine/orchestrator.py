@@ -12,10 +12,11 @@ logger = logging.getLogger(__name__)
 
 
 class Orchestrator:
-    def __init__(self, *, repo: Repository, adapter: GraphAdapter, data_root: str) -> None:
+    def __init__(self, *, repo: Repository, adapter: GraphAdapter, data_root: str, concurrency: int = 4) -> None:
         self.repo = repo
         self.adapter = adapter
         self.data_root = data_root
+        self.concurrency = concurrency
 
     @staticmethod
     def plan() -> list[StepSpec]:
@@ -54,7 +55,7 @@ class Orchestrator:
         else:
             from kb_platform.engine.unit_worker import UnitWorker
 
-            worker = UnitWorker(repo=self.repo, adapter=self.adapter, data_root=self.data_root)
+            worker = UnitWorker(repo=self.repo, adapter=self.adapter, data_root=self.data_root, concurrency=self.concurrency)
             await worker.run_unit_fanout(step, min_success_ratio=min_success_ratio)
 
     async def _run_atomic(self, step) -> None:

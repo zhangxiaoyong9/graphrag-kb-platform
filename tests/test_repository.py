@@ -2,7 +2,7 @@ import pytest
 
 from kb_platform.db.engine import create_engine, session_scope
 from kb_platform.db.enums import StepKind, UnitKind, UnitStatus
-from kb_platform.db.models import Base, KnowledgeBase, Chunk
+from kb_platform.db.models import Base, Document, KnowledgeBase, Chunk
 from kb_platform.db.repository import Repository
 from kb_platform.engine.spec import StepSpec
 
@@ -20,9 +20,14 @@ def repo(tmp_path):
 def test_create_job_and_claim_units(repo):
     with session_scope(repo.engine) as s:
         kb = s.query(KnowledgeBase).one()
+        # Insert a real Document so chunk FKs are satisfied now that FK
+        # enforcement is on (PRAGMA foreign_keys=ON).
+        doc = Document(kb_id=kb.id, title="d", source_uri="", content_hash="x", status="parsed", bytes=2, text="t1")
+        s.add(doc)
+        s.flush()
         # 预置 chunks 供 extract_graph 使用
-        s.add(Chunk(chunk_id="c1", kb_id=kb.id, document_id=1, ordinal=0, text="t1"))
-        s.add(Chunk(chunk_id="c2", kb_id=kb.id, document_id=1, ordinal=1, text="t2"))
+        s.add(Chunk(chunk_id="c1", kb_id=kb.id, document_id=doc.id, ordinal=0, text="t1"))
+        s.add(Chunk(chunk_id="c2", kb_id=kb.id, document_id=doc.id, ordinal=1, text="t2"))
 
     job = repo.create_job(kb_id=1, type="full", specs=[StepSpec("chunk_documents", StepKind.ATOMIC), StepSpec("extract_graph", StepKind.UNIT_FANOUT)])
     extract_step = [s for s in job.steps if s.name == "extract_graph"][0]

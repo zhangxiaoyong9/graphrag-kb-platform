@@ -28,6 +28,13 @@ def test_trigger_job_creates_pending(client):
     assert len(client.get(f"/jobs/{job_id}/steps").json()) == 6
 
 
+def test_trigger_job_missing_kb_returns_404(client):
+    """Defense in depth: posting a job against a non-existent KB must 404
+    rather than creating an orphan job that the worker would later crash on."""
+    r = client.post("/kbs/999999/jobs", json={"method": "standard"})
+    assert r.status_code == 404
+
+
 def test_step_units_filtered_by_status(client):
     repo = client.app.state.repo
     job_id = client.post("/kbs/1/jobs", json={"method": "standard"}).json()["id"]

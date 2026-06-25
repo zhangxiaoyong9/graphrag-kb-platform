@@ -3,7 +3,7 @@ import pytest
 
 from kb_platform.db.engine import create_engine, session_scope
 from kb_platform.db.enums import StepKind
-from kb_platform.db.models import Base, Chunk, KnowledgeBase
+from kb_platform.db.models import Base, Chunk, Document, KnowledgeBase
 from kb_platform.db.repository import Repository
 from kb_platform.engine.spec import StepSpec
 from kb_platform.engine.unit_worker import UnitWorker
@@ -19,8 +19,13 @@ def failed_step(tmp_path):
         kb = KnowledgeBase(name="kb1", method="standard", settings_json="{}", data_root=str(tmp_path))
         s.add(kb)
         s.flush()
-        s.add(Chunk(chunk_id="c1", kb_id=kb.id, document_id=1, ordinal=0, text="Foo Bar"))
-        s.add(Chunk(chunk_id="c2", kb_id=kb.id, document_id=1, ordinal=1, text="Baz Qux"))
+        # Insert a real Document so chunk FKs are satisfied now that FK
+        # enforcement is on (PRAGMA foreign_keys=ON).
+        doc = Document(kb_id=kb.id, title="d", source_uri="", content_hash="x", status="parsed", bytes=2, text="Foo Bar")
+        s.add(doc)
+        s.flush()
+        s.add(Chunk(chunk_id="c1", kb_id=kb.id, document_id=doc.id, ordinal=0, text="Foo Bar"))
+        s.add(Chunk(chunk_id="c2", kb_id=kb.id, document_id=doc.id, ordinal=1, text="Baz Qux"))
     repo = Repository(engine)
     step = repo.create_job(kb_id=1, type="full", specs=[StepSpec("extract_graph", StepKind.UNIT_FANOUT)]).steps[0]
     # 预置单元(run_unit_fanout 首跑时会跳过创建,直接处理已存在的 pending 单元)

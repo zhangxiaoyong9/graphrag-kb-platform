@@ -22,6 +22,7 @@ def create_engine(url: str = "sqlite:///./kb.db") -> Engine:
         def _set_wal(dbapi_conn, _):  # noqa: ANN001
             cur = dbapi_conn.cursor()
             cur.execute("PRAGMA journal_mode=WAL")
+            cur.execute("PRAGMA foreign_keys=ON")
             cur.close()
 
     return engine

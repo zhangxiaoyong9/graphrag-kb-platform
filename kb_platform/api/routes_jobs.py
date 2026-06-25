@@ -7,7 +7,16 @@ router = APIRouter()
 
 @router.post("/kbs/{kb_id}/jobs", status_code=202)
 def trigger_job(kb_id: int, payload: dict, request: Request):
+    from kb_platform.db.engine import session_scope
+    from kb_platform.db.models import KnowledgeBase
+
     repo = request.app.state.repo
+    # Defense in depth: reject orphan jobs at the API boundary so the worker
+    # never claims a job whose kb_id points at a missing KB. SQLite FKs may be
+    # off depending on driver mode, so we check explicitly.
+    with session_scope(repo.engine) as s:
+        if s.get(KnowledgeBase, kb_id) is None:
+            raise HTTPException(404, f"kb {kb_id} not found")
     job = repo.create_job_pending(kb_id=kb_id, method=payload.get("method", "standard"))
     return {"id": job.id, "status": job.status}
 

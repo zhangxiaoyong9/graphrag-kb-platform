@@ -1,6 +1,6 @@
 """Data access for the control plane."""
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import selectinload
 
@@ -179,13 +179,18 @@ class Repository:
             return s.get(Job, job.id)
 
     def recover_stale_units(self, stale_before) -> int:
-        """Reset RUNNING units whose heartbeat is older than ``stale_before`` back to PENDING."""
+        """Reset RUNNING units whose heartbeat is older than ``stale_before`` back to PENDING.
+
+        A RUNNING unit with a NULL ``heartbeat_at`` (e.g. crashed before its
+        first heartbeat tick) is also recovered, because SQL ``NULL < x`` is
+        otherwise falsy and would leave such units stranded forever.
+        """
         with session_scope(self.engine) as s:
             stale = list(
                 s.scalars(
                     select(Unit).where(
                         Unit.status == UnitStatus.RUNNING,
-                        Unit.heartbeat_at < stale_before,
+                        or_(Unit.heartbeat_at < stale_before, Unit.heartbeat_at.is_(None)),
                     )
                 )
             )
