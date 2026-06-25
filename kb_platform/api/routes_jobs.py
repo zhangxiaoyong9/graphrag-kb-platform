@@ -2,59 +2,13 @@
 
 from fastapi import APIRouter, HTTPException, Request
 
-# Importing strategies registers all built-in strategies into STRATEGIES.
-import kb_platform.engine.strategies  # noqa: F401
-from kb_platform.db.models import Chunk
-from kb_platform.engine.strategy import STRATEGIES
-from kb_platform.graph.adapter import FakeGraphAdapter
-
 router = APIRouter()
-
-
-def _seed_chunks_and_units(repo, job) -> None:
-    """Seed chunks from documents and PENDING units for every unit-fanout step.
-
-    This makes a freshly triggered job immediately inspectable via the status
-    endpoints and ready for a worker to claim without first running the
-    chunk_documents atomic step inline.
-    """
-    docs = repo.get_documents(job.kb_id)
-    adapter = FakeGraphAdapter()
-    chunks: list[Chunk] = []
-    for doc in docs:
-        for ordinal, piece in enumerate(adapter.chunk_document(doc.id, doc.text or "")):
-            chunks.append(
-                Chunk(
-                    chunk_id=piece.chunk_id,
-                    kb_id=job.kb_id,
-                    document_id=doc.id,
-                    ordinal=ordinal,
-                    text=piece.text,
-                )
-            )
-    if chunks:
-        repo.add_chunks(chunks)
-    # Seed PENDING units for unit-fanout steps whose subjects are already
-    # available at job-creation time. Only extract_graph qualifies (it depends
-    # solely on chunks); later fanout steps (summarize, community_reports)
-    # depend on artefacts produced by earlier atomic steps, so their units are
-    # seeded by the worker during execution instead.
-    for step in repo.get_steps(job.id):
-        if step.name != "extract_graph":
-            continue
-        strategy = STRATEGIES.get(step.name)
-        if strategy is None:
-            continue
-        batch = strategy.next_units_batch(repo, step)
-        if batch:
-            repo.add_units(step.id, [(s.subject_type, s.subject_id) for s in batch])
 
 
 @router.post("/kbs/{kb_id}/jobs", status_code=202)
 def trigger_job(kb_id: int, payload: dict, request: Request):
     repo = request.app.state.repo
     job = repo.create_job_pending(kb_id=kb_id, method=payload.get("method", "standard"))
-    _seed_chunks_and_units(repo, job)
     return {"id": job.id, "status": job.status}
 
 

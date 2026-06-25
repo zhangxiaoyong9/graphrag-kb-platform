@@ -29,11 +29,24 @@ def test_trigger_job_creates_pending(client):
 
 
 def test_step_units_filtered_by_status(client):
+    repo = client.app.state.repo
     job_id = client.post("/kbs/1/jobs", json={"method": "standard"}).json()["id"]
+    # trigger_job only creates a PENDING job; seed units in the test fixture.
     steps = client.get(f"/jobs/{job_id}/steps").json()
     extract = [s for s in steps if s["name"] == "extract_graph"][0]
+    # No units yet -- job is pending and the worker has not run.
+    assert client.get(f"/steps/{extract['id']}/units").json() == []
+    # Seed units directly via the repo (the worker would do this).
+    repo.add_units(extract["id"], [("chunk", "c1"), ("chunk", "c2")])
     units = client.get(f"/steps/{extract['id']}/units").json()
-    assert len(units) >= 1
+    assert len(units) == 2
+    # status= filter: mark one failed and filter for pending.
+    unit_id = units[0]["id"]
+    repo.set_unit_failed(unit_id, "boom")
+    pending = client.get(f"/steps/{extract['id']}/units?status=pending").json()
+    failed = client.get(f"/steps/{extract['id']}/units?status=failed").json()
+    assert len(pending) == 1
+    assert len(failed) == 1
 
 
 def test_retry_unit_resets_to_pending(client):
