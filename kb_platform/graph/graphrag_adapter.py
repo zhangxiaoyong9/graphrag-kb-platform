@@ -157,7 +157,7 @@ class GraphRagAdapter:
         if self._embed_factory is None:
             raise RuntimeError("embed_factory not configured")
         embedder = self._embed_factory()
-        return embedder.embedding(texts)
+        return embedder.embedding_batch(texts)
 
 
 def _parse_report_json(text: str, context: dict) -> CommunityReport:

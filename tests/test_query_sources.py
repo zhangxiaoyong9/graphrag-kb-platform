@@ -82,3 +82,36 @@ def test_result_from_search_handles_list_response():
     )
     r = _engine()._result_from_search("basic", sr)
     assert r.answer == "[{'x': 1}]" and r.sources is None
+
+
+def test_resolve_config_injects_default_completion_model(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    from kb_platform.query.graphrag_engine import GraphRagQueryEngine
+
+    eng = GraphRagQueryEngine(
+        data_root=".",
+        model_config={
+            "llm": {
+                "model_provider": "deepseek",
+                "model": "deepseek-chat",
+                "api_key_env": "DEEPSEEK_API_KEY",
+            }
+        },
+    )
+    cfg = eng._resolve_config(root=".")
+    entry = cfg.completion_models["default_completion_model"]
+    assert entry.model == "deepseek-chat"
+    assert entry.api_key == "sk-test"
+    # vector_store also forced (existing behavior preserved)
+    assert cfg.vector_store.db_uri.endswith("/vectors")
+
+
+def test_resolve_config_keeps_explicit_completion_models():
+    from kb_platform.query.graphrag_engine import GraphRagQueryEngine
+
+    eng = GraphRagQueryEngine(
+        data_root=".",
+        model_config={"llm": {"model": "x"}, "completion_models": {"default_completion_model": {"model": "explicit", "model_provider": "openai", "api_key": "sk-x"}}},
+    )
+    cfg = eng._resolve_config()
+    assert cfg.completion_models["default_completion_model"].model == "explicit"

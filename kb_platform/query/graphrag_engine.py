@@ -348,6 +348,30 @@ class GraphRagQueryEngine:
             vs["type"] = "lancedb"
             vs["db_uri"] = os.path.join(root, "vectors")
             values["vector_store"] = vs
+        # graphrag's query factory resolves the LLM via
+        # config.completion_models["default_completion_model"]; the KB settings
+        # only carry `llm.*`, so derive the default completion model from it
+        # (with the same credential resolution as the indexing path — see
+        # build_adapter_from_settings in graphrag_adapter.py).
+        if not values.get("completion_models"):
+            llm = dict(values.get("llm") or {})
+            if llm:
+                provider = llm.get("model_provider", "openai")
+                resolved_key = (
+                    llm.get("api_key")
+                    or (os.getenv(llm["api_key_env"]) if llm.get("api_key_env") else None)
+                    or os.getenv(f"{provider.upper()}_API_KEY")
+                )
+                entry = {
+                    "type": llm.get("type", "litellm"),
+                    "model_provider": provider,
+                    "model": llm.get("model", "gpt-4o-mini"),
+                    "api_base": llm.get("api_base"),
+                    "api_version": llm.get("api_version"),
+                }
+                if resolved_key:
+                    entry["api_key"] = resolved_key
+                values["completion_models"] = {"default_completion_model": entry}
         return GraphRagConfig.model_validate(values)
 
     def _build_embedding_store(self, config, embedding_name: str):
