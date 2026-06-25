@@ -55,6 +55,10 @@ class GraphAdapter(Protocol):
         self, entities: pd.DataFrame, relationships: pd.DataFrame
     ) -> tuple[pd.DataFrame, pd.DataFrame]: ...
 
+    # --- Phase 3b (Task 1) extension: embeddings ---
+
+    def embed_items(self, texts: list[str]) -> list[list[float]]: ...
+
 
 def _hash(text: str) -> str:
     return hashlib.sha512(text.encode()).hexdigest()
@@ -180,3 +184,11 @@ class FakeGraphAdapter:
                 lambda r: deg.get(r["source"], 0) + deg.get(r["target"], 0), axis=1
             )
         return entities, relationships
+
+    # --- Phase 3b (Task 1): deterministic embeddings (hash-based fixed-length vectors) ---
+
+    def embed_items(self, texts: list[str]) -> list[list[float]]:
+        return [
+            [(int(hashlib.md5((t + str(i)).encode()).hexdigest(), 16) % 100) / 100.0 for i in range(8)]
+            for t in texts
+        ]

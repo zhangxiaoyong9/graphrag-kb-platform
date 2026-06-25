@@ -127,6 +127,17 @@ class GraphRagAdapter:
             )
         return e, rr
 
+    def embed_items(self, texts: list[str]) -> list[list[float]]:
+        """Embed texts via graphrag's configured embedding model.
+
+        Phase 3b stub: not yet wired to the real embedding pipeline. Raises
+        NotImplementedError until Task 2 connects ``create_embedding``. The
+        Protocol is structural so this does not break runtime construction.
+        """
+        raise NotImplementedError(
+            "GraphRagAdapter.embed_items is not wired yet (Phase 3b Task 2)."
+        )
+
 
 def _format_community_context(context: dict) -> str:
     """Flatten a community context dict into the text fed to CommunityReportsExtractor."""
