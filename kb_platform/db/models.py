@@ -1,6 +1,8 @@
 """SQLAlchemy ORM models for the control plane."""
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
+from datetime import datetime
+
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from kb_platform.db.enums import JobStatus, StepKind, StepStatus, UnitKind, UnitStatus
@@ -84,4 +86,6 @@ class Unit(Base):
     cost_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     llm_raw_output: Mapped[str | None] = mapped_column(Text, nullable=True)
     needs_reconsolidation: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    worker_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     step: Mapped["Step"] = relationship(back_populates="units")
