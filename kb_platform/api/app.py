@@ -2,6 +2,7 @@
 
 from fastapi import FastAPI
 
+from kb_platform.api.routes_jobs import router as jobs_router
 from kb_platform.api.routes_kbs import router
 from kb_platform.db.repository import Repository
 
@@ -12,4 +13,5 @@ def create_app(repo: Repository, data_root: str = ".") -> FastAPI:
     app.state.repo = repo
     app.state.data_root = data_root
     app.include_router(router)
+    app.include_router(jobs_router)
     return app
