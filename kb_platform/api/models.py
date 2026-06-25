@@ -50,6 +50,13 @@ class JobCreated(BaseModel):
     status: str
 
 
+class JobListItem(BaseModel):
+    """Lightweight job item for GET /kbs/{id}/jobs (id + status only)."""
+
+    id: int
+    status: str
+
+
 class UnitProgress(BaseModel):
     pending: int
     running: int

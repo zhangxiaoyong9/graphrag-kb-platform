@@ -8,9 +8,24 @@ from kb_platform.api.models import (
     JobOut,
     StepOut,
     UnitOut,
+    UnitProgress,
 )
 
 router = APIRouter()
+
+
+def _step_out(repo, s) -> StepOut:
+    progress = None
+    if s.kind == "unit_fanout":
+        progress = UnitProgress(**repo.unit_counts_by_status(s.id))
+    return StepOut(
+        id=s.id,
+        name=s.name,
+        ordinal=s.ordinal,
+        kind=s.kind,
+        status=s.status,
+        progress=progress,
+    )
 
 
 @router.post("/kbs/{kb_id}/jobs", response_model=JobCreated, status_code=202)
@@ -35,34 +50,14 @@ def get_job(job_id: int, request: Request) -> JobOut:
     job = repo.get_job(job_id)
     if not job:
         raise HTTPException(404)
-    steps = [
-        StepOut(
-            id=s.id,
-            name=s.name,
-            ordinal=s.ordinal,
-            kind=s.kind,
-            status=s.status,
-            progress=None,  # filled in Task 2
-        )
-        for s in repo.get_steps(job_id)
-    ]
+    steps = [_step_out(repo, s) for s in repo.get_steps(job_id)]
     return JobOut(id=job.id, status=job.status, steps=steps)
 
 
 @router.get("/jobs/{job_id}/steps", response_model=list[StepOut])
 def get_steps(job_id: int, request: Request) -> list[StepOut]:
     repo = request.app.state.repo
-    return [
-        StepOut(
-            id=s.id,
-            name=s.name,
-            ordinal=s.ordinal,
-            kind=s.kind,
-            status=s.status,
-            progress=None,  # filled in Task 2
-        )
-        for s in repo.get_steps(job_id)
-    ]
+    return [_step_out(repo, s) for s in repo.get_steps(job_id)]
 
 
 @router.get("/steps/{step_id}/units", response_model=list[UnitOut])

@@ -7,7 +7,7 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from starlette.formparsers import UploadFile
 
-from kb_platform.api.models import DocumentCreate, DocumentOut, KbCreate, KbOut
+from kb_platform.api.models import DocumentCreate, DocumentOut, JobListItem, KbCreate, KbOut
 from kb_platform.db.engine import session_scope
 from kb_platform.db.models import KnowledgeBase
 
@@ -85,4 +85,13 @@ def list_documents(kb_id: int, request: Request) -> list[DocumentOut]:
     return [
         DocumentOut(id=d.id, title=d.title, status=d.status)
         for d in repo.get_documents(kb_id)
+    ]
+
+
+@router.get("/kbs/{kb_id}/jobs", response_model=list[JobListItem])
+def list_jobs(kb_id: int, request: Request) -> list[JobListItem]:
+    repo = request.app.state.repo
+    return [
+        JobListItem(id=j.id, status=j.status)
+        for j in repo.list_jobs_by_kb(kb_id)
     ]

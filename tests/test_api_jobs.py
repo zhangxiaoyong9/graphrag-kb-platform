@@ -97,3 +97,62 @@ def test_trigger_job_response_shape(client):
     r = client.post("/kbs/1/jobs", json={"method": "standard"})
     assert r.status_code == 202
     assert set(r.json().keys()) == {"id", "status"}
+
+
+def test_list_jobs_by_kb(client):
+    j1 = client.post("/kbs/1/jobs", json={"method": "standard"}).json()["id"]
+    j2 = client.post("/kbs/1/jobs", json={"method": "standard"}).json()["id"]
+    jobs = client.get("/kbs/1/jobs").json()
+    assert {j["id"] for j in jobs} == {j1, j2}
+    # newest-first ordering
+    assert [j["id"] for j in jobs] == [j2, j1]
+    # each item has exactly id + status
+    assert set(jobs[0].keys()) == {"id", "status"}
+
+
+def test_list_jobs_by_kb_empty(client):
+    jobs = client.get("/kbs/1/jobs").json()
+    assert jobs == []
+
+
+def test_job_progress_per_step(client):
+    job_id = client.post("/kbs/1/jobs", json={"method": "standard"}).json()["id"]
+    # 手动给 extract_graph 步种几个 unit
+    steps = client.get(f"/jobs/{job_id}/steps").json()
+    extract = [s for s in steps if s["name"] == "extract_graph"][0]
+    repo = client.app.state.repo
+    repo.add_units(extract["id"], [("chunk", "c1"), ("chunk", "c2")])
+    body = client.get(f"/jobs/{job_id}").json()
+    ex = [s for s in body["steps"] if s["name"] == "extract_graph"][0]
+    assert ex["progress"]["total"] == 2 and ex["progress"]["pending"] == 2
+    assert ex["progress"]["running"] == 0
+    assert ex["progress"]["succeeded"] == 0
+    assert ex["progress"]["failed"] == 0
+
+
+def test_job_progress_steps_endpoint(client):
+    """GET /jobs/{id}/steps also fills progress for unit_fanout steps."""
+    job_id = client.post("/kbs/1/jobs", json={"method": "standard"}).json()["id"]
+    steps = client.get(f"/jobs/{job_id}/steps").json()
+    extract = [s for s in steps if s["name"] == "extract_graph"][0]
+    repo = client.app.state.repo
+    repo.add_units(extract["id"], [("chunk", "c1"), ("chunk", "c2")])
+    # mark one failed
+    units = repo.list_units(extract["id"])
+    repo.set_unit_failed(units[0].id, "boom")
+    steps2 = client.get(f"/jobs/{job_id}/steps").json()
+    ex = [s for s in steps2 if s["name"] == "extract_graph"][0]
+    assert ex["progress"] is not None
+    assert ex["progress"]["total"] == 2
+    assert ex["progress"]["pending"] == 1
+    assert ex["progress"]["failed"] == 1
+
+
+def test_atomic_step_progress_is_none(client):
+    """Atomic steps should have progress=None."""
+    job_id = client.post("/kbs/1/jobs", json={"method": "standard"}).json()["id"]
+    body = client.get(f"/jobs/{job_id}").json()
+    atomic_steps = [s for s in body["steps"] if s["kind"] == "atomic"]
+    assert len(atomic_steps) > 0
+    for s in atomic_steps:
+        assert s["progress"] is None

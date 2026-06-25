@@ -157,6 +157,19 @@ class Repository:
         with session_scope(self.engine) as s:
             s.get(Unit, unit_id).heartbeat_at = heartbeat_at
 
+    def list_jobs_by_kb(self, kb_id: int) -> list:
+        with session_scope(self.engine) as s:
+            return list(s.scalars(select(Job).where(Job.kb_id == kb_id).order_by(Job.id.desc())))
+
+    def unit_counts_by_status(self, step_id: int) -> dict:
+        with session_scope(self.engine) as s:
+            units = list(s.scalars(select(Unit).where(Unit.step_id == step_id)))
+        counts = {"pending": 0, "running": 0, "succeeded": 0, "failed": 0, "total": len(units)}
+        for u in units:
+            if u.status in counts:
+                counts[u.status] += 1
+        return counts
+
     def mark_needs_reconsolidation(self, unit_id: int) -> None:
         with session_scope(self.engine) as s:
             s.get(Unit, unit_id).needs_reconsolidation = True
