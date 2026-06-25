@@ -32,6 +32,11 @@ class Orchestrator:
         self.repo.set_job_status(job_id, JobStatus.RUNNING)
         try:
             for step in self.repo.get_steps(job_id):
+                if step.status == StepStatus.SUCCEEDED:
+                    # crash recovery: skip steps already completed so
+                    # non-idempotent atomic work (e.g. chunk_documents
+                    # inserts) is not re-run on resume.
+                    continue
                 await self._run_step(step, min_success_ratio)
                 if self.repo.get_step(step.id).status != StepStatus.SUCCEEDED:
                     self.repo.set_job_status(job_id, JobStatus.FAILED)

@@ -62,3 +62,40 @@ async def test_worker_crash_recovery_resumes(tmp_path):
         recover=True,
     )
     assert repo.get_job(job.id).status == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_crash_recovery_skips_succeeded_atomic_step(tmp_path):
+    from datetime import datetime, timedelta
+
+    from sqlalchemy import select
+
+    from kb_platform.engine.orchestrator import Orchestrator
+    from kb_platform.worker import run_worker_once
+
+    repo = _repo(tmp_path)
+    # First: run the job fully so chunk_documents SUCCEEDS and everything completes.
+    job = repo.create_job_pending(kb_id=1, method="standard")
+    await Orchestrator(repo=repo, adapter=FakeGraphAdapter(), data_root=str(tmp_path)).run(job.id)
+    chunks_before = len(repo.get_chunks(kb_id=1))
+    assert chunks_before > 0
+    # Simulate a later "crash" during a fresh attempt: reset job to RUNNING +
+    # inject a stale RUNNING unit in extract_graph (mimics a mid-step crash
+    # after the atomic chunk_documents step already completed).
+    extract = [s for s in repo.get_steps(job.id) if s.name == "extract_graph"][0]
+    repo.set_job_status(job.id, JobStatus.RUNNING)
+    with session_scope(repo.engine) as s:
+        u = s.scalar(select(Unit).where(Unit.step_id == extract.id).limit(1))
+        u.status = "running"
+        u.worker_id = "dead"
+        u.heartbeat_at = datetime.now() - timedelta(seconds=999)
+    # Recover + resume.
+    await run_worker_once(
+        repo=repo,
+        adapter_factory=lambda kb: FakeGraphAdapter(),
+        heartbeat_interval=0.01,
+        recover=True,
+    )
+    assert repo.get_job(job.id).status == "succeeded"
+    # chunk_documents was SUCCEEDED -> skipped -> NO duplicate chunks.
+    assert len(repo.get_chunks(kb_id=1)) == chunks_before
