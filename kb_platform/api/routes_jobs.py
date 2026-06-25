@@ -40,7 +40,7 @@ def trigger_job(kb_id: int, payload: JobCreate, request: Request) -> JobCreated:
     with session_scope(repo.engine) as s:
         if s.get(KnowledgeBase, kb_id) is None:
             raise HTTPException(404, f"kb {kb_id} not found")
-    job = repo.create_job_pending(kb_id=kb_id, method=payload.method)
+    job = repo.create_job_pending(kb_id=kb_id, method=payload.method, type=payload.type)
     return JobCreated(id=job.id, status=job.status)
 
 

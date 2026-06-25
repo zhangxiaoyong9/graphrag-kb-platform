@@ -148,6 +148,29 @@ def test_job_progress_steps_endpoint(client):
     assert ex["progress"]["failed"] == 1
 
 
+def test_trigger_incremental_job(client):
+    """POST /kbs/{id}/jobs with type=incremental creates a job whose steps
+    follow the incremental plan (contains merge_delta + load_update_documents)."""
+    r = client.post("/kbs/1/jobs", json={"method": "standard", "type": "incremental"})
+    assert r.status_code == 202
+    job_id = r.json()["id"]
+    steps = client.get(f"/jobs/{job_id}/steps").json()
+    names = [s["name"] for s in steps]
+    assert "merge_delta" in names
+    assert "load_update_documents" in names
+
+
+def test_trigger_job_type_defaults_to_full(client):
+    """Omitting type defaults to full plan (no incremental-only steps)."""
+    r = client.post("/kbs/1/jobs", json={"method": "standard"})
+    assert r.status_code == 202
+    job_id = r.json()["id"]
+    steps = client.get(f"/jobs/{job_id}/steps").json()
+    names = [s["name"] for s in steps]
+    assert "merge_delta" not in names
+    assert "load_update_documents" not in names
+
+
 def test_atomic_step_progress_is_none(client):
     """Atomic steps should have progress=None."""
     job_id = client.post("/kbs/1/jobs", json={"method": "standard"}).json()["id"]

@@ -12,7 +12,7 @@ export const getKb = (id: number) => req<KbOut>(`/kbs/${id}`);
 export const listDocuments = (kbId: number) => req<DocumentOut[]>(`/kbs/${kbId}/documents`);
 export const addDocument = (kbId: number, b: DocumentCreate) => req<DocumentOut>(`/kbs/${kbId}/documents`, { method: "POST", body: JSON.stringify(b) });
 export const listJobsByKb = (kbId: number) => req<{ id: number; status: string }[]>(`/kbs/${kbId}/jobs`);
-export const triggerJob = (kbId: number, method = "standard") => req<{ id: number; status: string }>(`/kbs/${kbId}/jobs`, { method: "POST", body: JSON.stringify({ method }) });
+export const triggerJob = (kbId: number, method = "standard", type = "full") => req<{ id: number; status: string }>(`/kbs/${kbId}/jobs`, { method: "POST", body: JSON.stringify({ method, type }) });
 export const getJob = (id: number) => req<JobOut>(`/jobs/${id}`);
 export const getSteps = (jobId: number) => req<StepOut[]>(`/jobs/${jobId}/steps`);
 export const getUnits = (stepId: number, status?: string) => req<UnitOut[]>(`/steps/${stepId}/units` + (status ? `?status=${status}` : ""));

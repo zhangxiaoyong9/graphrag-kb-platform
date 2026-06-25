@@ -41,6 +41,7 @@ class DocumentOut(BaseModel):
 
 class JobCreate(BaseModel):
     method: str = "standard"
+    type: str = "full"
 
 
 class JobCreated(BaseModel):
