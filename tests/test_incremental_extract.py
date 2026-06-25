@@ -24,7 +24,11 @@ def repo_with_old_index(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path}/t.db")
     Base.metadata.create_all(engine)
     with session_scope(engine) as s:
-        s.add(KnowledgeBase(name="kb1", method="standard", settings_json="{}", data_root=str(tmp_path)))
+        s.add(
+            KnowledgeBase(
+                name="kb1", method="standard", settings_json="{}", data_root=str(tmp_path)
+            )
+        )
     repo = Repository(engine)
     repo.add_document(kb_id=1, title="old", text="Old ACME Org text " * 200)
     # Simulate old chunks already in DB + on-disk extractions (old chunks
@@ -39,10 +43,12 @@ def repo_with_old_index(tmp_path):
     for c in old_chunks:
         r = fake.extract_chunk_sync(c.chunk_id, c.text)
         (pathlib.Path(tmp_path) / "extractions" / f"{c.chunk_id}.json").write_text(
-            json.dumps({
-                "entities": r.entities.to_dict("records"),
-                "relationships": r.relationships.to_dict("records"),
-            })
+            json.dumps(
+                {
+                    "entities": r.entities.to_dict("records"),
+                    "relationships": r.relationships.to_dict("records"),
+                }
+            )
         )
     return repo, str(tmp_path), {c.chunk_id for c in old_chunks}
 
@@ -50,7 +56,7 @@ def repo_with_old_index(tmp_path):
 def test_delta_extract_only_processes_new_chunks(repo_with_old_index):
     """ExtractGraphDeltaStrategy.next_units_batch returns ONLY new chunk_ids."""
     from kb_platform.engine.incremental import ExtractGraphDeltaStrategy, register_delta_strategies
-    from kb_platform.engine.strategy import STRATEGIES, register_strategy
+    from kb_platform.engine.strategy import default_strategies
     from kb_platform.engine.unit_worker import UnitWorker
 
     repo, data_root, old_ids = repo_with_old_index
@@ -65,7 +71,9 @@ def test_delta_extract_only_processes_new_chunks(repo_with_old_index):
     # and inserts the rows; replicate that here so the delta strategy can see them.
     with session_scope(repo.engine) as s:
         for i, c in enumerate(new_chunks):
-            s.add(Chunk(chunk_id=c.chunk_id, kb_id=1, document_id=new_doc.id, ordinal=i, text=c.text))
+            s.add(
+                Chunk(chunk_id=c.chunk_id, kb_id=1, document_id=new_doc.id, ordinal=i, text=c.text)
+            )
     # Build an incremental extract step; delta manifest = new chunk_ids.
     job = repo.create_job(
         kb_id=1,
@@ -73,17 +81,13 @@ def test_delta_extract_only_processes_new_chunks(repo_with_old_index):
         specs=[StepSpec("extract_graph", StepKind.UNIT_FANOUT)],
     )
     step = job.steps[0]
-    # Run with the delta strategy (only new chunks). Save/restore the global
-    # "extract_graph" strategy so this test does not pollute other tests that
-    # rely on the default full-index ExtractGraphStrategy.
-    saved = STRATEGIES.get("extract_graph")
-    try:
-        register_strategy("extract_graph", ExtractGraphDeltaStrategy(new_ids))
-        worker = UnitWorker(repo=repo, adapter=FakeGraphAdapter(), data_root=data_root)
-        asyncio.run(worker.run_unit_fanout(step))
-    finally:
-        if saved is not None:
-            register_strategy("extract_graph", saved)
+    # Run with the delta strategy (only new chunks). Inject the delta strategy
+    # via the strategies dict (no global mutation).
+    strategies = {**default_strategies(), "extract_graph": ExtractGraphDeltaStrategy(new_ids)}
+    worker = UnitWorker(
+        repo=repo, adapter=FakeGraphAdapter(), data_root=data_root, strategies=strategies
+    )
+    asyncio.run(worker.run_unit_fanout(step))
     # Assert: only new chunks processed (unit.subject_id only contains new chunk_ids).
     processed = {u.subject_id for u in repo.list_units(step.id)}
     assert processed == new_ids
@@ -112,7 +116,11 @@ def test_load_update_documents_chunks_only_new_docs(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path}/t.db")
     Base.metadata.create_all(engine)
     with session_scope(engine) as s:
-        s.add(KnowledgeBase(name="kb1", method="standard", settings_json="{}", data_root=str(tmp_path)))
+        s.add(
+            KnowledgeBase(
+                name="kb1", method="standard", settings_json="{}", data_root=str(tmp_path)
+            )
+        )
     repo = Repository(engine)
     fake = FakeGraphAdapter()
     # old doc: already chunked
@@ -121,7 +129,9 @@ def test_load_update_documents_chunks_only_new_docs(tmp_path):
     old_chunks = fake.chunk_document(old_doc.id, old_doc.text)
     with session_scope(engine) as s:
         for i, c in enumerate(old_chunks):
-            s.add(Chunk(chunk_id=c.chunk_id, kb_id=1, document_id=old_doc.id, ordinal=i, text=c.text))
+            s.add(
+                Chunk(chunk_id=c.chunk_id, kb_id=1, document_id=old_doc.id, ordinal=i, text=c.text)
+            )
     # new doc: not yet chunked
     repo.add_document(kb_id=1, title="new", text="New Globex Corp text " * 200)
     new_doc = repo.get_documents(1)[1]

@@ -11,6 +11,12 @@ from kb_platform.graph.adapter import GraphAdapter
 logger = logging.getLogger(__name__)
 
 
+def _resolved_base(strategies) -> dict:
+    from kb_platform.engine.strategy import default_strategies
+
+    return strategies if strategies is not None else default_strategies()
+
+
 class Orchestrator:
     def __init__(
         self,
@@ -20,6 +26,7 @@ class Orchestrator:
         data_root: str,
         concurrency: int = 4,
         vector_store=None,
+        strategies: dict | None = None,
     ) -> None:
         self.repo = repo
         self.adapter = adapter
@@ -29,6 +36,15 @@ class Orchestrator:
         # (see _run_atomic). Engine tests inject a FakeVectorStore to keep the
         # graph-pipeline tests free of LanceDB I/O.
         self.vector_store = vector_store
+        self._base = strategies
+
+    def _base_strategies(self) -> dict:
+        return _resolved_base(self._base)
+
+    def _strategies_for(self, job) -> dict:
+        # Task 4: base for both full and incremental. Task 9 swaps delta
+        # summarize/community_reports in for incremental jobs.
+        return self._base_strategies()
 
     @staticmethod
     def plan_full() -> list[StepSpec]:
@@ -95,27 +111,22 @@ class Orchestrator:
         else:
             from kb_platform.engine.unit_worker import UnitWorker
 
-            if step.name == "extract_graph":
-                job = self.repo.get_job(step.job_id)
-                if job.type == "incremental":
-                    from kb_platform.engine.incremental import (
-                        ExtractGraphDeltaStrategy,
-                        read_delta_manifest,
-                    )
-                    from kb_platform.engine.strategy import register_strategy
+            job = self.repo.get_job(step.job_id)
+            strategies = self._strategies_for(job)
+            if step.name == "extract_graph" and job.type == "incremental":
+                from kb_platform.engine.incremental import (
+                    ExtractGraphDeltaStrategy,
+                    read_delta_manifest,
+                )
 
-                    new_ids = read_delta_manifest(self.data_root)
-                    register_strategy("extract_graph", ExtractGraphDeltaStrategy(new_ids))
-                else:
-                    from kb_platform.engine.strategy import register_strategy
-                    from kb_platform.engine.strategies.extract_graph import ExtractGraphStrategy
-
-                    register_strategy("extract_graph", ExtractGraphStrategy())
+                new_ids = read_delta_manifest(self.data_root)
+                strategies = {**strategies, "extract_graph": ExtractGraphDeltaStrategy(new_ids)}
             worker = UnitWorker(
                 repo=self.repo,
                 adapter=self.adapter,
                 data_root=self.data_root,
                 concurrency=self.concurrency,
+                strategies=strategies,
             )
             await worker.run_unit_fanout(step, min_success_ratio=min_success_ratio)
 

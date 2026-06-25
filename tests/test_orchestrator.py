@@ -86,3 +86,23 @@ def test_plan_incremental_returns_delta_steps():
     assert "merge_delta" in names
     assert "load_update_documents" in names
     assert "update_clean_state" in names
+
+
+def test_default_strategies_and_injection_independence():
+    """default_strategies() returns the three built-ins; injecting a spy doesn't mutate the base."""
+    from kb_platform.engine.strategy import default_strategies
+    from kb_platform.engine.strategies.community_reports import CommunityReportsStrategy
+    from kb_platform.engine.strategies.extract_graph import ExtractGraphStrategy
+    from kb_platform.engine.strategies.summarize_descriptions import SummarizeDescriptionsStrategy
+
+    base = default_strategies()
+    assert isinstance(base["extract_graph"], ExtractGraphStrategy)
+    assert isinstance(base["summarize_descriptions"], SummarizeDescriptionsStrategy)
+    assert isinstance(base["community_reports"], CommunityReportsStrategy)
+
+    class Spy:
+        kind = "extract_graph"
+
+    strat = {**base, "extract_graph": Spy()}
+    assert isinstance(strat["extract_graph"], Spy)
+    assert isinstance(base["extract_graph"], ExtractGraphStrategy)  # base untouched by the override

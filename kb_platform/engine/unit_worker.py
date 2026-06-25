@@ -7,26 +7,34 @@ from pathlib import Path
 
 from kb_platform.db.enums import UnitStatus
 from kb_platform.db.repository import Repository
-from kb_platform.engine.strategy import STRATEGIES, Subject
+from kb_platform.engine.strategy import Subject
 from kb_platform.graph.adapter import GraphAdapter
-
-# Importing the strategies package registers all built-in strategies into STRATEGIES.
-import kb_platform.engine.strategies  # noqa: F401,E402
 
 logger = logging.getLogger(__name__)
 
 
 class UnitWorker:
-    def __init__(self, *, repo: Repository, adapter: GraphAdapter, data_root: str, concurrency: int = 4, worker_id: str = "worker", heartbeat_interval: float = 5.0) -> None:
+    def __init__(
+        self,
+        *,
+        repo: Repository,
+        adapter: GraphAdapter,
+        data_root: str,
+        strategies: dict,
+        concurrency: int = 4,
+        worker_id: str = "worker",
+        heartbeat_interval: float = 5.0,
+    ) -> None:
         self.repo = repo
         self.adapter = adapter
         self.data_root = Path(data_root)
+        self.strategies = strategies
         self.concurrency = concurrency
         self.worker_id = worker_id
         self.heartbeat_interval = heartbeat_interval
 
     async def run_unit_fanout(self, step, min_success_ratio: float = 1.0) -> None:
-        strategy = STRATEGIES[step.name]
+        strategy = self.strategies[step.name]
         while (batch := strategy.next_units_batch(self.repo, step)) is not None:
             await self._run_batch(strategy, step, batch)
         status = strategy.finalize(self.repo, self.adapter, step, self.data_root, min_success_ratio)
@@ -71,7 +79,12 @@ class UnitWorker:
         try:
             result = await strategy.run_unit(self.adapter, unit, self.repo)
             strategy.persist(self.data_root, unit, result)
-            self.repo.set_unit_succeeded(unit.id, input_hash=result.input_hash, cost_json=result.cost_json, llm_raw_output=result.llm_raw_output)
+            self.repo.set_unit_succeeded(
+                unit.id,
+                input_hash=result.input_hash,
+                cost_json=result.cost_json,
+                llm_raw_output=result.llm_raw_output,
+            )
         except Exception as e:  # noqa: BLE001
             logger.warning("unit %s failed: %s", unit.id, e)
             self.repo.set_unit_failed(unit.id, str(e))

@@ -15,27 +15,43 @@ def setup(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path}/t.db")
     Base.metadata.create_all(engine)
     with session_scope(engine) as s:
-        kb = KnowledgeBase(name="kb1", method="standard", settings_json="{}", data_root=str(tmp_path))
+        kb = KnowledgeBase(
+            name="kb1", method="standard", settings_json="{}", data_root=str(tmp_path)
+        )
         s.add(kb)
         s.flush()
         from kb_platform.db.models import Chunk, Document
 
         # Insert a real Document so chunk FKs are satisfied now that FK
         # enforcement is on (PRAGMA foreign_keys=ON).
-        doc = Document(kb_id=kb.id, title="d", source_uri="", content_hash="x", status="parsed", bytes=2, text="Foo Bar")
+        doc = Document(
+            kb_id=kb.id,
+            title="d",
+            source_uri="",
+            content_hash="x",
+            status="parsed",
+            bytes=2,
+            text="Foo Bar",
+        )
         s.add(doc)
         s.flush()
         s.add(Chunk(chunk_id="c1", kb_id=kb.id, document_id=doc.id, ordinal=0, text="Foo Bar"))
         s.add(Chunk(chunk_id="c2", kb_id=kb.id, document_id=doc.id, ordinal=1, text="Baz Qux"))
     repo = Repository(engine)
-    job = repo.create_job(kb_id=1, type="full", specs=[StepSpec("extract_graph", StepKind.UNIT_FANOUT)])
+    job = repo.create_job(
+        kb_id=1, type="full", specs=[StepSpec("extract_graph", StepKind.UNIT_FANOUT)]
+    )
     return repo, job.steps[0].id, str(tmp_path)
 
 
 @pytest.mark.asyncio
 async def test_all_units_succeed_writes_parquet(setup):
+    from kb_platform.engine.strategy import default_strategies
+
     repo, step_id, data_root = setup
-    worker = UnitWorker(repo=repo, adapter=FakeGraphAdapter(), data_root=data_root)
+    worker = UnitWorker(
+        repo=repo, adapter=FakeGraphAdapter(), data_root=data_root, strategies=default_strategies()
+    )
     step = repo.get_step(step_id)
     await worker.run_unit_fanout(step)
     assert repo.get_step(step_id).status == "succeeded"
@@ -47,9 +63,16 @@ async def test_all_units_succeed_writes_parquet(setup):
 
 @pytest.mark.asyncio
 async def test_failed_unit_marks_step_partially_failed(setup):
+    from kb_platform.engine.strategy import default_strategies
+
     repo, step_id, data_root = setup
     # 让 c2 失败
-    worker = UnitWorker(repo=repo, adapter=FakeGraphAdapter(fail_on={"c2"}), data_root=data_root)
+    worker = UnitWorker(
+        repo=repo,
+        adapter=FakeGraphAdapter(fail_on={"c2"}),
+        data_root=data_root,
+        strategies=default_strategies(),
+    )
     step = repo.get_step(step_id)
     await worker.run_unit_fanout(step)
     assert repo.get_step(step_id).status == "partially_failed"
@@ -64,10 +87,18 @@ async def test_failed_unit_marks_step_partially_failed(setup):
 @pytest.mark.asyncio
 async def test_unit_running_stamps_worker_id_and_heartbeat(setup):
     repo, step_id, data_root = setup  # 复用 2a 的 fixture(2 chunk)
+    from kb_platform.engine.strategy import default_strategies
     from kb_platform.engine.unit_worker import UnitWorker
     from kb_platform.graph.adapter import FakeGraphAdapter
 
-    worker = UnitWorker(repo=repo, adapter=FakeGraphAdapter(), data_root=data_root, worker_id="w1", heartbeat_interval=0.01)
+    worker = UnitWorker(
+        repo=repo,
+        adapter=FakeGraphAdapter(),
+        data_root=data_root,
+        worker_id="w1",
+        heartbeat_interval=0.01,
+        strategies=default_strategies(),
+    )
     await worker.run_unit_fanout(repo.get_step(step_id))
     units = repo.list_units(step_id)
     assert all(u.worker_id == "w1" for u in units)

@@ -31,7 +31,9 @@ class UnitStepStrategy(Protocol):
 
     def persist(self, data_root: Path, unit, result: UnitResult) -> None: ...
 
-    def finalize(self, repo: Repository, adapter, step, data_root: Path, min_success_ratio: float) -> StepStatus: ...
+    def finalize(
+        self, repo: Repository, adapter, step, data_root: Path, min_success_ratio: float
+    ) -> StepStatus: ...
 
 
 STRATEGIES: dict[str, UnitStepStrategy] = {}
@@ -39,3 +41,20 @@ STRATEGIES: dict[str, UnitStepStrategy] = {}
 
 def register_strategy(name: str, strategy: UnitStepStrategy) -> None:
     STRATEGIES[name] = strategy
+
+
+def default_strategies() -> dict[str, UnitStepStrategy]:
+    """The built-in strategy set for a full-index pipeline.
+
+    Constructed afresh each call (no module-global mutation). Tests and the
+    incremental wiring override entries by copying this dict.
+    """
+    from kb_platform.engine.strategies.community_reports import CommunityReportsStrategy
+    from kb_platform.engine.strategies.extract_graph import ExtractGraphStrategy
+    from kb_platform.engine.strategies.summarize_descriptions import SummarizeDescriptionsStrategy
+
+    return {
+        "extract_graph": ExtractGraphStrategy(),
+        "summarize_descriptions": SummarizeDescriptionsStrategy(),
+        "community_reports": CommunityReportsStrategy(),
+    }

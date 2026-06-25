@@ -7,13 +7,27 @@ from kb_platform.graph.adapter import GraphAdapter
 
 
 class RetryService:
-    def __init__(self, *, repo: Repository, adapter: GraphAdapter, data_root: str, concurrency: int = 4) -> None:
+    def __init__(
+        self,
+        *,
+        repo: Repository,
+        adapter: GraphAdapter,
+        data_root: str,
+        concurrency: int = 4,
+        strategies: dict | None = None,
+    ) -> None:
         self.repo = repo
         self.adapter = adapter
         worker = UnitWorker  # 延迟构造,确保每次 rerun 用最新状态
         self._worker_cls = worker
         self.data_root = data_root
         self.concurrency = concurrency
+        self._base = strategies
+
+    def _strategies(self) -> dict:
+        from kb_platform.engine.strategy import default_strategies
+
+        return self._base if self._base is not None else default_strategies()
 
     def retry_unit(self, unit_id: int) -> None:
         """Reset a single failed unit to pending (does not run it)."""
@@ -29,7 +43,13 @@ class RetryService:
         """Re-run a unit_fanout step's pending units and re-settle."""
         step = self.repo.get_step(step_id)
         already_succeeded = self.repo.get_step(step_id).status == StepStatus.SUCCEEDED
-        worker = self._worker_cls(repo=self.repo, adapter=self.adapter, data_root=self.data_root, concurrency=self.concurrency)
+        worker = self._worker_cls(
+            repo=self.repo,
+            adapter=self.adapter,
+            data_root=self.data_root,
+            concurrency=self.concurrency,
+            strategies=self._strategies(),
+        )
         await worker.run_unit_fanout(step)
         if already_succeeded:
             # A unit that succeeds only after its step was already finalized

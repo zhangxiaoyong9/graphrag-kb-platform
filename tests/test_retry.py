@@ -16,21 +16,40 @@ def failed_step(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path}/t.db")
     Base.metadata.create_all(engine)
     with session_scope(engine) as s:
-        kb = KnowledgeBase(name="kb1", method="standard", settings_json="{}", data_root=str(tmp_path))
+        kb = KnowledgeBase(
+            name="kb1", method="standard", settings_json="{}", data_root=str(tmp_path)
+        )
         s.add(kb)
         s.flush()
         # Insert a real Document so chunk FKs are satisfied now that FK
         # enforcement is on (PRAGMA foreign_keys=ON).
-        doc = Document(kb_id=kb.id, title="d", source_uri="", content_hash="x", status="parsed", bytes=2, text="Foo Bar")
+        doc = Document(
+            kb_id=kb.id,
+            title="d",
+            source_uri="",
+            content_hash="x",
+            status="parsed",
+            bytes=2,
+            text="Foo Bar",
+        )
         s.add(doc)
         s.flush()
         s.add(Chunk(chunk_id="c1", kb_id=kb.id, document_id=doc.id, ordinal=0, text="Foo Bar"))
         s.add(Chunk(chunk_id="c2", kb_id=kb.id, document_id=doc.id, ordinal=1, text="Baz Qux"))
     repo = Repository(engine)
-    step = repo.create_job(kb_id=1, type="full", specs=[StepSpec("extract_graph", StepKind.UNIT_FANOUT)]).steps[0]
+    step = repo.create_job(
+        kb_id=1, type="full", specs=[StepSpec("extract_graph", StepKind.UNIT_FANOUT)]
+    ).steps[0]
     # 预置单元(run_unit_fanout 首跑时会跳过创建,直接处理已存在的 pending 单元)
     repo.add_units(step.id, [("chunk", "c1"), ("chunk", "c2")])
-    worker = UnitWorker(repo=repo, adapter=FakeGraphAdapter(fail_on={"c2"}), data_root=str(tmp_path))
+    from kb_platform.engine.strategy import default_strategies
+
+    worker = UnitWorker(
+        repo=repo,
+        adapter=FakeGraphAdapter(fail_on={"c2"}),
+        data_root=str(tmp_path),
+        strategies=default_strategies(),
+    )
     return repo, step.id, str(tmp_path), worker
 
 
