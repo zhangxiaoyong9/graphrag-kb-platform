@@ -1,6 +1,7 @@
 """Contract test for the real graphrag-backed adapter (zero-cost via MockLLM)."""
 
 import pandas as pd  # noqa: F401  (kept for parity with brief / future assertions)
+import pytest
 
 from kb_platform.graph.graphrag_adapter import build_default_adapter
 
@@ -70,11 +71,31 @@ def test_real_summarize_entity_via_mockllm(tmp_path):
 
 def test_real_cluster_relationships_real_leiden(tmp_path):
     adapter = build_default_adapter(data_root=str(tmp_path), model_config=_mock_model_config())
-    rels = pd.DataFrame([
-        {"source": "A", "target": "B", "weight": 1.0, "description": ["d"], "text_unit_ids": ["c1"]},
-        {"source": "B", "target": "C", "weight": 1.0, "description": ["d"], "text_unit_ids": ["c1"]},
-        {"source": "X", "target": "Y", "weight": 1.0, "description": ["d"], "text_unit_ids": ["c2"]},
-    ])
+    rels = pd.DataFrame(
+        [
+            {
+                "source": "A",
+                "target": "B",
+                "weight": 1.0,
+                "description": ["d"],
+                "text_unit_ids": ["c1"],
+            },
+            {
+                "source": "B",
+                "target": "C",
+                "weight": 1.0,
+                "description": ["d"],
+                "text_unit_ids": ["c1"],
+            },
+            {
+                "source": "X",
+                "target": "Y",
+                "weight": 1.0,
+                "description": ["d"],
+                "text_unit_ids": ["c2"],
+            },
+        ]
+    )
     comms = adapter.cluster_relationships(rels)
     assert {"level", "community_id", "parent", "entity_ids"} <= set(comms.columns)
     members = {e for ids in comms["entity_ids"] for e in ids}
@@ -85,31 +106,85 @@ def test_real_report_community_via_mockllm(tmp_path):
     import asyncio
     import json
 
-    canned = json.dumps({
-        "title": "T",
-        "summary": "S",
-        "findings": [{"summary": "f", "explanation": "e"}],
-        "rating": 0.5,
-        "rating_explanation": "re",
-    })
-    adapter = build_default_adapter(data_root=str(tmp_path), model_config=_mock_model_config_with_responses([canned]))
+    canned = json.dumps(
+        {
+            "title": "T",
+            "summary": "S",
+            "findings": [{"summary": "f", "explanation": "e"}],
+            "rating": 0.5,
+            "rating_explanation": "re",
+        }
+    )
+    adapter = build_default_adapter(
+        data_root=str(tmp_path), model_config=_mock_model_config_with_responses([canned])
+    )
 
-    rep = asyncio.run(adapter.report_community({
-        "community": "C0",
-        "level": 0,
-        "entities": [{"title": "A", "description": "d"}],
-        "relationships": [],
-        "sub_reports": [],
-    }))
+    rep = asyncio.run(
+        adapter.report_community(
+            {
+                "community": "C0",
+                "level": 0,
+                "entities": [{"title": "A", "description": "d"}],
+                "relationships": [],
+                "sub_reports": [],
+            }
+        )
+    )
     assert rep.community == "C0" and rep.title == "T"
-    assert rep.summary == "S" and rep.rank == 0.5
-    assert rep.findings == ["f"]
+    assert rep.summary == "S" and rep.findings == ["f"]
     assert rep.level == 0
+    # graphrag `rating` is 0-10; CommunityReport.rank is normalized to 0-1
+    # (parity with the plain-text path _parse_report_json). 0.5 -> 0.05.
+    assert rep.rank == pytest.approx(0.05)
+
+
+def test_real_report_community_normalizes_structured_rating(tmp_path):
+    """Structured-output rating (0-10) must be normalized to rank (0-1), matching
+    the plain-text _parse_report_json path. A rating of 7.5 -> rank 0.75."""
+    import asyncio
+    import json
+
+    canned = json.dumps(
+        {
+            "title": "T",
+            "summary": "S",
+            "findings": [],
+            "rating": 7.5,
+            "rating_explanation": "re",
+        }
+    )
+    adapter = build_default_adapter(
+        data_root=str(tmp_path), model_config=_mock_model_config_with_responses([canned])
+    )
+    rep = asyncio.run(
+        adapter.report_community(
+            {
+                "community": "C0",
+                "level": 0,
+                "entities": [{"title": "A", "description": "d"}],
+                "relationships": [],
+                "sub_reports": [],
+            }
+        )
+    )
+    assert rep.rank == pytest.approx(0.75)
 
 
 def test_real_finalize_adds_degrees(tmp_path):
     adapter = build_default_adapter(data_root=str(tmp_path), model_config=_mock_model_config())
-    ents = pd.DataFrame([{"title": "A", "type": "T", "description": ["d"], "text_unit_ids": ["c1"], "frequency": 1}])
-    rels = pd.DataFrame([{"source": "A", "target": "B", "weight": 1.0, "description": ["d"], "text_unit_ids": ["c1"]}])
+    ents = pd.DataFrame(
+        [{"title": "A", "type": "T", "description": ["d"], "text_unit_ids": ["c1"], "frequency": 1}]
+    )
+    rels = pd.DataFrame(
+        [
+            {
+                "source": "A",
+                "target": "B",
+                "weight": 1.0,
+                "description": ["d"],
+                "text_unit_ids": ["c1"],
+            }
+        ]
+    )
     e2, r2 = adapter.finalize_entities_relationships(ents, rels)
     assert "degree" in e2.columns and "combined_degree" in r2.columns

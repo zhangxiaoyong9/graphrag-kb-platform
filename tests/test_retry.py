@@ -41,7 +41,7 @@ def failed_step(tmp_path):
         kb_id=1, type="full", specs=[StepSpec("extract_graph", StepKind.UNIT_FANOUT)]
     ).steps[0]
     # 预置单元(run_unit_fanout 首跑时会跳过创建,直接处理已存在的 pending 单元)
-    repo.add_units(step.id, [("chunk", "c1"), ("chunk", "c2")])
+    repo.add_units(step.id, [("chunk", "c1"), ("chunk", "c2")], kind="extract_graph")
     from kb_platform.engine.strategy import default_strategies
 
     worker = UnitWorker(

@@ -89,7 +89,7 @@ class GraphRagAdapter:
             title=getattr(so, "title", context["community"]) if so else context["community"],
             summary=getattr(so, "summary", "") if so else "",
             findings=[f.summary for f in getattr(so, "findings", []) or []],
-            rank=float(getattr(so, "rating", 0.0) or 0.0),
+            rank=max(0.0, min(1.0, float(getattr(so, "rating", 0.0) or 0.0) / 10.0)),
             full_content=result.output or "",
             level=context["level"],
             community=context["community"],

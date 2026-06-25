@@ -18,7 +18,11 @@ async def test_reconsolidate_clears_flag_and_incorporates_late_data(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path}/t.db")
     Base.metadata.create_all(engine)
     with session_scope(engine) as s:
-        s.add(KnowledgeBase(name="kb1", method="standard", settings_json="{}", data_root=str(tmp_path)))
+        s.add(
+            KnowledgeBase(
+                name="kb1", method="standard", settings_json="{}", data_root=str(tmp_path)
+            )
+        )
     repo = Repository(engine)
     # A needs_reconsolidation extract_graph unit whose extraction is on disk.
     step = repo.create_job(
@@ -26,7 +30,7 @@ async def test_reconsolidate_clears_flag_and_incorporates_late_data(tmp_path):
         type="full",
         specs=[StepSpec("extract_graph", StepKind.UNIT_FANOUT)],
     ).steps[0]
-    uid = repo.add_unit(step.id, "chunk", "late-chunk").id
+    uid = repo.add_unit(step.id, "chunk", "late-chunk", kind="extract_graph").id
     repo.set_unit_succeeded(uid, llm_raw_output="x")
     repo.mark_needs_reconsolidation(uid)
 
@@ -64,7 +68,11 @@ async def test_reconsolidate_noop_when_no_flags(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path}/t.db")
     Base.metadata.create_all(engine)
     with session_scope(engine) as s:
-        s.add(KnowledgeBase(name="kb1", method="standard", settings_json="{}", data_root=str(tmp_path)))
+        s.add(
+            KnowledgeBase(
+                name="kb1", method="standard", settings_json="{}", data_root=str(tmp_path)
+            )
+        )
     repo = Repository(engine)
     # No needs_reconsolidation units -> nothing written, no error.
     await reconsolidate(repo, FakeGraphAdapter(), kb_id=1, data_root=str(tmp_path))

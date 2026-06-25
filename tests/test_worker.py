@@ -53,7 +53,7 @@ async def test_worker_crash_recovery_resumes(tmp_path):
     real_chunk_id = hashlib.sha512(first_piece.encode()).hexdigest()
     repo.set_job_status(job.id, JobStatus.RUNNING)
     extract_step = [s for s in repo.get_steps(job.id) if s.name == "extract_graph"][0]
-    repo.add_unit(extract_step.id, "chunk", real_chunk_id)
+    repo.add_unit(extract_step.id, "chunk", real_chunk_id, kind="extract_graph")
     stale = datetime.now() - timedelta(seconds=999)
     with session_scope(repo.engine) as s:
         u = s.query(Unit).filter_by(step_id=extract_step.id).one()
@@ -158,7 +158,7 @@ async def test_recover_stale_units_resets_null_heartbeat(tmp_path):
         kb_id=1, type="full", specs=[StepSpec("extract_graph", StepKind.UNIT_FANOUT)]
     )
     step = job.steps[0]
-    repo.add_units(step.id, [("chunk", "c1")])
+    repo.add_units(step.id, [("chunk", "c1")], kind="extract_graph")
     with session_scope(repo.engine) as s:
         u = s.scalar(select(Unit).where(Unit.step_id == step.id).limit(1))
         u.status = UnitStatus.RUNNING

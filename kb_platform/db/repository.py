@@ -101,9 +101,7 @@ class Repository:
             s.get(Job, job_id).status = status
 
     # ---- units ----
-    def add_units(
-        self, step_id: int, subjects: list[tuple[str, str]], kind: str | None = None
-    ) -> None:
+    def add_units(self, step_id: int, subjects: list[tuple[str, str]], kind: str) -> None:
         with session_scope(self.engine) as s:
             for subject_type, subject_id in subjects:
                 s.add(
@@ -180,9 +178,7 @@ class Repository:
                 )
             )
 
-    def add_unit(
-        self, step_id: int, subject_type: str, subject_id: str, kind: str | None = None
-    ) -> Unit:
+    def add_unit(self, step_id: int, subject_type: str, subject_id: str, kind: str) -> Unit:
         with session_scope(self.engine) as s:
             u = Unit(
                 step_id=step_id,

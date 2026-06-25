@@ -44,7 +44,7 @@ def test_step_units_filtered_by_status(client):
     # No units yet -- job is pending and the worker has not run.
     assert client.get(f"/steps/{extract['id']}/units").json() == []
     # Seed units directly via the repo (the worker would do this).
-    repo.add_units(extract["id"], [("chunk", "c1"), ("chunk", "c2")])
+    repo.add_units(extract["id"], [("chunk", "c1"), ("chunk", "c2")], kind="extract_graph")
     units = client.get(f"/steps/{extract['id']}/units").json()
     assert len(units) == 2
     # status= filter: mark one failed and filter for pending.
@@ -63,7 +63,9 @@ def test_retry_unit_resets_to_pending(client):
     steps = client.get(f"/jobs/{job_id}/steps").json()
     extract = [s for s in steps if s["name"] == "extract_graph"][0]
     # Seed a unit for the step and force it to FAILED.
-    unit = repo.add_unit(step_id=extract["id"], subject_type="chunk", subject_id="c1")
+    unit = repo.add_unit(
+        step_id=extract["id"], subject_type="chunk", subject_id="c1", kind="extract_graph"
+    )
     repo.set_unit_failed(unit.id, "boom")
     r = client.post(f"/units/{unit.id}/retry")
     assert r.status_code == 200
@@ -79,8 +81,12 @@ def test_retry_step_resets_failed_units(client):
     job_id = client.post("/kbs/1/jobs", json={"method": "standard"}).json()["id"]
     steps = client.get(f"/jobs/{job_id}/steps").json()
     extract = [s for s in steps if s["name"] == "extract_graph"][0]
-    u1 = repo.add_unit(step_id=extract["id"], subject_type="chunk", subject_id="c1")
-    u2 = repo.add_unit(step_id=extract["id"], subject_type="chunk", subject_id="c2")
+    u1 = repo.add_unit(
+        step_id=extract["id"], subject_type="chunk", subject_id="c1", kind="extract_graph"
+    )
+    u2 = repo.add_unit(
+        step_id=extract["id"], subject_type="chunk", subject_id="c2", kind="extract_graph"
+    )
     repo.set_unit_failed(u1.id, "boom")
     repo.set_unit_failed(u2.id, "boom")
     r = client.post(f"/steps/{extract['id']}/retry")
@@ -121,7 +127,7 @@ def test_job_progress_per_step(client):
     steps = client.get(f"/jobs/{job_id}/steps").json()
     extract = [s for s in steps if s["name"] == "extract_graph"][0]
     repo = client.app.state.repo
-    repo.add_units(extract["id"], [("chunk", "c1"), ("chunk", "c2")])
+    repo.add_units(extract["id"], [("chunk", "c1"), ("chunk", "c2")], kind="extract_graph")
     body = client.get(f"/jobs/{job_id}").json()
     ex = [s for s in body["steps"] if s["name"] == "extract_graph"][0]
     assert ex["progress"]["total"] == 2 and ex["progress"]["pending"] == 2
@@ -136,7 +142,7 @@ def test_job_progress_steps_endpoint(client):
     steps = client.get(f"/jobs/{job_id}/steps").json()
     extract = [s for s in steps if s["name"] == "extract_graph"][0]
     repo = client.app.state.repo
-    repo.add_units(extract["id"], [("chunk", "c1"), ("chunk", "c2")])
+    repo.add_units(extract["id"], [("chunk", "c1"), ("chunk", "c2")], kind="extract_graph")
     # mark one failed
     units = repo.list_units(extract["id"])
     repo.set_unit_failed(units[0].id, "boom")
