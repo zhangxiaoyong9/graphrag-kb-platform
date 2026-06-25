@@ -74,6 +74,19 @@ class Orchestrator:
         else:
             from kb_platform.engine.unit_worker import UnitWorker
 
+            if step.name == "extract_graph":
+                job = self.repo.get_job(step.job_id)
+                if job.type == "incremental":
+                    from kb_platform.engine.incremental import ExtractGraphDeltaStrategy, read_delta_manifest
+                    from kb_platform.engine.strategy import register_strategy
+
+                    new_ids = read_delta_manifest(self.data_root)
+                    register_strategy("extract_graph", ExtractGraphDeltaStrategy(new_ids))
+                else:
+                    from kb_platform.engine.strategy import register_strategy
+                    from kb_platform.engine.strategies.extract_graph import ExtractGraphStrategy
+
+                    register_strategy("extract_graph", ExtractGraphStrategy())
             worker = UnitWorker(repo=self.repo, adapter=self.adapter, data_root=self.data_root, concurrency=self.concurrency)
             await worker.run_unit_fanout(step, min_success_ratio=min_success_ratio)
 
@@ -88,6 +101,14 @@ class Orchestrator:
             atomic_steps.create_communities(self.repo, self.adapter, step)
         elif step.name == "merge_delta":
             atomic_steps.merge_delta(self.repo, self.adapter, step)
+        elif step.name == "load_update_documents":
+            from kb_platform.engine import incremental
+
+            incremental.load_update_documents(self.repo, self.adapter, step)
+        elif step.name == "update_clean_state":
+            pass  # MVP:空操作(state 合并留后续)
+        elif step.name == "create_base_text_units":
+            pass  # MVP:chunks already created by load_update_documents
         else:
             msg = f"unknown atomic step: {step.name}"
             raise ValueError(msg)
