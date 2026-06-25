@@ -81,6 +81,32 @@ def test_real_cluster_relationships_real_leiden(tmp_path):
     assert {"A", "B", "C", "X", "Y"} <= members
 
 
+def test_real_report_community_via_mockllm(tmp_path):
+    import asyncio
+    import json
+
+    canned = json.dumps({
+        "title": "T",
+        "summary": "S",
+        "findings": [{"summary": "f", "explanation": "e"}],
+        "rating": 0.5,
+        "rating_explanation": "re",
+    })
+    adapter = build_default_adapter(data_root=str(tmp_path), model_config=_mock_model_config_with_responses([canned]))
+
+    rep = asyncio.run(adapter.report_community({
+        "community": "C0",
+        "level": 0,
+        "entities": [{"title": "A", "description": "d"}],
+        "relationships": [],
+        "sub_reports": [],
+    }))
+    assert rep.community == "C0" and rep.title == "T"
+    assert rep.summary == "S" and rep.rank == 0.5
+    assert rep.findings == ["f"]
+    assert rep.level == 0
+
+
 def test_real_finalize_adds_degrees(tmp_path):
     adapter = build_default_adapter(data_root=str(tmp_path), model_config=_mock_model_config())
     ents = pd.DataFrame([{"title": "A", "type": "T", "description": ["d"], "text_unit_ids": ["c1"], "frequency": 1}])

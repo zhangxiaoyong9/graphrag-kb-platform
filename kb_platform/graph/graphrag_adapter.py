@@ -7,7 +7,7 @@ from collections.abc import Callable
 
 import pandas as pd
 
-from kb_platform.graph.adapter import ChunkText, ExtractionResult, _hash
+from kb_platform.graph.adapter import ChunkText, CommunityReport, ExtractionResult, _hash
 
 
 class GraphRagAdapter:
@@ -26,6 +26,7 @@ class GraphRagAdapter:
         summarize_factory: Callable[[], object] | None = None,
         cluster_fn: Callable[..., list] | None = None,
         finalize_fn: Callable[..., tuple[pd.DataFrame, pd.DataFrame]] | None = None,
+        report_factory: Callable[[], object] | None = None,
     ) -> None:
         self._chunker = chunker
         self._extractor_factory = extractor_factory
@@ -33,6 +34,7 @@ class GraphRagAdapter:
         self._summarize_factory = summarize_factory
         self._cluster_fn = cluster_fn
         self._finalize_fn = finalize_fn
+        self._report_factory = report_factory
 
     def chunk_document(self, doc_id: int, text: str) -> list[ChunkText]:
         return [ChunkText(chunk_id=_hash(tc.text), text=tc.text) for tc in self._chunker.chunk(text)]
@@ -65,6 +67,25 @@ class GraphRagAdapter:
         extractor = self._summarize_factory()
         result = await extractor(id=name, descriptions=list(descriptions))
         return result.description
+
+    async def report_community(self, context: dict) -> CommunityReport:
+        if self._report_factory is None:
+            raise RuntimeError("report_factory not configured")
+        extractor = self._report_factory()
+        input_text = _format_community_context(context)
+        result = await extractor(input_text=input_text)
+        so = result.structured_output
+        # graphrag's CommunityReportResponse uses `rating`/`rating_explanation`
+        # (not `rank`/`fields`); map rating -> CommunityReport.rank.
+        return CommunityReport(
+            title=getattr(so, "title", context["community"]) if so else context["community"],
+            summary=getattr(so, "summary", "") if so else "",
+            findings=[f.summary for f in getattr(so, "findings", []) or []],
+            rank=float(getattr(so, "rating", 0.0) or 0.0),
+            full_content=result.output or "",
+            level=context["level"],
+            community=context["community"],
+        )
 
     def cluster_relationships(self, relationships: pd.DataFrame) -> pd.DataFrame:
         from graphrag.index.operations.cluster_graph import cluster_graph
@@ -107,6 +128,24 @@ class GraphRagAdapter:
         return e, rr
 
 
+def _format_community_context(context: dict) -> str:
+    """Flatten a community context dict into the text fed to CommunityReportsExtractor."""
+    ents = "\n".join(
+        f"- {e['title']}: {e.get('description', '')}" for e in context.get("entities", [])
+    )
+    rels = "\n".join(
+        f"- {r['source']} -> {r['target']}" for r in context.get("relationships", [])
+    )
+    subs = "\n".join(
+        f"- {s.get('title', s.get('community', ''))}: {s.get('summary', '')}"
+        for s in context.get("sub_reports", [])
+    )
+    return (
+        f"Community: {context['community']} (level {context['level']})\n"
+        f"Entities:\n{ents}\nRelationships:\n{rels}\nSub-community reports:\n{subs}"
+    )
+
+
 def build_default_adapter(
     *,
     data_root: str,
@@ -122,8 +161,10 @@ def build_default_adapter(
     from graphrag.tokenizer.get_tokenizer import get_tokenizer
     from graphrag.index.operations.extract_graph.graph_extractor import GraphExtractor
     from graphrag.index.operations.summarize_descriptions.description_summary_extractor import SummarizeExtractor
+    from graphrag.index.operations.summarize_communities.community_reports_extractor import CommunityReportsExtractor
     from graphrag.prompts.index.extract_graph import GRAPH_EXTRACTION_PROMPT
     from graphrag.prompts.index.summarize_descriptions import SUMMARIZE_PROMPT
+    from graphrag.prompts.index.community_report import COMMUNITY_REPORT_PROMPT
     from graphrag.config.defaults import DEFAULT_ENTITY_TYPES
 
     tokenizer = get_tokenizer(encoding_model="cl100k_base")
@@ -147,9 +188,17 @@ def build_default_adapter(
             summarization_prompt=SUMMARIZE_PROMPT,
         )
 
+    def report_factory() -> CommunityReportsExtractor:
+        return CommunityReportsExtractor(
+            model=completion,
+            extraction_prompt=COMMUNITY_REPORT_PROMPT,
+            max_report_length=2000,
+        )
+
     return GraphRagAdapter(
         chunker=chunker,
         extractor_factory=extractor_factory,
         entity_types=list(DEFAULT_ENTITY_TYPES),
         summarize_factory=summarize_factory,
+        report_factory=report_factory,
     )
