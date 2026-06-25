@@ -105,10 +105,21 @@ class QueryRequest(BaseModel):
     query: str
 
 
+class SourceOut(BaseModel):
+    kind: str
+    name: str
+    text: str
+
+
 class QueryResultOut(BaseModel):
     answer: str
     method: str
     error: str | None = None
+    elapsed_ms: float | None = None
+    prompt_tokens: int | None = None
+    output_tokens: int | None = None
+    llm_calls: int | None = None
+    sources: list[SourceOut] | None = None
 
 
 # --- Cost -----------------------------------------------------------------

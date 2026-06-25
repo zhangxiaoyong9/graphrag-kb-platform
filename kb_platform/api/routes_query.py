@@ -26,5 +26,18 @@ async def query_kb(kb_id: int, payload: QueryRequest, request: Request) -> Query
             data_root = kb.data_root
             settings = kb.settings_json
         engine = GraphRagQueryEngine(data_root=data_root, model_config=__import__("json").loads(settings or "{}"))
+    from kb_platform.api.models import SourceOut
+
     result = await engine.search(payload.method, payload.query, request.app.state.data_root)
-    return QueryResultOut(answer=result.answer, method=result.method, error=result.error)
+    return QueryResultOut(
+        answer=result.answer,
+        method=result.method,
+        error=result.error,
+        elapsed_ms=result.elapsed_ms,
+        prompt_tokens=result.prompt_tokens,
+        output_tokens=result.output_tokens,
+        llm_calls=result.llm_calls,
+        sources=[SourceOut(kind=s.kind, name=s.name, text=s.text) for s in result.sources]
+        if result.sources
+        else None,
+    )
