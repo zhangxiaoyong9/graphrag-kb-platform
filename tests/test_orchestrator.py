@@ -11,7 +11,11 @@ def setup(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path}/t.db")
     Base.metadata.create_all(engine)
     with session_scope(engine) as s:
-        s.add(KnowledgeBase(name="kb1", method="standard", settings_json="{}", data_root=str(tmp_path)))
+        s.add(
+            KnowledgeBase(
+                name="kb1", method="standard", settings_json="{}", data_root=str(tmp_path)
+            )
+        )
     repo = Repository(engine)
     repo.add_document(kb_id=1, title="d1", text="Hello World Foo Bar " * 200)
     return repo, str(tmp_path)
@@ -23,7 +27,11 @@ async def test_orchestrator_runs_pipeline_and_writes_parquet(setup):
 
     repo, data_root = setup
     adapter = FakeGraphAdapter()
-    orch = Orchestrator(repo=repo, adapter=adapter, data_root=data_root)
+    from kb_platform.graph.vector_store import FakeVectorStore
+
+    orch = Orchestrator(
+        repo=repo, adapter=adapter, data_root=data_root, vector_store=FakeVectorStore(dim=8)
+    )
 
     job = repo.create_job(kb_id=1, type="full", specs=Orchestrator.plan_full())
     await orch.run(job.id)
@@ -44,15 +52,27 @@ def test_plan_has_seven_steps():
     from kb_platform.engine.orchestrator import Orchestrator
 
     names = [s.name for s in Orchestrator.plan_full()]
-    assert names == ["chunk_documents", "extract_graph", "summarize_descriptions", "finalize_graph", "create_communities", "community_reports", "generate_text_embeddings"]
+    assert names == [
+        "chunk_documents",
+        "extract_graph",
+        "summarize_descriptions",
+        "finalize_graph",
+        "create_communities",
+        "community_reports",
+        "generate_text_embeddings",
+    ]
 
 
 def test_plan_full_unchanged():
     from kb_platform.engine.orchestrator import Orchestrator
 
     assert [s.name for s in Orchestrator.plan_full()] == [
-        "chunk_documents", "extract_graph", "summarize_descriptions",
-        "finalize_graph", "create_communities", "community_reports",
+        "chunk_documents",
+        "extract_graph",
+        "summarize_descriptions",
+        "finalize_graph",
+        "create_communities",
+        "community_reports",
         "generate_text_embeddings",
     ]
 

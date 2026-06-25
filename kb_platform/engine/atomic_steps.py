@@ -58,25 +58,64 @@ def merge_delta(repo: Repository, adapter, step) -> None:
     relationships.to_parquet(root / "relationships.parquet")
 
 
-def generate_text_embeddings(repo: Repository, adapter, step, vector_store) -> None:
-    """Read 3 parquet collections (text_units, entities, community_reports) →
-    batch embed via ``adapter.embed_items`` → upsert into ``vector_store``.
+def _as_text(value) -> str:
+    """Flatten a cell that may be a str, list, or numpy array of str (e.g. the
+    merged ``description`` column, which ``merge_extractions`` aggregates as a
+    list and which parquet round-trips as a numpy array)."""
+    if isinstance(value, (list, tuple)):
+        return " ".join(str(v) for v in value)
+    try:
+        import numpy as np  # noqa: PLC0415
 
-    MVP: uses FakeVectorStore in-memory; real LanceDB lands in Task 3.
+        if isinstance(value, np.ndarray):
+            return " ".join(str(v) for v in value.tolist())
+    except Exception:  # noqa: BLE001
+        pass
+    return str(value) if value is not None else ""
+
+
+def generate_text_embeddings(repo: Repository, adapter, step, vector_store) -> None:
+    """Read 3 parquet collections → batch embed via ``adapter.embed_items`` →
+    upsert into ``vector_store``.
+
+    Index names are graphrag's canonical embedding names
+    (``entity_description`` / ``text_unit_text`` / ``community_full_content``)
+    and the document ``id`` is the parquet row's identity column, so the
+    query read path can map embedding hits back to entities/text-units.
     """
     root = _data_root(repo, step)
+    # (embedding_name, parquet, id_column, text_fn)
     collections = [
-        ("text_unit", root / "text_units.parquet", lambda r: " ".join(str(r.get(c, "")) for c in ["text"])),
-        ("entity", root / "entities.parquet", lambda r: f"{r.get('title', '')} {str(r.get('description', ''))}"),
-        ("community", root / "community_reports.parquet", lambda r: str(r.get("full_content", ""))),
+        (
+            "text_unit_text",
+            root / "text_units.parquet",
+            lambda r: str(r.get("id") or r.get("chunk_id") or ""),
+            lambda r: _as_text(r.get("text")),
+        ),
+        (
+            "entity_description",
+            root / "entities.parquet",
+            lambda r: str(r.get("title") or r.get("id") or ""),
+            lambda r: f"{r.get('title', '')} {_as_text(r.get('description'))}",
+        ),
+        (
+            "community_full_content",
+            root / "community_reports.parquet",
+            lambda r: str(r.get("community") or r.get("id") or ""),
+            lambda r: _as_text(r.get("full_content")),
+        ),
     ]
-    for index_name, parquet_path, text_fn in collections:
+    for index_name, parquet_path, id_fn, text_fn in collections:
         if not parquet_path.exists():
             continue
         df = pd.read_parquet(parquet_path)
         if df.empty:
             continue
-        texts = [text_fn(row) for row in df.to_dict("records")]
+        records = df.to_dict("records")
+        texts = [text_fn(row) for row in records]
         vectors = adapter.embed_items(texts)
-        items = [{"id": str(i), "text": texts[i], "vector": vectors[i]} for i in range(len(texts))]
+        items = [
+            {"id": id_fn(records[i]), "text": texts[i], "vector": vectors[i]}
+            for i in range(len(records))
+        ]
         vector_store.upsert(index_name, items)

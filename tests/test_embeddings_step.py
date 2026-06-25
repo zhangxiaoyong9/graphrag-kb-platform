@@ -14,15 +14,56 @@ def test_embeddings_writes_three_indexes(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path}/t.db")
     Base.metadata.create_all(engine)
     with session_scope(engine) as s:
-        s.add(KnowledgeBase(name="kb1", method="standard", settings_json="{}", data_root=str(tmp_path)))
-    pd.DataFrame([{"title": "ACME", "type": "ORG", "description": "desc", "text_unit_ids": ["c1"], "frequency": 1}]).to_parquet(tmp_path / "entities.parquet")
-    pd.DataFrame([{"chunk_id": "c1", "text": "chunk text", "ordinal": 0}]).to_parquet(tmp_path / "text_units.parquet")  # 简化 schema
-    pd.DataFrame([{"title": "R", "summary": "s", "findings": [], "rank": 0.5, "full_content": "report", "level": 0, "community": "C0"}]).to_parquet(tmp_path / "community_reports.parquet")
+        s.add(
+            KnowledgeBase(
+                name="kb1", method="standard", settings_json="{}", data_root=str(tmp_path)
+            )
+        )
+    # entities: identity = title; description may be a list (merge_extractions aggregates it)
+    pd.DataFrame(
+        [
+            {
+                "title": "ACME",
+                "type": "ORG",
+                "description": ["d1", "d2"],
+                "text_unit_ids": ["c1"],
+                "frequency": 1,
+            }
+        ]
+    ).to_parquet(tmp_path / "entities.parquet")
+    # text_units: identity = id (chunk step writes `id`)
+    pd.DataFrame(
+        [{"id": "c1", "text": "chunk text", "document_ids": ["1"], "n_tokens": 0}]
+    ).to_parquet(tmp_path / "text_units.parquet")
+    # community_reports: identity = community
+    pd.DataFrame(
+        [
+            {
+                "title": "R",
+                "summary": "s",
+                "findings": [],
+                "rank": 0.5,
+                "full_content": "report",
+                "level": 0,
+                "community": "C0",
+            }
+        ]
+    ).to_parquet(tmp_path / "community_reports.parquet")
     repo = Repository(engine)
-    step = repo.create_job(kb_id=1, type="full", specs=[StepSpec("generate_text_embeddings", StepKind.ATOMIC)]).steps[0]
+    step = repo.create_job(
+        kb_id=1, type="full", specs=[StepSpec("generate_text_embeddings", StepKind.ATOMIC)]
+    ).steps[0]
     vs = FakeVectorStore(dim=8)
     vs.connect()
     generate_text_embeddings(repo, FakeGraphAdapter(), step, vs)
-    assert len(vs._store["text_unit"]) >= 1
-    assert len(vs._store["entity"]) >= 1
-    assert len(vs._store["community"]) >= 1
+    # Canonical graphrag embedding names (graphrag.config.embeddings)
+    assert len(vs._store["text_unit_text"]) >= 1
+    assert len(vs._store["entity_description"]) >= 1
+    assert len(vs._store["community_full_content"]) >= 1
+    # id column carries the row identity (entity title / chunk id / community)
+    assert vs._store["entity_description"][0]["id"] == "ACME"
+    assert vs._store["text_unit_text"][0]["id"] == "c1"
+    assert vs._store["community_full_content"][0]["id"] == "C0"
+    # list-valued description is flattened to a string before embedding
+    assert isinstance(vs._store["entity_description"][0]["text"], str)
+    assert "d1" in vs._store["entity_description"][0]["text"]

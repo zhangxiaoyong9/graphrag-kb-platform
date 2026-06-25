@@ -12,11 +12,23 @@ logger = logging.getLogger(__name__)
 
 
 class Orchestrator:
-    def __init__(self, *, repo: Repository, adapter: GraphAdapter, data_root: str, concurrency: int = 4) -> None:
+    def __init__(
+        self,
+        *,
+        repo: Repository,
+        adapter: GraphAdapter,
+        data_root: str,
+        concurrency: int = 4,
+        vector_store=None,
+    ) -> None:
         self.repo = repo
         self.adapter = adapter
         self.data_root = data_root
         self.concurrency = concurrency
+        # None -> production builds a real LanceDB store at <data_root>/vectors
+        # (see _run_atomic). Engine tests inject a FakeVectorStore to keep the
+        # graph-pipeline tests free of LanceDB I/O.
+        self.vector_store = vector_store
 
     @staticmethod
     def plan_full() -> list[StepSpec]:
@@ -86,7 +98,10 @@ class Orchestrator:
             if step.name == "extract_graph":
                 job = self.repo.get_job(step.job_id)
                 if job.type == "incremental":
-                    from kb_platform.engine.incremental import ExtractGraphDeltaStrategy, read_delta_manifest
+                    from kb_platform.engine.incremental import (
+                        ExtractGraphDeltaStrategy,
+                        read_delta_manifest,
+                    )
                     from kb_platform.engine.strategy import register_strategy
 
                     new_ids = read_delta_manifest(self.data_root)
@@ -96,7 +111,12 @@ class Orchestrator:
                     from kb_platform.engine.strategies.extract_graph import ExtractGraphStrategy
 
                     register_strategy("extract_graph", ExtractGraphStrategy())
-            worker = UnitWorker(repo=self.repo, adapter=self.adapter, data_root=self.data_root, concurrency=self.concurrency)
+            worker = UnitWorker(
+                repo=self.repo,
+                adapter=self.adapter,
+                data_root=self.data_root,
+                concurrency=self.concurrency,
+            )
             await worker.run_unit_fanout(step, min_success_ratio=min_success_ratio)
 
     async def _run_atomic(self, step) -> None:
@@ -119,9 +139,11 @@ class Orchestrator:
         elif step.name == "create_base_text_units":
             pass  # MVP:chunks already created by load_update_documents
         elif step.name == "generate_text_embeddings":
-            from kb_platform.graph.vector_store import FakeVectorStore
+            from kb_platform.graph.vector_store import build_vector_store
 
-            atomic_steps.generate_text_embeddings(self.repo, self.adapter, step, FakeVectorStore(dim=8))
+            vs = self.vector_store or build_vector_store(self.data_root)
+            vs.connect()
+            atomic_steps.generate_text_embeddings(self.repo, self.adapter, step, vs)
         else:
             msg = f"unknown atomic step: {step.name}"
             raise ValueError(msg)
@@ -139,14 +161,29 @@ class Orchestrator:
         chunks: list[Chunk] = []
         for doc in self.repo.get_documents(job.kb_id):
             for ordinal, piece in enumerate(self.adapter.chunk_document(doc.id, doc.text or "")):
-                chunks.append(Chunk(chunk_id=piece.chunk_id, kb_id=job.kb_id, document_id=doc.id, ordinal=ordinal, text=piece.text))
+                chunks.append(
+                    Chunk(
+                        chunk_id=piece.chunk_id,
+                        kb_id=job.kb_id,
+                        document_id=doc.id,
+                        ordinal=ordinal,
+                        text=piece.text,
+                    )
+                )
         self.repo.add_chunks(chunks)
         # Write text_units.parquet so the embeddings step can embed chunk text
         with session_scope(self.repo.engine) as s:
             kb = s.scalar(select(KnowledgeBase).where(KnowledgeBase.id == job.kb_id))
             data_root = kb.data_root
         if chunks:
-            pd.DataFrame([
-                {"id": c.chunk_id, "text": c.text, "document_ids": [str(c.document_id)], "n_tokens": 0}
-                for c in chunks
-            ]).to_parquet(f"{data_root}/text_units.parquet")
+            pd.DataFrame(
+                [
+                    {
+                        "id": c.chunk_id,
+                        "text": c.text,
+                        "document_ids": [str(c.document_id)],
+                        "n_tokens": 0,
+                    }
+                    for c in chunks
+                ]
+            ).to_parquet(f"{data_root}/text_units.parquet")
