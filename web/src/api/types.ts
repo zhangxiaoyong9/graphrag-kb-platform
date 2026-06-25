@@ -1,4 +1,4 @@
-export type JobStatus = "pending" | "running" | "succeeded" | "failed" | "cancelled";
+export type JobStatus = "pending" | "running" | "succeeded" | "failed" | "cancelled" | "partially_failed";
 export type StepStatus = "pending" | "running" | "succeeded" | "partially_failed" | "failed";
 export type UnitStatus = "pending" | "running" | "succeeded" | "failed";
 
