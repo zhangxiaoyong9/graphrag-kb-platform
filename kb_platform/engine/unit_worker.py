@@ -45,7 +45,7 @@ class UnitWorker:
         for s in subjects:
             u = self.repo.get_unit_by_subject(step.id, s.subject_type, s.subject_id)
             if u is None:
-                u = self.repo.add_unit(step.id, s.subject_type, s.subject_id)
+                u = self.repo.add_unit(step.id, s.subject_type, s.subject_id, kind=strategy.kind)
             if u.status == UnitStatus.SUCCEEDED:
                 continue
             units.append(u)

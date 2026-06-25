@@ -49,6 +49,34 @@ async def test_full_then_incremental_only_llms_new_chunks(kb):
     ents = pd.read_parquet(f"{data_root}/entities.parquet")
     assert "GLOBEX" in set(ents["title"])
 
+    # Phase 4 H end-to-end lock-in: the incremental summarize_descriptions step
+    # must re-summarize FEWER entities than the full job, because the 6 entities
+    # from doc A (ACME/ORG/BOB/FOO/BAR/BAZ) are unchanged by doc B and the Delta
+    # strategy reuses their on-disk summaries. Only the 4 new entities from doc B
+    # (GLOBEX/CORP/ALICE/QUX) get fresh summarize units. If the Delta skip were
+    # broken (e.g. Unit.kind never populated so last_succeeded_input_hash always
+    # misses), the incremental step would process all 10 merged entities and this
+    # assertion would fail (10 > 6).
+    def _step(job_id, name):
+        return [s for s in repo.get_steps(job_id) if s.name == name][0]
+
+    full_summ = _step(full.id, "summarize_descriptions")
+    incr_summ = _step(incr.id, "summarize_descriptions")
+    full_summ_units = repo.list_units(full_summ.id)
+    incr_summ_units = repo.list_units(incr_summ.id)
+    assert len(incr_summ_units) < len(full_summ_units), (
+        f"delta summarize did not reduce units: full={len(full_summ_units)} "
+        f"incr={len(incr_summ_units)}"
+    )
+    # The incremental summarize subjects must be exactly the new doc-B entities
+    # (the unchanged doc-A entities are skipped by the Delta hash check).
+    assert {u.subject_id for u in incr_summ_units} == {"GLOBEX", "CORP", "ALICE", "QUX"}
+    # And every incremental summarize unit must have its kind recorded correctly
+    # (this is what makes the cross-job input_hash lookup work).
+    from kb_platform.db.enums import UnitKind
+
+    assert all(u.kind == UnitKind.SUMMARIZE_DESCRIPTIONS for u in incr_summ_units)
+
 
 def test_incremental_uses_delta_strategies():
     """Incremental summarize/community_reports resolve to the Delta variants; full does not."""
