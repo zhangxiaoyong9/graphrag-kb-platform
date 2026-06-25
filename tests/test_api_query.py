@@ -32,20 +32,20 @@ def test_query_returns_answer(client):
     assert "ACME" in body["answer"]
 
 
-def test_query_default_engine_when_not_injected(tmp_path):
-    """create_app without query_engine should default to FakeQueryEngine."""
+def test_query_builds_real_engine_per_kb_when_not_injected(tmp_path):
+    """create_app without query_engine → None; route builds GraphRagQueryEngine per-KB."""
     engine = create_engine(f"sqlite:///{tmp_path}/t.db")
     Base.metadata.create_all(engine)
     client = TestClient(create_app(Repository(engine), data_root=str(tmp_path)))
     client.post("/kbs", json={"name": "kb1", "method": "standard", "settings_yaml": "{}"})
     r = client.post("/kbs/1/query", json={"method": "global", "query": "hello"})
-    assert r.status_code == 200
-    assert r.json()["answer"] == "[global] You asked: hello"
+    assert r.status_code == 200  # graceful: returns error field, not 500
+    assert r.json()["error"] is not None  # no community reports / no LLM → error
 
 
 def test_query_positional_args_still_work(tmp_path):
-    """Existing callers using positional args must still work (query_engine default)."""
+    """Existing callers using positional args must still work (query_engine defaults to None)."""
     engine = create_engine(f"sqlite:///{tmp_path}/t.db")
     Base.metadata.create_all(engine)
     app = create_app(Repository(engine), str(tmp_path))
-    assert app.state.query_engine is not None
+    assert app.state.query_engine is None  # None = build real per-KB in production

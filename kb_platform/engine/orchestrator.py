@@ -128,9 +128,25 @@ class Orchestrator:
         self.repo.set_step_status(step.id, StepStatus.SUCCEEDED)
 
     async def _chunk_documents(self, step) -> None:
+        import pandas as pd
+
+        from kb_platform.db.engine import session_scope
+        from kb_platform.db.models import KnowledgeBase
+
+        from sqlalchemy import select
+
         job = self.repo.get_job(step.job_id)
         chunks: list[Chunk] = []
         for doc in self.repo.get_documents(job.kb_id):
             for ordinal, piece in enumerate(self.adapter.chunk_document(doc.id, doc.text or "")):
                 chunks.append(Chunk(chunk_id=piece.chunk_id, kb_id=job.kb_id, document_id=doc.id, ordinal=ordinal, text=piece.text))
         self.repo.add_chunks(chunks)
+        # Write text_units.parquet so the embeddings step can embed chunk text
+        with session_scope(self.repo.engine) as s:
+            kb = s.scalar(select(KnowledgeBase).where(KnowledgeBase.id == job.kb_id))
+            data_root = kb.data_root
+        if chunks:
+            pd.DataFrame([
+                {"id": c.chunk_id, "text": c.text, "document_ids": [str(c.document_id)], "n_tokens": 0}
+                for c in chunks
+            ]).to_parquet(f"{data_root}/text_units.parquet")

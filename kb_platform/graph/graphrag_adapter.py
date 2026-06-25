@@ -27,6 +27,7 @@ class GraphRagAdapter:
         cluster_fn: Callable[..., list] | None = None,
         finalize_fn: Callable[..., tuple[pd.DataFrame, pd.DataFrame]] | None = None,
         report_factory: Callable[[], object] | None = None,
+        embed_factory: Callable[[], object] | None = None,
     ) -> None:
         self._chunker = chunker
         self._extractor_factory = extractor_factory
@@ -35,6 +36,7 @@ class GraphRagAdapter:
         self._cluster_fn = cluster_fn
         self._finalize_fn = finalize_fn
         self._report_factory = report_factory
+        self._embed_factory = embed_factory
 
     def chunk_document(self, doc_id: int, text: str) -> list[ChunkText]:
         return [ChunkText(chunk_id=_hash(tc.text), text=tc.text) for tc in self._chunker.chunk(text)]
@@ -128,15 +130,11 @@ class GraphRagAdapter:
         return e, rr
 
     def embed_items(self, texts: list[str]) -> list[list[float]]:
-        """Embed texts via graphrag's configured embedding model.
-
-        Phase 3b stub: not yet wired to the real embedding pipeline. Raises
-        NotImplementedError until Task 2 connects ``create_embedding``. The
-        Protocol is structural so this does not break runtime construction.
-        """
-        raise NotImplementedError(
-            "GraphRagAdapter.embed_items is not wired yet (Phase 3b Task 2)."
-        )
+        """Embed texts via graphrag's configured embedding model."""
+        if self._embed_factory is None:
+            raise RuntimeError("embed_factory not configured")
+        embedder = self._embed_factory()
+        return embedder.embedding(texts)
 
 
 def _format_community_context(context: dict) -> str:
@@ -206,12 +204,24 @@ def build_default_adapter(
             max_report_length=2000,
         )
 
+    try:
+        from graphrag_llm.embedding import create_embedding
+
+        embedder = create_embedding(model_config)
+
+        def embed_factory():
+            return embedder
+
+    except Exception:  # noqa: BLE001 — embedding optional (not every config supports it)
+        embed_factory = None
+
     return GraphRagAdapter(
         chunker=chunker,
         extractor_factory=extractor_factory,
         entity_types=list(DEFAULT_ENTITY_TYPES),
         summarize_factory=summarize_factory,
         report_factory=report_factory,
+        embed_factory=embed_factory,
     )
 
 

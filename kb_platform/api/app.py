@@ -18,21 +18,13 @@ from kb_platform.api.routes_jobs import router as jobs_router
 from kb_platform.api.routes_kbs import router
 from kb_platform.api.routes_query import router as query_router
 from kb_platform.db.repository import Repository
-from kb_platform.query.engine import FakeQueryEngine, QueryEngine
+from kb_platform.query.engine import QueryEngine
 
 # Module-level so tests can monkeypatch `kb_platform.api.app.WEB_DIST`.
 WEB_DIST = os.environ.get(
     "KB_WEB_DIST",
     str(Path(__file__).resolve().parents[2] / "web" / "dist"),
 )
-
-
-def _default_query_engine() -> QueryEngine:
-    """Return the default (MVP) query engine.
-
-    Production worker/API startup injects a ``GraphRagQueryEngine`` (Task 5).
-    """
-    return FakeQueryEngine()
 
 
 def create_app(
@@ -46,7 +38,7 @@ def create_app(
     app = FastAPI(title="KB Platform")
     app.state.repo = repo
     app.state.data_root = data_root
-    app.state.query_engine = query_engine or _default_query_engine()
+    app.state.query_engine = query_engine  # None = build real per-KB (production); non-None = injected (tests)
 
     # API routers registered first -> matched before the catch-all below.
     app.include_router(router)
