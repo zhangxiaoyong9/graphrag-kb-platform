@@ -10,3 +10,4 @@ export interface JobOut { id: number; status: JobStatus; steps: StepOut[] }
 export interface UnitOut { id: number; subject_id: string; status: UnitStatus; error: string | null; llm_raw_output: string | null; needs_reconsolidation: boolean }
 export interface KbCreate { name: string; method?: string; settings_yaml?: string; min_unit_success_ratio?: number }
 export interface DocumentCreate { title: string; text: string }
+export interface QueryResult { answer: string; method: string; error: string | null }

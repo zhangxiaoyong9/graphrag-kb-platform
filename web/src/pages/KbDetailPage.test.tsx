@@ -15,6 +15,11 @@ const server = setupServer(
     store = [...store, job];
     return HttpResponse.json(job);
   }),
+  http.post("/kbs/1/query", async ({ request }) => {
+    const body = (await request.json()) as { method?: string; query?: string };
+    const method = body.method ?? "local";
+    return HttpResponse.json({ answer: `[${method}] fake answer`, method, error: null });
+  }),
 );
 beforeAll(() => server.listen());
 afterEach(() => {
@@ -30,4 +35,14 @@ test("shows kb, documents, jobs; trigger adds a job", async () => {
   expect(await screen.findByText("job 7")).toBeInTheDocument();
   await userEvent.click(screen.getByText("Trigger Index"));
   expect(await screen.findByText("job 8")).toBeInTheDocument();
+});
+
+test("query box posts method+text and renders answer", async () => {
+  const user = userEvent.setup();
+  render(<MemoryRouter initialEntries={["/kbs/1"]}><Routes><Route path="/kbs/:id" element={<KbDetailPage />} /></Routes></MemoryRouter>);
+  await screen.findByText("demo");
+  await user.selectOptions(screen.getByLabelText("query method"), "global");
+  await user.type(screen.getByPlaceholderText("ask a question"), "what is it?");
+  await user.click(screen.getByText("Ask"));
+  expect(await screen.findByText("[global] fake answer")).toBeInTheDocument();
 });
