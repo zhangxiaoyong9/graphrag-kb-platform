@@ -5,7 +5,8 @@ import type { QueryResult } from "../api/types";
 import { QUERY_METHODS } from "../lib/query-methods";
 import { cn } from "../lib/cn";
 import { Card, CardHeader, Button, Spinner } from "../components/ui";
-import { IconSparkle, IconWarn } from "../components/icons";
+import { QueryResultView } from "../components/QueryResultView";
+import { IconSparkle } from "../components/icons";
 
 /** Query tab: pick a retrieval method, ask, read the answer. */
 export default function QueryPage() {
@@ -86,17 +87,13 @@ export default function QueryPage() {
       {(result || error) && (
         <Card>
           <CardHeader title="回答" subtitle={`方法 · ${result?.method ?? method}`} icon={<IconSparkle width={18} height={18} />} />
-          <div className="mt-4">
-            {error ? (
-              <div className="flex items-start gap-2 rounded-lg bg-danger-soft px-3 py-2 text-[13px] text-danger">
-                <IconWarn width={16} height={16} className="mt-0.5 shrink-0" />
-                <span>{error}</span>
-              </div>
-            ) : (
-              <div className="whitespace-pre-wrap rounded-xl bg-surface-2 px-4 py-3 text-sm leading-relaxed text-ink">
-                {result?.answer}
-              </div>
-            )}
+          <div className="mt-4 space-y-3">
+            <div className="whitespace-pre-wrap rounded-xl bg-surface-2 px-4 py-3 text-sm leading-relaxed text-ink">
+              {result?.answer}
+            </div>
+            <QueryResultView
+              result={result ?? { answer: "", method, error: error ?? null }}
+            />
           </div>
         </Card>
       )}

@@ -6,7 +6,8 @@ import type { QueryResult } from "../api/types";
 import { QUERY_METHODS } from "../lib/query-methods";
 import { cn } from "../lib/cn";
 import { Card, CardHeader, Button, Spinner, Badge, EmptyState } from "../components/ui";
-import { IconSearch, IconSparkle, IconWarn, IconClock, IconDatabase } from "../components/icons";
+import { QueryResultView } from "../components/QueryResultView";
+import { IconSearch, IconSparkle, IconClock, IconDatabase } from "../components/icons";
 
 interface Result {
   data: QueryResult;
@@ -158,24 +159,13 @@ export default function QueryTestPage() {
             }
           />
           <div className="mt-4 space-y-3">
-            {error ? (
-              <div className="flex items-start gap-2 rounded-lg bg-danger-soft px-3 py-2 text-[13px] text-danger">
-                <IconWarn width={16} height={16} className="mt-0.5 shrink-0" />
-                <span>{error}</span>
-              </div>
-            ) : (
-              <div className="whitespace-pre-wrap rounded-xl bg-surface-2 px-4 py-3 text-sm leading-relaxed text-ink">
-                {result?.data.answer}
-              </div>
-            )}
-            {/* Honest: the query API returns a synthesized answer with no structured citations. */}
-            <div className="rounded-lg border border-dashed border-line-strong px-3 py-2 text-[12px] text-muted">
-              <span className="font-medium text-body">引用片段：</span>
-              当前查询接口仅返回综合答案，未附带结构化引用 / 来源片段，故此处不展示。
-              <Link to={`/kbs/${kbId ?? ""}/graph`} className="ml-1 text-brand hover:underline">
-                前往图谱查看相关实体 →
-              </Link>
+            <div className="whitespace-pre-wrap rounded-xl bg-surface-2 px-4 py-3 text-sm leading-relaxed text-ink">
+              {result?.data.answer}
             </div>
+            <QueryResultView
+              result={result?.data ?? { answer: "", method, error: error ?? null }}
+              clientElapsedMs={result?.elapsedMs}
+            />
           </div>
         </Card>
       )}

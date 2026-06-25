@@ -5,6 +5,7 @@ import { listKbs, query as apiQuery } from "../api/client";
 import { QUERY_METHODS } from "../lib/query-methods";
 import { cn } from "../lib/cn";
 import { Card, CardHeader, Button, Spinner, Badge, EmptyState } from "../components/ui";
+import { QueryResultView } from "../components/QueryResultView";
 import { IconChat, IconSparkle, IconWarn, IconClock, IconDatabase } from "../components/icons";
 
 interface Message {
@@ -180,9 +181,6 @@ export default function ChatPage() {
               {busy ? "回答中…" : "发送"}
             </Button>
           </div>
-          <p className="mt-1.5 text-[11px] text-muted">
-            查询接口仅返回综合答案，不附带结构化引用片段。
-          </p>
         </div>
       </Card>
     </div>
@@ -224,6 +222,16 @@ function ChatBubble({ m }: { m: Message }) {
           <div className="whitespace-pre-wrap rounded-2xl rounded-tl-sm bg-surface-2 px-4 py-2.5 text-sm leading-relaxed text-ink">
             {m.text}
           </div>
+        )}
+        {m.error ? null : (
+          <QueryResultView
+            result={{
+              answer: m.text,
+              method: m.method ?? "local",
+              error: m.error ?? null,
+              elapsedMs: m.elapsedMs,
+            }}
+          />
         )}
       </div>
     </div>
