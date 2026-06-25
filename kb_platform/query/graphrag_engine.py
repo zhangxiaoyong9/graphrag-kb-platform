@@ -309,10 +309,22 @@ class GraphRagQueryEngine:
             )
 
         result = await engine.search(query=query)
-        answer = getattr(result, "response", "") or ""
+        return self._result_from_search(method, result)
+
+    def _result_from_search(self, method: str, search_result) -> QueryResult:
+        """Map a graphrag SearchResult into an enriched QueryResult."""
+        answer = getattr(search_result, "response", "") or ""
         if isinstance(answer, (list, dict)):
             answer = str(answer)
-        return QueryResult(answer=answer, method=method)
+        return QueryResult(
+            answer=answer,
+            method=method,
+            elapsed_ms=round(float(getattr(search_result, "completion_time", 0.0) or 0.0) * 1000, 1),
+            prompt_tokens=int(getattr(search_result, "prompt_tokens", 0) or 0) or None,
+            output_tokens=int(getattr(search_result, "output_tokens", 0) or 0) or None,
+            llm_calls=int(getattr(search_result, "llm_calls", 0) or 0) or None,
+            sources=self._extract_sources(getattr(search_result, "context_data", None), method),
+        )
 
     def _resolve_config(self, root: str | None = None):
         """Return a GraphRagConfig from the supplied model_config.

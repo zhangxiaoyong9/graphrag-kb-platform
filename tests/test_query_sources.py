@@ -1,4 +1,6 @@
 """QueryResult enrichment: SourceRef + optional elapsed/tokens/sources."""
+from types import SimpleNamespace
+
 import pandas as pd
 
 from kb_platform.query.engine import QueryResult, SourceRef
@@ -55,3 +57,28 @@ def test_extract_sources_caps_text_snippet():
     ctx = {"sources": pd.DataFrame([{"id": 1, "text": long}])}
     out = _engine()._extract_sources(ctx, "basic")
     assert len(out[0].text) <= 200
+
+
+def test_result_from_search_maps_fields():
+    sr = SimpleNamespace(
+        response="答案",
+        context_data={"entities": pd.DataFrame([{"name": "E1", "description": "d"}])},
+        completion_time=0.123,
+        prompt_tokens=10,
+        output_tokens=20,
+        llm_calls=1,
+    )
+    r = _engine()._result_from_search("local", sr)
+    assert r.answer == "答案" and r.method == "local"
+    assert r.elapsed_ms == 123.0
+    assert r.prompt_tokens == 10 and r.output_tokens == 20 and r.llm_calls == 1
+    assert r.sources and r.sources[0].name == "E1"
+
+
+def test_result_from_search_handles_list_response():
+    sr = SimpleNamespace(
+        response=[{"x": 1}], context_data=None, completion_time=0.0,
+        prompt_tokens=0, output_tokens=0, llm_calls=0,
+    )
+    r = _engine()._result_from_search("basic", sr)
+    assert r.answer == "[{'x': 1}]" and r.sources is None
