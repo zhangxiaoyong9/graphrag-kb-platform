@@ -24,6 +24,17 @@ def _mock_model_config() -> "object":
     )
 
 
+def _mock_model_config_with_responses(responses: list[str]) -> "object":
+    from graphrag_llm.config import ModelConfig
+
+    return ModelConfig(
+        type="mock",
+        model_provider="mock",
+        model="mock",
+        mock_responses=responses,
+    )
+
+
 def test_real_extract_chunk_parses_entities(tmp_path):
     adapter = build_default_adapter(data_root=str(tmp_path), model_config=_mock_model_config())
     result = adapter.extract_chunk_sync("c1", "ACME employs Bob.")
@@ -46,3 +57,33 @@ def test_real_merge_dedupes_entities(tmp_path):
     # both chunks extract ACME; merged entity table has 1 ACME row with frequency=2
     acme = entities[entities["title"] == "ACME"].iloc[0]
     assert acme["frequency"] == 2
+
+
+def test_real_summarize_entity_via_mockllm(tmp_path):
+    import asyncio
+
+    cfg = _mock_model_config_with_responses(['{"summary": "merged ACME"}'])
+    adapter = build_default_adapter(data_root=str(tmp_path), model_config=cfg)
+    out = asyncio.run(adapter.summarize_entity("ACME", ["d1", "d2"]))
+    assert isinstance(out, str) and out
+
+
+def test_real_cluster_relationships_real_leiden(tmp_path):
+    adapter = build_default_adapter(data_root=str(tmp_path), model_config=_mock_model_config())
+    rels = pd.DataFrame([
+        {"source": "A", "target": "B", "weight": 1.0, "description": ["d"], "text_unit_ids": ["c1"]},
+        {"source": "B", "target": "C", "weight": 1.0, "description": ["d"], "text_unit_ids": ["c1"]},
+        {"source": "X", "target": "Y", "weight": 1.0, "description": ["d"], "text_unit_ids": ["c2"]},
+    ])
+    comms = adapter.cluster_relationships(rels)
+    assert {"level", "community_id", "parent", "entity_ids"} <= set(comms.columns)
+    members = {e for ids in comms["entity_ids"] for e in ids}
+    assert {"A", "B", "C", "X", "Y"} <= members
+
+
+def test_real_finalize_adds_degrees(tmp_path):
+    adapter = build_default_adapter(data_root=str(tmp_path), model_config=_mock_model_config())
+    ents = pd.DataFrame([{"title": "A", "type": "T", "description": ["d"], "text_unit_ids": ["c1"], "frequency": 1}])
+    rels = pd.DataFrame([{"source": "A", "target": "B", "weight": 1.0, "description": ["d"], "text_unit_ids": ["c1"]}])
+    e2, r2 = adapter.finalize_entities_relationships(ents, rels)
+    assert "degree" in e2.columns and "combined_degree" in r2.columns
