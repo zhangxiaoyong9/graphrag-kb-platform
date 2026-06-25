@@ -62,6 +62,13 @@ class Orchestrator:
                     self.repo.set_job_status(job_id, JobStatus.FAILED)
                     return
             self.repo.set_job_status(job_id, JobStatus.SUCCEEDED)
+            # Incremental jobs may have late-succeeded units (e.g. retried
+            # units whose extraction landed after merge_delta already ran).
+            # Reconsolidate those cached extractions into the final parquet.
+            if job.type == "incremental":
+                from kb_platform.reconsolidate import reconsolidate
+
+                await reconsolidate(self.repo, self.adapter, job.kb_id, self.data_root)
         except Exception:
             logger.exception("job %s failed", job_id)
             self.repo.set_job_status(job_id, JobStatus.FAILED)
