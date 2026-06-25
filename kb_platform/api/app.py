@@ -16,7 +16,9 @@ from fastapi.staticfiles import StaticFiles
 
 from kb_platform.api.routes_jobs import router as jobs_router
 from kb_platform.api.routes_kbs import router
+from kb_platform.api.routes_query import router as query_router
 from kb_platform.db.repository import Repository
+from kb_platform.query.engine import FakeQueryEngine, QueryEngine
 
 # Module-level so tests can monkeypatch `kb_platform.api.app.WEB_DIST`.
 WEB_DIST = os.environ.get(
@@ -25,7 +27,17 @@ WEB_DIST = os.environ.get(
 )
 
 
-def create_app(repo: Repository, data_root: str = ".") -> FastAPI:
+def _default_query_engine() -> QueryEngine:
+    """Return the default (MVP) query engine.
+
+    Production worker/API startup injects a ``GraphRagQueryEngine`` (Task 5).
+    """
+    return FakeQueryEngine()
+
+
+def create_app(
+    repo: Repository, data_root: str = ".", query_engine: QueryEngine | None = None
+) -> FastAPI:
     """Build a FastAPI app with repo and data_root injected via app.state.
 
     If the SPA build directory (`WEB_DIST`) exists, static SPA hosting with
@@ -34,10 +46,12 @@ def create_app(repo: Repository, data_root: str = ".") -> FastAPI:
     app = FastAPI(title="KB Platform")
     app.state.repo = repo
     app.state.data_root = data_root
+    app.state.query_engine = query_engine or _default_query_engine()
 
     # API routers registered first -> matched before the catch-all below.
     app.include_router(router)
     app.include_router(jobs_router)
+    app.include_router(query_router)
 
     dist = Path(WEB_DIST)
     if dist.exists():

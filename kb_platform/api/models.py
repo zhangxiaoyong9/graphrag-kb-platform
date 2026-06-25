@@ -88,3 +88,16 @@ class JobOut(BaseModel):
     id: int
     status: str
     steps: list[StepOut] = []
+
+
+# --- Query ---------------------------------------------------------------
+
+class QueryRequest(BaseModel):
+    method: str
+    query: str
+
+
+class QueryResultOut(BaseModel):
+    answer: str
+    method: str
+    error: str | None = None
