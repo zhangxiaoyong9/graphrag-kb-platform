@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 # --- Knowledge base ------------------------------------------------------
 
+
 class KbCreate(BaseModel):
     name: str
     method: str = "standard"
@@ -28,6 +29,7 @@ class KbOut(BaseModel):
 
 # --- Document ------------------------------------------------------------
 
+
 class DocumentCreate(BaseModel):
     title: str | None = None
     text: str
@@ -40,6 +42,7 @@ class DocumentOut(BaseModel):
 
 
 # --- Job / step / unit ---------------------------------------------------
+
 
 class JobCreate(BaseModel):
     method: str = "standard"
@@ -93,6 +96,7 @@ class JobOut(BaseModel):
 
 
 # --- Query ---------------------------------------------------------------
+
 
 class QueryRequest(BaseModel):
     method: str
