@@ -7,3 +7,8 @@ dist/
 *.db
 *.db-*
 .superpowers/
+
+# Frontend (web/)
+web/node_modules/
+web/dist/
+web/tsconfig.tsbuildinfo
