@@ -2,10 +2,11 @@ import json
 
 import pandas as pd
 import pytest
+from sqlalchemy import select
 
 from kb_platform.db.engine import create_engine, session_scope
 from kb_platform.db.enums import StepKind
-from kb_platform.db.models import Base, KnowledgeBase
+from kb_platform.db.models import Base, Job, KnowledgeBase
 from kb_platform.db.repository import Repository
 from kb_platform.engine.spec import StepSpec
 from kb_platform.graph.adapter import FakeGraphAdapter
@@ -49,6 +50,13 @@ async def test_reconsolidate_clears_flag_and_incorporates_late_data(tmp_path):
     assert repo.get_unit_by_subject(step.id, "chunk", "late-chunk").needs_reconsolidation is False
     # Late entity incorporated into parquet.
     assert "LATE" in set(pd.read_parquet(tmp_path / "entities.parquet")["title"])
+
+    # No orphan pending throwaway *incremental* job left behind.
+    with session_scope(repo.engine) as s:
+        pending = s.scalars(
+            select(Job).where(Job.kb_id == 1, Job.type == "incremental", Job.status == "pending")
+        ).all()
+    assert len(pending) == 0
 
 
 @pytest.mark.asyncio

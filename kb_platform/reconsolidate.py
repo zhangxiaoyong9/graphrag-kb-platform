@@ -12,7 +12,7 @@ import logging
 from sqlalchemy import select
 
 from kb_platform.db.engine import session_scope
-from kb_platform.db.enums import StepKind, StepStatus
+from kb_platform.db.enums import JobStatus, StepKind, StepStatus
 from kb_platform.db.models import Unit
 from kb_platform.db.repository import Repository
 from kb_platform.engine.spec import StepSpec
@@ -41,6 +41,8 @@ async def reconsolidate(repo: Repository, adapter, kb_id: int, data_root: str) -
     ).steps[0]
     atomic_steps.merge_delta(repo, adapter, step)
     repo.set_step_status(step.id, StepStatus.SUCCEEDED)
+    # Close the throwaway job so the polling worker does not re-claim it.
+    repo.set_job_status(step.job_id, JobStatus.SUCCEEDED)
 
     with session_scope(repo.engine) as s:
         for u in s.scalars(select(Unit).where(Unit.needs_reconsolidation.is_(True))):
