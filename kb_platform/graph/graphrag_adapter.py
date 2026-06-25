@@ -202,3 +202,24 @@ def build_default_adapter(
         summarize_factory=summarize_factory,
         report_factory=report_factory,
     )
+
+
+def build_adapter_from_settings(settings_json: str, data_root: str) -> GraphRagAdapter:
+    """Parse KB settings_json (graphrag settings subset) -> ModelConfig -> real adapter.
+
+    Lenient: defaults to litellm/openai/gpt-4o-mini when keys are absent.
+    """
+    import json
+
+    from graphrag_llm.config import ModelConfig
+
+    settings = json.loads(settings_json or "{}")
+    llm = settings.get("llm", {}) or settings.get("completion", {})
+    model_config = ModelConfig(
+        type=llm.get("type", "litellm"),
+        model_provider=llm.get("model_provider", "openai"),
+        model=llm.get("model", "gpt-4o-mini"),
+        api_base=llm.get("api_base"),
+        api_version=llm.get("api_version"),
+    )
+    return build_default_adapter(data_root=data_root, model_config=model_config)
