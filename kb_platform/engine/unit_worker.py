@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from datetime import datetime
 from pathlib import Path
 
 from kb_platform.db.enums import UnitStatus
@@ -16,11 +17,13 @@ logger = logging.getLogger(__name__)
 
 
 class UnitWorker:
-    def __init__(self, *, repo: Repository, adapter: GraphAdapter, data_root: str, concurrency: int = 4) -> None:
+    def __init__(self, *, repo: Repository, adapter: GraphAdapter, data_root: str, concurrency: int = 4, worker_id: str = "worker", heartbeat_interval: float = 5.0) -> None:
         self.repo = repo
         self.adapter = adapter
         self.data_root = Path(data_root)
         self.concurrency = concurrency
+        self.worker_id = worker_id
+        self.heartbeat_interval = heartbeat_interval
 
     async def run_unit_fanout(self, step, min_success_ratio: float = 1.0) -> None:
         strategy = STRATEGIES[step.name]
@@ -41,14 +44,28 @@ class UnitWorker:
         if not units:
             return
         for u in units:
-            self.repo.set_unit_running(u.id)
+            self.repo.set_unit_running(u.id, self.worker_id, datetime.now())
         sem = asyncio.Semaphore(self.concurrency)
 
         async def handle(u):
             async with sem:
-                await self._process(strategy, u)
+                stop = asyncio.Event()
+                hb = asyncio.create_task(self._heartbeat(u.id, stop))
+                try:
+                    await self._process(strategy, u)
+                finally:
+                    stop.set()
+                    await hb
 
         await asyncio.gather(*(handle(u) for u in units))
+
+    async def _heartbeat(self, unit_id: int, stop: asyncio.Event) -> None:
+        while not stop.is_set():
+            self.repo.touch_unit_heartbeat(unit_id, datetime.now())
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=self.heartbeat_interval)
+            except asyncio.TimeoutError:
+                pass
 
     async def _process(self, strategy, unit) -> None:
         try:

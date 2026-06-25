@@ -54,3 +54,16 @@ async def test_failed_unit_marks_step_partially_failed(setup):
     import os
 
     assert not os.path.exists(f"{data_root}/entities.parquet")
+
+
+@pytest.mark.asyncio
+async def test_unit_running_stamps_worker_id_and_heartbeat(setup):
+    repo, step_id, data_root = setup  # 复用 2a 的 fixture(2 chunk)
+    from kb_platform.engine.unit_worker import UnitWorker
+    from kb_platform.graph.adapter import FakeGraphAdapter
+
+    worker = UnitWorker(repo=repo, adapter=FakeGraphAdapter(), data_root=data_root, worker_id="w1", heartbeat_interval=0.01)
+    await worker.run_unit_fanout(repo.get_step(step_id))
+    units = repo.list_units(step_id)
+    assert all(u.worker_id == "w1" for u in units)
+    assert all(u.heartbeat_at is not None for u in units)

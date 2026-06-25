@@ -143,11 +143,19 @@ class Repository:
             s.flush()
             return u
 
-    def set_unit_running(self, unit_id: int) -> None:
+    def set_unit_running(self, unit_id: int, worker_id: str | None = None, heartbeat_at=None) -> None:
         with session_scope(self.engine) as s:
             u = s.get(Unit, unit_id)
             u.status = UnitStatus.RUNNING
             u.attempt_no += 1
+            if worker_id is not None:
+                u.worker_id = worker_id
+            if heartbeat_at is not None:
+                u.heartbeat_at = heartbeat_at
+
+    def touch_unit_heartbeat(self, unit_id: int, heartbeat_at) -> None:
+        with session_scope(self.engine) as s:
+            s.get(Unit, unit_id).heartbeat_at = heartbeat_at
 
     def mark_needs_reconsolidation(self, unit_id: int) -> None:
         with session_scope(self.engine) as s:
