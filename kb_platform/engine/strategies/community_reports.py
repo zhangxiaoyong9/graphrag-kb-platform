@@ -22,6 +22,18 @@ def _data_root(repo: Repository, step) -> Path:
         return Path(kb.data_root)
 
 
+def _structured_output(repo: Repository, step) -> bool:
+    """KB setting community_reports.structured_output (default True)."""
+    import json
+
+    job = repo.get_job(step.job_id)
+    with session_scope(repo.engine) as s:
+        kb = s.scalar(select(KnowledgeBase).where(KnowledgeBase.id == job.kb_id))
+        settings = json.loads(kb.settings_json or "{}")
+    cr = settings.get("community_reports", {}) or {}
+    return bool(cr.get("structured_output", True))
+
+
 class CommunityReportsStrategy:
     """Generate community reports bottom-up by level.
 
@@ -64,9 +76,13 @@ class CommunityReportsStrategy:
         row = comms[comms["community_id"] == comm_id].iloc[0]
         members = list(row["entity_ids"])
         ent_rows = ents[ents["title"].isin(members)][["title", "description"]].to_dict("records")
-        rel_rows = rels[rels["source"].isin(members) & rels["target"].isin(members)][["source", "target", "description"]].to_dict("records")
+        rel_rows = rels[rels["source"].isin(members) & rels["target"].isin(members)][
+            ["source", "target", "description"]
+        ].to_dict("records")
         # Children = communities whose parent is this community (excluding self).
-        child_ids = [c for c in list(comms[comms["parent"] == comm_id]["community_id"]) if c != comm_id]
+        child_ids = [
+            c for c in list(comms[comms["parent"] == comm_id]["community_id"]) if c != comm_id
+        ]
         sub_reports = []
         for cid in child_ids:
             p = root / "reports" / f"{cid}.json"
@@ -81,9 +97,13 @@ class CommunityReportsStrategy:
         }
 
     async def run_unit(self, adapter, unit, repo: Repository) -> UnitResult:
-        root = _data_root(repo, repo.get_step(unit.step_id))
+        step = repo.get_step(unit.step_id)
+        root = _data_root(repo, step)
         ctx = self._context(root, unit.subject_id)
-        report: CommunityReport = await adapter.report_community(ctx)
+        if _structured_output(repo, step):
+            report: CommunityReport = await adapter.report_community(ctx)
+        else:
+            report: CommunityReport = await adapter.report_community_plain(ctx)
         return UnitResult(
             payload=report,
             input_hash=hashlib.sha512(json.dumps(ctx, default=str).encode()).hexdigest(),
@@ -94,17 +114,23 @@ class CommunityReportsStrategy:
         d = data_root / "reports"
         d.mkdir(parents=True, exist_ok=True)
         rep: CommunityReport = result.payload
-        (d / f"{unit.subject_id}.json").write_text(json.dumps({
-            "title": rep.title,
-            "summary": rep.summary,
-            "findings": rep.findings,
-            "rank": rep.rank,
-            "full_content": rep.full_content,
-            "level": rep.level,
-            "community": rep.community,
-        }))
+        (d / f"{unit.subject_id}.json").write_text(
+            json.dumps(
+                {
+                    "title": rep.title,
+                    "summary": rep.summary,
+                    "findings": rep.findings,
+                    "rank": rep.rank,
+                    "full_content": rep.full_content,
+                    "level": rep.level,
+                    "community": rep.community,
+                }
+            )
+        )
 
-    def finalize(self, repo: Repository, adapter, step, data_root: Path, min_success_ratio: float) -> StepStatus:
+    def finalize(
+        self, repo: Repository, adapter, step, data_root: Path, min_success_ratio: float
+    ) -> StepStatus:
         units = repo.list_units(step.id)
         if not units:
             return StepStatus.PARTIALLY_FAILED

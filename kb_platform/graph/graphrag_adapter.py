@@ -28,6 +28,7 @@ class GraphRagAdapter:
         finalize_fn: Callable[..., tuple[pd.DataFrame, pd.DataFrame]] | None = None,
         report_factory: Callable[[], object] | None = None,
         embed_factory: Callable[[], object] | None = None,
+        completion=None,
     ) -> None:
         self._chunker = chunker
         self._extractor_factory = extractor_factory
@@ -37,9 +38,12 @@ class GraphRagAdapter:
         self._finalize_fn = finalize_fn
         self._report_factory = report_factory
         self._embed_factory = embed_factory
+        self._completion = completion
 
     def chunk_document(self, doc_id: int, text: str) -> list[ChunkText]:
-        return [ChunkText(chunk_id=_hash(tc.text), text=tc.text) for tc in self._chunker.chunk(text)]
+        return [
+            ChunkText(chunk_id=_hash(tc.text), text=tc.text) for tc in self._chunker.chunk(text)
+        ]
 
     def extract_chunk_sync(self, chunk_id: str, text: str) -> ExtractionResult:
         extractor = self._extractor_factory()
@@ -57,7 +61,9 @@ class GraphRagAdapter:
         )
         return ExtractionResult(entities=entities_df, relationships=rels_df)
 
-    def merge_extractions(self, results: list[ExtractionResult]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    def merge_extractions(
+        self, results: list[ExtractionResult]
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
         from kb_platform.graph.adapter import FakeGraphAdapter
 
         # merge logic is identical across adapters — reuse the shared implementation
@@ -89,23 +95,40 @@ class GraphRagAdapter:
             community=context["community"],
         )
 
+    async def report_community_plain(self, context: dict) -> CommunityReport:
+        """Structured-output-free community report (for providers that reject json_schema).
+
+        Asks the model to return a JSON object, then leniently parses it. Falls
+        back to a minimal report so a single bad community cannot fail the step.
+        """
+        if self._completion is None:
+            raise RuntimeError("completion not configured for plain community reports")
+        prompt = (
+            _format_community_context(context)
+            + "\n\nWrite a concise report. Respond with ONLY a JSON object, no prose, "
+            'of the shape: {"title": str, "summary": str, "findings": [str], '
+            '"rating": <0-10 float>}.'
+        )
+        resp = await self._completion.completion_async(messages=prompt, response_format=None)
+        return _parse_report_json(getattr(resp, "output", "") or "", context)
+
     def cluster_relationships(self, relationships: pd.DataFrame) -> pd.DataFrame:
         from graphrag.index.operations.cluster_graph import cluster_graph
 
         cluster_fn = self._cluster_fn or cluster_graph
-        communities = cluster_fn(
-            edges=relationships, max_cluster_size=10, use_lcc=False
-        )
+        communities = cluster_fn(edges=relationships, max_cluster_size=10, use_lcc=False)
         # communities: list[(level:int, cluster_id:int, parent:int, nodes:list[str])]
-        return pd.DataFrame([
-            {
-                "level": level,
-                "community_id": str(cid),
-                "parent": str(parent),
-                "entity_ids": list(nodes),
-            }
-            for (level, cid, parent, nodes) in communities
-        ])
+        return pd.DataFrame(
+            [
+                {
+                    "level": level,
+                    "community_id": str(cid),
+                    "parent": str(parent),
+                    "entity_ids": list(nodes),
+                }
+                for (level, cid, parent, nodes) in communities
+            ]
+        )
 
     def finalize_entities_relationships(
         self,
@@ -137,14 +160,50 @@ class GraphRagAdapter:
         return embedder.embedding(texts)
 
 
+def _parse_report_json(text: str, context: dict) -> CommunityReport:
+    """Best-effort parse of a plain-text JSON report into a CommunityReport.
+
+    Extracts the first ``{...}`` block (regex) so leading/trailing prose is
+    tolerated, maps ``rating`` (0-10) -> ``rank`` (0-1). Always returns a report
+    (defaults on any parse failure) so one malformed community degrades, not crashes.
+    """
+    import json
+    import re
+
+    data: dict = {}
+    m = re.search(r"\{.*\}", text, re.DOTALL)
+    if m:
+        try:
+            data = json.loads(m.group(0))
+        except Exception:  # noqa: BLE001
+            data = {}
+    title = str(data.get("title") or f"Community {context['community']}")
+    summary = str(data.get("summary") or title)
+    findings = data.get("findings") or [summary]
+    if not isinstance(findings, list):
+        findings = [str(findings)]
+    try:
+        rank = float(data.get("rating", 0.0)) / 10.0
+    except Exception:  # noqa: BLE001
+        rank = 0.0
+    rank = max(0.0, min(1.0, rank))
+    return CommunityReport(
+        title=title,
+        summary=summary,
+        findings=[str(f) for f in findings],
+        rank=rank,
+        full_content=str(data.get("full_content") or summary),
+        level=int(context["level"]),
+        community=str(context["community"]),
+    )
+
+
 def _format_community_context(context: dict) -> str:
     """Flatten a community context dict into the text fed to CommunityReportsExtractor."""
     ents = "\n".join(
         f"- {e['title']}: {e.get('description', '')}" for e in context.get("entities", [])
     )
-    rels = "\n".join(
-        f"- {r['source']} -> {r['target']}" for r in context.get("relationships", [])
-    )
+    rels = "\n".join(f"- {r['source']} -> {r['target']}" for r in context.get("relationships", []))
     subs = "\n".join(
         f"- {s.get('title', s.get('community', ''))}: {s.get('summary', '')}"
         for s in context.get("sub_reports", [])
@@ -169,8 +228,12 @@ def build_default_adapter(
     from graphrag_llm.completion import create_completion
     from graphrag.tokenizer.get_tokenizer import get_tokenizer
     from graphrag.index.operations.extract_graph.graph_extractor import GraphExtractor
-    from graphrag.index.operations.summarize_descriptions.description_summary_extractor import SummarizeExtractor
-    from graphrag.index.operations.summarize_communities.community_reports_extractor import CommunityReportsExtractor
+    from graphrag.index.operations.summarize_descriptions.description_summary_extractor import (
+        SummarizeExtractor,
+    )
+    from graphrag.index.operations.summarize_communities.community_reports_extractor import (
+        CommunityReportsExtractor,
+    )
     from graphrag.prompts.index.extract_graph import GRAPH_EXTRACTION_PROMPT
     from graphrag.prompts.index.summarize_descriptions import SUMMARIZE_PROMPT
     from graphrag.prompts.index.community_report import COMMUNITY_REPORT_PROMPT
@@ -178,7 +241,9 @@ def build_default_adapter(
 
     tokenizer = get_tokenizer(encoding_model="cl100k_base")
     chunker = create_chunker(
-        ChunkingConfig(type=ChunkerType.Tokens, encoding_model="cl100k_base", size=1200, overlap=100),
+        ChunkingConfig(
+            type=ChunkerType.Tokens, encoding_model="cl100k_base", size=1200, overlap=100
+        ),
         encode=tokenizer.encode,
         decode=tokenizer.decode,
     )
@@ -222,10 +287,13 @@ def build_default_adapter(
         summarize_factory=summarize_factory,
         report_factory=report_factory,
         embed_factory=embed_factory,
+        completion=completion,
     )
 
 
-def build_adapter_from_settings(settings_json: str, data_root: str, api_key: str | None = None) -> GraphRagAdapter:
+def build_adapter_from_settings(
+    settings_json: str, data_root: str, api_key: str | None = None
+) -> GraphRagAdapter:
     """Parse KB settings_json (graphrag settings subset) -> ModelConfig -> real adapter.
 
     Lenient: defaults to litellm/openai/gpt-4o-mini when keys are absent.

@@ -15,8 +15,14 @@ class ChunkText:
 
 @dataclass
 class ExtractionResult:
-    entities: pd.DataFrame = field(default_factory=lambda: pd.DataFrame(columns=["title", "type", "description", "source_id"]))
-    relationships: pd.DataFrame = field(default_factory=lambda: pd.DataFrame(columns=["source", "target", "weight", "description", "source_id"]))
+    entities: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(columns=["title", "type", "description", "source_id"])
+    )
+    relationships: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(
+            columns=["source", "target", "weight", "description", "source_id"]
+        )
+    )
 
 
 @dataclass
@@ -37,7 +43,9 @@ class GraphAdapter(Protocol):
 
     async def extract_chunk(self, chunk_id: str, text: str) -> ExtractionResult: ...
 
-    def merge_extractions(self, results: list[ExtractionResult]) -> tuple[pd.DataFrame, pd.DataFrame]: ...
+    def merge_extractions(
+        self, results: list[ExtractionResult]
+    ) -> tuple[pd.DataFrame, pd.DataFrame]: ...
 
     # --- Phase 2a (Task 4) extensions: summarize / report / cluster / finalize ---
 
@@ -48,6 +56,8 @@ class GraphAdapter(Protocol):
     def report_community_sync(self, context: dict) -> CommunityReport: ...
 
     async def report_community(self, context: dict) -> CommunityReport: ...
+
+    async def report_community_plain(self, context: dict) -> CommunityReport: ...
 
     def cluster_relationships(self, relationships: pd.DataFrame) -> pd.DataFrame: ...
 
@@ -91,34 +101,69 @@ class FakeGraphAdapter:
         self.extract_calls.append(chunk_id)
         names = [w for w in text.split() if w[:1].isupper()]
         entities = pd.DataFrame(
-            [{"title": n.upper(), "type": "CONCEPT", "description": n, "source_id": chunk_id} for n in names]
-            or [{"title": "PLACEHOLDER", "type": "CONCEPT", "description": text[:40], "source_id": chunk_id}]
+            [
+                {"title": n.upper(), "type": "CONCEPT", "description": n, "source_id": chunk_id}
+                for n in names
+            ]
+            or [
+                {
+                    "title": "PLACEHOLDER",
+                    "type": "CONCEPT",
+                    "description": text[:40],
+                    "source_id": chunk_id,
+                }
+            ]
         )
         rels = pd.DataFrame(columns=["source", "target", "weight", "description", "source_id"])
         if len(names) >= 2:
-            rels = pd.DataFrame([{
-                "source": names[0].upper(), "target": names[1].upper(),
-                "weight": 1.0, "description": "related", "source_id": chunk_id,
-            }])
+            rels = pd.DataFrame(
+                [
+                    {
+                        "source": names[0].upper(),
+                        "target": names[1].upper(),
+                        "weight": 1.0,
+                        "description": "related",
+                        "source_id": chunk_id,
+                    }
+                ]
+            )
         return ExtractionResult(entities=entities, relationships=rels)
 
     async def extract_chunk(self, chunk_id: str, text: str) -> ExtractionResult:
         return self.extract_chunk_sync(chunk_id, text)
 
-    def merge_extractions(self, results: list[ExtractionResult]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    def merge_extractions(
+        self, results: list[ExtractionResult]
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
         entity_dfs = [r.entities for r in results if not r.entities.empty]
         rel_dfs = [r.relationships for r in results if not r.relationships.empty]
         entities = (
-            pd.concat(entity_dfs, ignore_index=True).groupby(["title", "type"], sort=False)
-            .agg(description=("description", list), text_unit_ids=("source_id", list), frequency=("source_id", "count"))
+            pd.concat(entity_dfs, ignore_index=True)
+            .groupby(["title", "type"], sort=False)
+            .agg(
+                description=("description", list),
+                text_unit_ids=("source_id", list),
+                frequency=("source_id", "count"),
+            )
             .reset_index()
-            if entity_dfs else pd.DataFrame(columns=["title", "type", "description", "text_unit_ids", "frequency"])
+            if entity_dfs
+            else pd.DataFrame(
+                columns=["title", "type", "description", "text_unit_ids", "frequency"]
+            )
         )
         relationships = (
-            pd.concat(rel_dfs, ignore_index=True).groupby(["source", "target"], sort=False)
-            .agg(description=("description", list), text_unit_ids=("source_id", list), weight=("weight", "sum"))
+            pd.concat(rel_dfs, ignore_index=True)
+            .groupby(["source", "target"], sort=False)
+            .agg(
+                description=("description", list),
+                text_unit_ids=("source_id", list),
+                weight=("weight", "sum"),
+            )
             .reset_index()
-            if rel_dfs else pd.DataFrame(columns=["source", "target", "description", "text_unit_ids", "weight"])
+            if rel_dfs
+            else pd.DataFrame(
+                columns=["source", "target", "description", "text_unit_ids", "weight"]
+            )
         )
         if not entities.empty and not relationships.empty:
             titles = set(entities["title"])
@@ -138,7 +183,9 @@ class FakeGraphAdapter:
     def report_community_sync(self, context: dict) -> CommunityReport:
         names = [e["title"] for e in context.get("entities", [])]
         title = names[0] if names else f"Community {context['community']}"
-        summary = f"Community {context['community']} covers {', '.join(names[:5]) or 'no entities'}."
+        summary = (
+            f"Community {context['community']} covers {', '.join(names[:5]) or 'no entities'}."
+        )
         return CommunityReport(
             title=title,
             summary=summary,
@@ -152,6 +199,9 @@ class FakeGraphAdapter:
     async def report_community(self, context: dict) -> CommunityReport:
         return self.report_community_sync(context)
 
+    async def report_community_plain(self, context: dict) -> CommunityReport:
+        return self.report_community_sync(context)
+
     def cluster_relationships(self, relationships: pd.DataFrame) -> pd.DataFrame:
         # Deterministic "clustering": connected components are communities (single level=0, parent=self).
         # Stand-in for graphrag's hierarchical Leiden (real one lands in Phase 2b).
@@ -163,9 +213,13 @@ class FakeGraphAdapter:
         rows = []
         for cid, comp in enumerate(nx.connected_components(g)):
             members = sorted(comp)
-            rows.append({"level": 0, "community_id": str(cid), "parent": str(cid), "entity_ids": members})
-        return pd.DataFrame(rows) if rows else pd.DataFrame(
-            columns=["level", "community_id", "parent", "entity_ids"]
+            rows.append(
+                {"level": 0, "community_id": str(cid), "parent": str(cid), "entity_ids": members}
+            )
+        return (
+            pd.DataFrame(rows)
+            if rows
+            else pd.DataFrame(columns=["level", "community_id", "parent", "entity_ids"])
         )
 
     def finalize_entities_relationships(
@@ -189,6 +243,9 @@ class FakeGraphAdapter:
 
     def embed_items(self, texts: list[str]) -> list[list[float]]:
         return [
-            [(int(hashlib.md5((t + str(i)).encode()).hexdigest(), 16) % 100) / 100.0 for i in range(8)]
+            [
+                (int(hashlib.md5((t + str(i)).encode()).hexdigest(), 16) % 100) / 100.0
+                for i in range(8)
+            ]
             for t in texts
         ]
