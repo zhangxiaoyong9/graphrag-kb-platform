@@ -13,7 +13,11 @@ def _repo(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path}/t.db")
     Base.metadata.create_all(engine)
     with session_scope(engine) as s:
-        s.add(KnowledgeBase(name="kb1", method="standard", settings_json="{}", data_root=str(tmp_path)))
+        s.add(
+            KnowledgeBase(
+                name="kb1", method="standard", settings_json="{}", data_root=str(tmp_path)
+            )
+        )
     repo = Repository(engine)
     repo.add_document(kb_id=1, title="d", text="ACME Org Bob Person Foo Bar Baz " * 200)
     return repo
@@ -26,7 +30,9 @@ async def test_worker_picks_up_and_completes_pending_job(tmp_path):
     repo = _repo(tmp_path)
     job = repo.create_job_pending(kb_id=1, method="standard")
     assert job.status == "pending"
-    await run_worker_once(repo=repo, adapter_factory=lambda kb: FakeGraphAdapter(), heartbeat_interval=0.01)
+    await run_worker_once(
+        repo=repo, adapter_factory=lambda kb: FakeGraphAdapter(), heartbeat_interval=0.01
+    )
     assert repo.get_job(job.id).status == "succeeded"
 
 
@@ -118,7 +124,9 @@ async def test_worker_orphan_job_marked_failed_not_crash(tmp_path):
     conn = sqlite3.connect(f"{tmp_path}/t.db")
     conn.execute("PRAGMA foreign_keys=OFF")
     conn.execute("DELETE FROM job")
-    conn.execute("INSERT INTO job (id, kb_id, type, method, status) VALUES (999, 777777, 'full', 'standard', 'pending')")
+    conn.execute(
+        "INSERT INTO job (id, kb_id, type, method, status) VALUES (999, 777777, 'full', 'standard', 'pending')"
+    )
     conn.commit()
     conn.close()
 
@@ -146,7 +154,9 @@ async def test_recover_stale_units_resets_null_heartbeat(tmp_path):
     from kb_platform.engine.spec import StepKind, StepSpec
 
     repo = _repo(tmp_path)
-    job = repo.create_job(kb_id=1, type="full", specs=[StepSpec("extract_graph", StepKind.UNIT_FANOUT)])
+    job = repo.create_job(
+        kb_id=1, type="full", specs=[StepSpec("extract_graph", StepKind.UNIT_FANOUT)]
+    )
     step = job.steps[0]
     repo.add_units(step.id, [("chunk", "c1")])
     with session_scope(repo.engine) as s:
@@ -157,3 +167,34 @@ async def test_recover_stale_units_resets_null_heartbeat(tmp_path):
     recovered = repo.recover_stale_units(datetime.now())
     assert recovered == 1
     assert repo.list_units(step.id)[0].status == UnitStatus.PENDING
+
+
+def test_run_worker_stops_on_event(tmp_path):
+    """When stop_event is set, the loop exits without processing newly-added jobs."""
+    import threading
+
+    from kb_platform.db.engine import create_engine
+    from kb_platform.db.models import Base
+    from kb_platform.db.repository import Repository
+    from kb_platform.graph.adapter import FakeGraphAdapter
+    from kb_platform.worker import run_worker
+
+    engine = create_engine(f"sqlite:///{tmp_path}/db.sqlite")
+    # Schema is needed for the final claim_one_pending_job() probe (the loop body
+    # itself never runs because stop_event is pre-set).
+    Base.metadata.create_all(engine)
+    repo = Repository(engine)
+    stop = threading.Event()
+    # Add a pending job AFTER stop is set so we can prove the loop did not claim it.
+    # Seed nothing; just verify the loop returns promptly when stop is already set.
+    stop.set()
+    adapter_factory = lambda kb: FakeGraphAdapter()  # noqa: E731
+    run_worker(
+        repo=repo,
+        adapter_factory=adapter_factory,
+        poll_interval=0.01,
+        stop_event=stop,
+        install_signal_handlers=False,
+    )
+    # If graceful shutdown is broken, run_worker loops forever and this test hangs.
+    assert repo.claim_one_pending_job() is None

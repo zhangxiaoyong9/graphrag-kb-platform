@@ -1,10 +1,12 @@
 """Background worker: polls SQLite for pending jobs, runs them with crash recovery."""
 
+from __future__ import annotations
+
 import asyncio
 import logging
-import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import TYPE_CHECKING, Callable
 
 from sqlalchemy import select
 
@@ -14,7 +16,9 @@ from kb_platform.db.models import KnowledgeBase
 from kb_platform.db.repository import Repository
 from kb_platform.engine.orchestrator import Orchestrator
 from kb_platform.graph.adapter import GraphAdapter
-from typing import Callable
+
+if TYPE_CHECKING:
+    import threading
 
 logger = logging.getLogger(__name__)
 
@@ -94,12 +98,34 @@ def run_worker(
     repo: Repository,
     adapter_factory: Callable[[KnowledgeBase], GraphAdapter],
     poll_interval: float = 2.0,
+    stop_event: threading.Event | None = None,
+    install_signal_handlers: bool = True,
     **kw,
 ) -> None:
-    """Production entry: loop forever, recovering + claiming one job per iteration."""
-    while True:
+    """Production entry: loop until stopped, recovering + claiming one job per iteration.
+
+    Installs SIGTERM/SIGINT handlers (unless ``install_signal_handlers`` is False)
+    that set ``stop_event``. On stop, the in-flight ``run_worker_once`` finishes,
+    then the loop returns so the process can exit cleanly. Hard kills (SIGKILL)
+    are still recovered on the next start via stale RUNNING -> PENDING reset.
+    """
+    import signal
+    import threading
+
+    if stop_event is None:
+        stop_event = threading.Event()
+
+    def _stop(signum, frame):  # noqa: ARG001
+        stop_event.set()
+
+    if install_signal_handlers:
+        signal.signal(signal.SIGTERM, _stop)
+        signal.signal(signal.SIGINT, _stop)
+
+    while not stop_event.is_set():
         asyncio.run(run_worker_once(repo=repo, adapter_factory=adapter_factory, recover=True, **kw))
-        time.sleep(poll_interval)
+        if stop_event.wait(poll_interval):
+            break
 
 
 if __name__ == "__main__":
@@ -110,4 +136,7 @@ if __name__ == "__main__":
 
     db = sys.argv[1] if len(sys.argv) > 1 else "kb.db"
     repo = Repository(create_engine(f"sqlite:///{db}"))
-    run_worker(repo=repo, adapter_factory=lambda kb: build_adapter_from_settings(kb.settings_json, kb.data_root))
+    run_worker(
+        repo=repo,
+        adapter_factory=lambda kb: build_adapter_from_settings(kb.settings_json, kb.data_root),
+    )
