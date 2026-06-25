@@ -3,10 +3,11 @@
 import json
 
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import ValidationError
 from sqlalchemy import select
 from starlette.formparsers import UploadFile
 
-from kb_platform.api.models import DocumentOut, KbCreate, KbOut
+from kb_platform.api.models import DocumentCreate, DocumentOut, KbCreate, KbOut
 from kb_platform.db.engine import session_scope
 from kb_platform.db.models import KnowledgeBase
 
@@ -60,12 +61,11 @@ async def add_document(kb_id: int, request: Request) -> DocumentOut:
     repo = request.app.state.repo
     content_type = request.headers.get("content-type", "")
     if content_type.startswith("application/json"):
-        data = await request.json()
-        text = data.get("text")
-        title = data.get("title") or "untitled"
-        if text is None:
-            raise HTTPException(400, "provide 'text' or 'file'")
-        doc = repo.add_document(kb_id=kb_id, title=title, text=text)
+        try:
+            body = DocumentCreate.model_validate(await request.json())
+        except ValidationError as e:
+            raise HTTPException(422, str(e)) from e
+        doc = repo.add_document(kb_id=kb_id, title=body.title or "untitled", text=body.text)
     elif content_type.startswith("multipart/form-data"):
         form = await request.form()
         title = form.get("title")

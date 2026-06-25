@@ -63,6 +63,12 @@ def test_create_kb_422_on_missing_name(client):
     assert r.status_code == 422
 
 
+def test_add_document_422_on_bad_body(client):
+    client.post("/kbs", json={"name": "kb1", "method": "standard", "settings_yaml": "{}"})
+    r = client.post("/kbs/1/documents", json={"text": 123})  # wrong type
+    assert r.status_code == 422
+
+
 def test_create_kb_response_shape(client):
     r = client.post("/kbs", json={"name": "kb1", "method": "standard", "settings_yaml": "{}"})
     body = r.json()
