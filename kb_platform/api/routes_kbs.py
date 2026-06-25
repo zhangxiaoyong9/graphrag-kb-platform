@@ -1,6 +1,7 @@
 """KB + document endpoints."""
 
 import json
+import os
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import ValidationError
@@ -10,6 +11,7 @@ from starlette.formparsers import UploadFile
 from kb_platform.api.models import DocumentCreate, DocumentOut, JobListItem, KbCreate, KbOut
 from kb_platform.db.engine import session_scope
 from kb_platform.db.models import KnowledgeBase
+from kb_platform.input.doc_reader import read_document
 
 router = APIRouter()
 
@@ -40,8 +42,7 @@ def list_kbs(request: Request) -> list[KbOut]:
     repo = request.app.state.repo
     with session_scope(repo.engine) as s:
         return [
-            KbOut(id=k.id, name=k.name, method=k.method)
-            for k in s.scalars(select(KnowledgeBase))
+            KbOut(id=k.id, name=k.name, method=k.method) for k in s.scalars(select(KnowledgeBase))
         ]
 
 
@@ -72,26 +73,49 @@ async def add_document(kb_id: int, request: Request) -> DocumentOut:
         upload = form.get("file")
         if not isinstance(upload, UploadFile):
             raise HTTPException(400, "provide 'text' or 'file'")
-        raw = upload.file.read().decode("utf-8", errors="replace")
-        doc = repo.add_document(kb_id=kb_id, title=title or upload.filename, text=raw)
+        data = await upload.read()
+        max_bytes = int(os.environ.get("KB_MAX_UPLOAD_BYTES", 25 * 1024 * 1024))
+        if len(data) > max_bytes:
+            raise HTTPException(413, "upload too large")
+        text = read_document(data, upload.filename or "upload")
+        doc = repo.add_document(kb_id=kb_id, title=title or upload.filename, text=text)
     else:
         raise HTTPException(400, "provide 'text' or 'file'")
-    return DocumentOut(id=doc.id, title=doc.title, status=doc.status)
+    return DocumentOut(
+        id=doc.id, title=doc.title, status=doc.status, bytes=doc.bytes, chunk_count=0
+    )
 
 
 @router.get("/kbs/{kb_id}/documents", response_model=list[DocumentOut])
 def list_documents(kb_id: int, request: Request) -> list[DocumentOut]:
     repo = request.app.state.repo
+    counts = repo.chunk_counts_by_document(kb_id)
     return [
-        DocumentOut(id=d.id, title=d.title, status=d.status)
+        DocumentOut(
+            id=d.id,
+            title=d.title,
+            status=d.status,
+            bytes=d.bytes,
+            chunk_count=counts.get(d.id, 0),
+        )
         for d in repo.get_documents(kb_id)
     ]
+
+
+@router.delete("/kbs/{kb_id}/documents/{doc_id}", status_code=204)
+def delete_document(kb_id: int, doc_id: int, request: Request):
+    """Delete a document and its chunks (application-level cascade).
+
+    The graph/index is NOT shrunk. Returns 204 on success, 404 if the
+    document does not exist or belongs to a different KB.
+    """
+    repo = request.app.state.repo
+    if not repo.delete_document(kb_id, doc_id):
+        raise HTTPException(404)
+    return None
 
 
 @router.get("/kbs/{kb_id}/jobs", response_model=list[JobListItem])
 def list_jobs(kb_id: int, request: Request) -> list[JobListItem]:
     repo = request.app.state.repo
-    return [
-        JobListItem(id=j.id, status=j.status)
-        for j in repo.list_jobs_by_kb(kb_id)
-    ]
+    return [JobListItem(id=j.id, status=j.status) for j in repo.list_jobs_by_kb(kb_id)]

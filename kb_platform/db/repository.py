@@ -51,6 +51,34 @@ class Repository:
                 s.scalars(select(Chunk).where(Chunk.kb_id == kb_id).order_by(Chunk.ordinal))
             )
 
+    def delete_document(self, kb_id: int, doc_id: int) -> bool:
+        """Delete a document AND its chunks (application-level cascade).
+
+        The graph/index is NOT shrunk (no reverse extraction); only the
+        control-plane rows are removed. Returns True if a row was deleted.
+        """
+        from sqlalchemy import delete as sa_delete
+
+        with session_scope(self.engine) as s:
+            doc = s.get(Document, doc_id)
+            if doc is None or doc.kb_id != kb_id:
+                return False
+            s.execute(sa_delete(Chunk).where(Chunk.document_id == doc_id))
+            s.delete(doc)
+        return True
+
+    def chunk_counts_by_document(self, kb_id: int) -> dict[int, int]:
+        """Map of {document_id: chunk_count} for one KB."""
+        from sqlalchemy import func
+
+        with session_scope(self.engine) as s:
+            rows = s.execute(
+                select(Chunk.document_id, func.count())
+                .where(Chunk.kb_id == kb_id)
+                .group_by(Chunk.document_id)
+            ).all()
+        return {int(d): int(c) for d, c in rows}
+
     # ---- jobs / steps ----
     def create_job(
         self, kb_id: int, type: str, specs: list[StepSpec], method: str = "standard"

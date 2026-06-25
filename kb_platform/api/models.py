@@ -39,6 +39,8 @@ class DocumentOut(BaseModel):
     id: int
     title: str
     status: str = "uploaded"
+    bytes: int = 0
+    chunk_count: int = 0
 
 
 # --- Job / step / unit ---------------------------------------------------
