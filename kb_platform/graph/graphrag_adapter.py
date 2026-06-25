@@ -204,22 +204,39 @@ def build_default_adapter(
     )
 
 
-def build_adapter_from_settings(settings_json: str, data_root: str) -> GraphRagAdapter:
+def build_adapter_from_settings(settings_json: str, data_root: str, api_key: str | None = None) -> GraphRagAdapter:
     """Parse KB settings_json (graphrag settings subset) -> ModelConfig -> real adapter.
 
     Lenient: defaults to litellm/openai/gpt-4o-mini when keys are absent.
+
+    Credential resolution (graphrag-llm's ModelConfig requires api_key at construction
+    when auth_method=api_key, the default — it does not defer to litellm's env lookup):
+      1. explicit ``api_key`` arg;
+      2. ``llm.api_key`` literal in settings (not recommended — stored in DB);
+      3. env var named by ``llm.api_key_env`` (e.g. "DEEPSEEK_API_KEY");
+      4. env var ``{MODEL_PROVIDER}_API_KEY`` uppercased.
+    The key is never persisted; prefer option 3/4 (env) so secrets stay out of the DB.
     """
     import json
+    import os
 
     from graphrag_llm.config import ModelConfig
 
     settings = json.loads(settings_json or "{}")
     llm = settings.get("llm", {}) or settings.get("completion", {})
+    provider = llm.get("model_provider", "openai")
+    resolved_key = (
+        api_key
+        or llm.get("api_key")
+        or (os.getenv(llm["api_key_env"]) if llm.get("api_key_env") else None)
+        or os.getenv(f"{provider.upper()}_API_KEY")
+    )
     model_config = ModelConfig(
         type=llm.get("type", "litellm"),
-        model_provider=llm.get("model_provider", "openai"),
+        model_provider=provider,
         model=llm.get("model", "gpt-4o-mini"),
         api_base=llm.get("api_base"),
         api_version=llm.get("api_version"),
+        api_key=resolved_key,
     )
     return build_default_adapter(data_root=data_root, model_config=model_config)
