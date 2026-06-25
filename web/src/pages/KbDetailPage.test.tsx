@@ -10,6 +10,7 @@ const server = setupServer(
   http.get("/kbs/1", () => HttpResponse.json({ id: 1, name: "demo", method: "standard" })),
   http.get("/kbs/1/documents", () => HttpResponse.json([{ id: 1, title: "doc1", status: "parsed" }])),
   http.get("/kbs/1/jobs", () => HttpResponse.json(store)),
+  http.get("/kbs/1/graph", () => HttpResponse.json({ nodes: [], edges: [] })),
   http.get("/kbs/1/cost", () => HttpResponse.json({ total_usd: 0.05, by_step: { workflow_x: 0.04, workflow_y: 0.01 }, by_model: {}, by_job: {} })),
   http.post("/kbs/1/jobs", () => {
     const job = { id: 8, status: "pending" };

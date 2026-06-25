@@ -116,7 +116,7 @@ def graph(  # noqa: ANN201
                 "id": title,
                 "title": title,
                 "type": str(row.get("type", "") or ""),
-                "degree": int(row.get("degree", 0) or 0),
+                "degree": int(row["degree"]) if pd.notna(row.get("degree")) else 0,
                 "community": tc.get(title),
             }
         )
@@ -128,7 +128,7 @@ def graph(  # noqa: ANN201
         {
             "source": str(r["source"]),
             "target": str(r["target"]),
-            "weight": float(r.get("weight", 0) or 0),
+            "weight": float(r["weight"]) if pd.notna(r.get("weight")) else 0.0,
             "description": str(r.get("description", "") or ""),
         }
         for _, r in selected_edges.iterrows()
