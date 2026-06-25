@@ -1,5 +1,7 @@
 """Data access for the control plane."""
 
+from datetime import datetime
+
 from sqlalchemy import or_, select, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import selectinload
@@ -22,9 +24,13 @@ class Repository:
 
         with session_scope(self.engine) as s:
             doc = Document(
-                kb_id=kb_id, title=title, source_uri=source_uri,
+                kb_id=kb_id,
+                title=title,
+                source_uri=source_uri,
                 content_hash=hashlib.sha512(text.encode()).hexdigest(),
-                status="parsed", bytes=len(text), text=text,
+                status="parsed",
+                bytes=len(text),
+                text=text,
             )
             s.add(doc)
             s.flush()
@@ -41,16 +47,28 @@ class Repository:
 
     def get_chunks(self, kb_id: int) -> list[Chunk]:
         with session_scope(self.engine) as s:
-            return list(s.scalars(select(Chunk).where(Chunk.kb_id == kb_id).order_by(Chunk.ordinal)))
+            return list(
+                s.scalars(select(Chunk).where(Chunk.kb_id == kb_id).order_by(Chunk.ordinal))
+            )
 
     # ---- jobs / steps ----
-    def create_job(self, kb_id: int, type: str, specs: list[StepSpec], method: str = "standard") -> Job:
+    def create_job(
+        self, kb_id: int, type: str, specs: list[StepSpec], method: str = "standard"
+    ) -> Job:
         with session_scope(self.engine) as s:
             job = Job(kb_id=kb_id, type=type, method=method, status=JobStatus.PENDING)
             s.add(job)
             s.flush()
             for ordinal, spec in enumerate(specs):
-                s.add(Step(job_id=job.id, name=spec.name, ordinal=ordinal, kind=spec.kind, status=StepStatus.PENDING))
+                s.add(
+                    Step(
+                        job_id=job.id,
+                        name=spec.name,
+                        ordinal=ordinal,
+                        kind=spec.kind,
+                        status=StepStatus.PENDING,
+                    )
+                )
             s.flush()
             # Touch the relationship so it is loaded before the session closes
             # (expire_on_commit=False keeps it accessible afterwards).
@@ -86,11 +104,23 @@ class Repository:
     def add_units(self, step_id: int, subjects: list[tuple[str, str]]) -> None:
         with session_scope(self.engine) as s:
             for subject_type, subject_id in subjects:
-                s.add(Unit(step_id=step_id, subject_type=subject_type, subject_id=subject_id, status=UnitStatus.PENDING, attempt_no=0))
+                s.add(
+                    Unit(
+                        step_id=step_id,
+                        subject_type=subject_type,
+                        subject_id=subject_id,
+                        status=UnitStatus.PENDING,
+                        attempt_no=0,
+                    )
+                )
 
     def claim_pending_units(self, step_id: int) -> list[Unit]:
         with session_scope(self.engine) as s:
-            units = list(s.scalars(select(Unit).where(Unit.step_id == step_id, Unit.status == UnitStatus.PENDING)))
+            units = list(
+                s.scalars(
+                    select(Unit).where(Unit.step_id == step_id, Unit.status == UnitStatus.PENDING)
+                )
+            )
             for u in units:
                 u.status = UnitStatus.RUNNING
                 u.attempt_no += 1
@@ -100,7 +130,14 @@ class Repository:
         with session_scope(self.engine) as s:
             return list(s.scalars(select(Unit).where(Unit.step_id == step_id)))
 
-    def set_unit_succeeded(self, unit_id: int, *, input_hash: str | None = None, cost_json: str | None = None, llm_raw_output: str | None = None) -> None:
+    def set_unit_succeeded(
+        self,
+        unit_id: int,
+        *,
+        input_hash: str | None = None,
+        cost_json: str | None = None,
+        llm_raw_output: str | None = None,
+    ) -> None:
         with session_scope(self.engine) as s:
             u = s.get(Unit, unit_id)
             u.status = UnitStatus.SUCCEEDED
@@ -120,7 +157,11 @@ class Repository:
 
     def reset_failed_units_to_pending(self, step_id: int) -> int:
         with session_scope(self.engine) as s:
-            units = list(s.scalars(select(Unit).where(Unit.step_id == step_id, Unit.status == UnitStatus.FAILED)))
+            units = list(
+                s.scalars(
+                    select(Unit).where(Unit.step_id == step_id, Unit.status == UnitStatus.FAILED)
+                )
+            )
             for u in units:
                 u.status = UnitStatus.PENDING
                 u.error = None
@@ -138,12 +179,20 @@ class Repository:
 
     def add_unit(self, step_id: int, subject_type: str, subject_id: str) -> Unit:
         with session_scope(self.engine) as s:
-            u = Unit(step_id=step_id, subject_type=subject_type, subject_id=subject_id, status=UnitStatus.PENDING, attempt_no=0)
+            u = Unit(
+                step_id=step_id,
+                subject_type=subject_type,
+                subject_id=subject_id,
+                status=UnitStatus.PENDING,
+                attempt_no=0,
+            )
             s.add(u)
             s.flush()
             return u
 
-    def set_unit_running(self, unit_id: int, worker_id: str | None = None, heartbeat_at=None) -> None:
+    def set_unit_running(
+        self, unit_id: int, worker_id: str | None = None, heartbeat_at=None
+    ) -> None:
         with session_scope(self.engine) as s:
             u = s.get(Unit, unit_id)
             u.status = UnitStatus.RUNNING
@@ -178,7 +227,9 @@ class Repository:
     def create_job_pending(self, kb_id: int, method: str = "standard", type: str = "full") -> Job:
         from kb_platform.engine.orchestrator import Orchestrator
 
-        specs = Orchestrator.plan_incremental() if type == "incremental" else Orchestrator.plan_full()
+        specs = (
+            Orchestrator.plan_incremental() if type == "incremental" else Orchestrator.plan_full()
+        )
         return self.create_job(kb_id=kb_id, type=type, specs=specs, method=method)
 
     def claim_one_pending_job(self) -> Job | None:
@@ -219,3 +270,21 @@ class Repository:
             for j in jobs:
                 j.status = JobStatus.PENDING
             return len(jobs)
+
+    def worker_status(self, stale_seconds: float) -> dict:
+        """Newest RUNNING-unit heartbeat, and whether it is stale.
+
+        Returns ``{"last_heartbeat_at": iso | None, "stale": bool}``. No RUNNING
+        units -> idle (last_heartbeat_at None, stale False).
+        """
+        with session_scope(self.engine) as s:
+            row = s.scalar(
+                select(Unit.heartbeat_at)
+                .where(Unit.status == UnitStatus.RUNNING)
+                .order_by(Unit.heartbeat_at.desc().nulls_last())
+                .limit(1)
+            )
+        if row is None:
+            return {"last_heartbeat_at": None, "stale": False}
+        stale = (datetime.now() - row).total_seconds() > stale_seconds
+        return {"last_heartbeat_at": row.isoformat(), "stale": stale}

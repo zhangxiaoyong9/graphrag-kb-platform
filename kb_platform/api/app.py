@@ -14,6 +14,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from kb_platform.api.routes_health import router as health_router
 from kb_platform.api.routes_jobs import router as jobs_router
 from kb_platform.api.routes_kbs import router
 from kb_platform.api.routes_query import router as query_router
@@ -38,12 +39,15 @@ def create_app(
     app = FastAPI(title="KB Platform")
     app.state.repo = repo
     app.state.data_root = data_root
-    app.state.query_engine = query_engine  # None = build real per-KB (production); non-None = injected (tests)
+    app.state.query_engine = (
+        query_engine  # None = build real per-KB (production); non-None = injected (tests)
+    )
 
     # API routers registered first -> matched before the catch-all below.
     app.include_router(router)
     app.include_router(jobs_router)
     app.include_router(query_router)
+    app.include_router(health_router)
 
     dist = Path(WEB_DIST)
     if dist.exists():
