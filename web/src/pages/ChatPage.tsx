@@ -6,6 +6,7 @@ import { QUERY_METHODS } from "../lib/query-methods";
 import { cn } from "../lib/cn";
 import { Card, CardHeader, Button, Spinner, Badge, EmptyState } from "../components/ui";
 import { QueryResultView } from "../components/QueryResultView";
+import type { SourceRef } from "../api/types";
 import { IconChat, IconSparkle, IconWarn, IconClock, IconDatabase } from "../components/icons";
 
 interface Message {
@@ -15,6 +16,11 @@ interface Message {
   method?: string;
   elapsedMs?: number;
   error?: string | null;
+  // Server-side fields (snake_case to match the API QueryResult wire format)
+  prompt_tokens?: number;
+  output_tokens?: number;
+  llm_calls?: number;
+  sources?: SourceRef[];
 }
 
 /** Chat-style Q&A: left KB picker, middle transcript, reuses the query() API. */
@@ -53,7 +59,17 @@ export default function ChatPage() {
       setMessages((m) =>
         m.map((msg) =>
           msg.id === pendingId
-            ? { ...msg, text: r.answer, method: r.method, elapsedMs, error: r.error }
+            ? {
+                ...msg,
+                text: r.answer,
+                method: r.method,
+                elapsedMs,
+                error: r.error,
+                prompt_tokens: r.prompt_tokens,
+                output_tokens: r.output_tokens,
+                llm_calls: r.llm_calls,
+                sources: r.sources,
+              }
             : msg,
         ),
       );
@@ -229,7 +245,11 @@ function ChatBubble({ m }: { m: Message }) {
               answer: m.text,
               method: m.method ?? "local",
               error: m.error ?? null,
-              elapsedMs: m.elapsedMs,
+              elapsed_ms: m.elapsedMs,
+              prompt_tokens: m.prompt_tokens,
+              output_tokens: m.output_tokens,
+              llm_calls: m.llm_calls,
+              sources: m.sources,
             }}
           />
         )}

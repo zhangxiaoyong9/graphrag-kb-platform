@@ -3,14 +3,17 @@ import { MemoryRouter } from "react-router-dom";
 import { QueryResultView } from "./QueryResultView";
 import type { QueryResult } from "../api/types";
 
+// Fixture uses snake_case to mirror the actual wire format from the backend
+// (QueryResultOut: elapsed_ms / prompt_tokens / output_tokens / llm_calls).
+// If someone reverts the fields to camelCase, this fixture + tsc will catch it.
 const r: QueryResult = {
   answer: "A",
   method: "local",
   error: null,
-  elapsedMs: 42,
-  promptTokens: 5,
-  outputTokens: 9,
-  llmCalls: 1,
+  elapsed_ms: 42,
+  prompt_tokens: 5,
+  output_tokens: 9,
+  llm_calls: 1,
   sources: [
     { kind: "entity", name: "宁德时代", text: "电池厂商" },
     { kind: "text_unit", name: "1", text: "一段来源片段" },

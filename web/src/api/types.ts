@@ -17,10 +17,10 @@ export interface QueryResult {
   answer: string;
   method: string;
   error: string | null;
-  elapsedMs?: number;
-  promptTokens?: number;
-  outputTokens?: number;
-  llmCalls?: number;
+  elapsed_ms?: number;
+  prompt_tokens?: number;
+  output_tokens?: number;
+  llm_calls?: number;
   sources?: SourceRef[];
 }
 

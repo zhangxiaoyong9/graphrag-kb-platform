@@ -11,10 +11,10 @@ export function QueryResultView({
   result: QueryResult;
   clientElapsedMs?: number;
 }) {
-  const elapsed = result.elapsedMs ?? clientElapsedMs;
+  const elapsed = result.elapsed_ms ?? clientElapsedMs;
   const entities = result.sources?.filter((s) => s.kind === "entity") ?? [];
   const texts = result.sources?.filter((s) => s.kind !== "entity") ?? [];
-  const hasTokens = result.promptTokens || result.outputTokens || result.llmCalls;
+  const hasTokens = result.prompt_tokens || result.output_tokens || result.llm_calls;
 
   return (
     <div className="space-y-3">
@@ -34,8 +34,8 @@ export function QueryResultView({
         )}
         {hasTokens ? (
           <span className="nums">
-            {result.promptTokens ?? 0} prompt · {result.outputTokens ?? 0} output
-            {result.llmCalls ? ` · ${result.llmCalls} 次调用` : ""}
+            {result.prompt_tokens ?? 0} prompt · {result.output_tokens ?? 0} output
+            {result.llm_calls ? ` · ${result.llm_calls} 次调用` : ""}
           </span>
         ) : null}
       </div>
@@ -45,8 +45,8 @@ export function QueryResultView({
           <p className="mb-1.5 text-[12px] font-medium text-body">引用与来源</p>
           {entities.length > 0 && (
             <div className="mb-2 flex flex-wrap gap-1.5">
-              {entities.map((e) => (
-                <SourceChip key={`e-${e.name}`} s={e} />
+              {entities.map((e, i) => (
+                <SourceChip key={`e-${i}-${e.name}`} s={e} />
               ))}
             </div>
           )}
