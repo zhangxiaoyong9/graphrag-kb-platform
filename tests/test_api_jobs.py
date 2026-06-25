@@ -86,3 +86,14 @@ def test_retry_step_resets_failed_units(client):
     r = client.post(f"/steps/{extract['id']}/retry")
     assert r.status_code == 200
     assert r.json()["reset"] == 2
+
+
+def test_trigger_job_422_on_bad_body(client):
+    r = client.post("/kbs/1/jobs", json={"method": 123})  # wrong type
+    assert r.status_code == 422
+
+
+def test_trigger_job_response_shape(client):
+    r = client.post("/kbs/1/jobs", json={"method": "standard"})
+    assert r.status_code == 202
+    assert set(r.json().keys()) == {"id", "status"}

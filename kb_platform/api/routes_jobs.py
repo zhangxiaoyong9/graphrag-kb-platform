@@ -2,11 +2,19 @@
 
 from fastapi import APIRouter, HTTPException, Request
 
+from kb_platform.api.models import (
+    JobCreate,
+    JobCreated,
+    JobOut,
+    StepOut,
+    UnitOut,
+)
+
 router = APIRouter()
 
 
-@router.post("/kbs/{kb_id}/jobs", status_code=202)
-def trigger_job(kb_id: int, payload: dict, request: Request):
+@router.post("/kbs/{kb_id}/jobs", response_model=JobCreated, status_code=202)
+def trigger_job(kb_id: int, payload: JobCreate, request: Request) -> JobCreated:
     from kb_platform.db.engine import session_scope
     from kb_platform.db.models import KnowledgeBase
 
@@ -17,56 +25,61 @@ def trigger_job(kb_id: int, payload: dict, request: Request):
     with session_scope(repo.engine) as s:
         if s.get(KnowledgeBase, kb_id) is None:
             raise HTTPException(404, f"kb {kb_id} not found")
-    job = repo.create_job_pending(kb_id=kb_id, method=payload.get("method", "standard"))
-    return {"id": job.id, "status": job.status}
+    job = repo.create_job_pending(kb_id=kb_id, method=payload.method)
+    return JobCreated(id=job.id, status=job.status)
 
 
-@router.get("/jobs/{job_id}")
-def get_job(job_id: int, request: Request):
+@router.get("/jobs/{job_id}", response_model=JobOut)
+def get_job(job_id: int, request: Request) -> JobOut:
     repo = request.app.state.repo
     job = repo.get_job(job_id)
     if not job:
         raise HTTPException(404)
-    return {
-        "id": job.id,
-        "status": job.status,
-        "steps": [
-            {"id": s.id, "name": s.name, "status": s.status}
-            for s in repo.get_steps(job_id)
-        ],
-    }
+    steps = [
+        StepOut(
+            id=s.id,
+            name=s.name,
+            ordinal=s.ordinal,
+            kind=s.kind,
+            status=s.status,
+            progress=None,  # filled in Task 2
+        )
+        for s in repo.get_steps(job_id)
+    ]
+    return JobOut(id=job.id, status=job.status, steps=steps)
 
 
-@router.get("/jobs/{job_id}/steps")
-def get_steps(job_id: int, request: Request):
+@router.get("/jobs/{job_id}/steps", response_model=list[StepOut])
+def get_steps(job_id: int, request: Request) -> list[StepOut]:
     repo = request.app.state.repo
     return [
-        {
-            "id": s.id,
-            "name": s.name,
-            "ordinal": s.ordinal,
-            "kind": s.kind,
-            "status": s.status,
-        }
+        StepOut(
+            id=s.id,
+            name=s.name,
+            ordinal=s.ordinal,
+            kind=s.kind,
+            status=s.status,
+            progress=None,  # filled in Task 2
+        )
         for s in repo.get_steps(job_id)
     ]
 
 
-@router.get("/steps/{step_id}/units")
-def get_units(step_id: int, request: Request, status: str | None = None):
+@router.get("/steps/{step_id}/units", response_model=list[UnitOut])
+def get_units(step_id: int, request: Request, status: str | None = None) -> list[UnitOut]:
     repo = request.app.state.repo
     units = repo.list_units(step_id)
     if status:
         units = [u for u in units if u.status == status]
     return [
-        {
-            "id": u.id,
-            "subject_id": u.subject_id,
-            "status": u.status,
-            "error": u.error,
-            "llm_raw_output": u.llm_raw_output,
-            "needs_reconsolidation": u.needs_reconsolidation,
-        }
+        UnitOut(
+            id=u.id,
+            subject_id=u.subject_id,
+            status=u.status,
+            error=u.error,
+            llm_raw_output=u.llm_raw_output,
+            needs_reconsolidation=u.needs_reconsolidation,
+        )
         for u in units
     ]
 

@@ -56,3 +56,14 @@ def test_upload_document_file(client):
 def test_upload_document_missing_input(client):
     client.post("/kbs", json={"name": "kb1", "method": "standard", "settings_yaml": "{}"})
     assert client.post("/kbs/1/documents").status_code == 400
+
+
+def test_create_kb_422_on_missing_name(client):
+    r = client.post("/kbs", json={"method": "standard"})  # missing name
+    assert r.status_code == 422
+
+
+def test_create_kb_response_shape(client):
+    r = client.post("/kbs", json={"name": "kb1", "method": "standard", "settings_yaml": "{}"})
+    body = r.json()
+    assert set(body.keys()) == {"id", "name", "method"}  # response_model restricts fields
