@@ -33,7 +33,10 @@ def main() -> None:
 
     repo = Repository(create_engine(f"sqlite:///{db}"))
     app = create_app(repo, data_root=data_root)
-    uvicorn.run(app, host=host, port=port)
+    # Force the native asyncio loop: graphrag_llm runs nest_asyncio.apply()
+    # at import, which cannot patch uvloop (uvicorn auto-selects uvloop when
+    # installed -> "Can't patch loop of type <class 'uvloop.Loop'>").
+    uvicorn.run(app, host=host, port=port, loop="asyncio")
 
 
 if __name__ == "__main__":
