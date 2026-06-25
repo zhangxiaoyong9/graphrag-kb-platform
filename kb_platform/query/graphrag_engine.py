@@ -30,7 +30,7 @@ index parquet files on disk and the caller-supplied ``model_config`` (a
 import logging
 import os
 
-from kb_platform.query.engine import QueryResult
+from kb_platform.query.engine import QueryResult, SourceRef
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +152,22 @@ def _norm_text_units(df):
         ]
     df = _ensure_col(df, "document_id", [""] * len(df))
     return df
+
+
+def _is_df(value) -> bool:
+    try:
+        import pandas as pd  # noqa: PLC0415
+
+        return isinstance(value, pd.DataFrame)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _first(row, cols) -> str:
+    for c in cols:
+        if c in row.index and row[c] not in (None, ""):
+            return str(row[c])
+    return ""
 
 
 class GraphRagQueryEngine:
@@ -332,3 +348,40 @@ class GraphRagQueryEngine:
         from graphrag.utils.api import get_embedding_store
 
         return get_embedding_store(config.vector_store, embedding_name)
+
+    def _extract_sources(self, context_data, method: str, limit: int = 4):
+        """Best-effort extraction of source entities + text snippets from a
+        graphrag SearchResult.context_data.
+
+        - dict[str, DataFrame]: "entities" -> entity name+description; the
+          first text-bearing frame -> text_unit snippets.
+        - str: wrapped as a single text_unit source.
+        Anything else / any failure -> None (never raises; never blocks the
+        answer).
+        """
+        try:
+            sources: list[SourceRef] = []
+            if isinstance(context_data, dict):
+                ents = context_data.get("entities")
+                if _is_df(ents):
+                    for _, row in ents.head(limit).iterrows():
+                        name = _first(row, ("name", "title", "id"))
+                        if not name:
+                            continue
+                        desc = str(row.get("description", "") or "")[:200]
+                        sources.append(SourceRef("entity", name, desc))
+                for _key, df in context_data.items():
+                    if not _is_df(df) or "text" not in df.columns:
+                        continue
+                    for _, row in df.head(limit).iterrows():
+                        txt = str(row.get("text", "") or "")
+                        if not txt.strip():
+                            continue
+                        sources.append(SourceRef("text_unit", str(row.get("id", _key)), txt[:200]))
+                    break
+            elif isinstance(context_data, str) and context_data.strip():
+                sources.append(SourceRef("text_unit", "context", context_data.strip()[:200]))
+            return sources or None
+        except Exception:  # noqa: BLE001 - sources are a nice-to-have
+            logger.exception("source extraction failed")
+            return None
