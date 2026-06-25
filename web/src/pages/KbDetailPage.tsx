@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { getKb, listDocuments, listJobsByKb, triggerJob, query as apiQuery } from "../api/client";
-import type { KbOut, DocumentOut } from "../api/types";
+import { getKb, listDocuments, listJobsByKb, triggerJob, query as apiQuery, getKbCost } from "../api/client";
+import type { KbOut, DocumentOut, KbCost } from "../api/types";
 import DocumentUpload from "../components/DocumentUpload";
 import StatusBadge from "../components/StatusBadge";
+import { CostPanel } from "../components/CostPanel";
 
 export default function KbDetailPage() {
   const { id } = useParams();
@@ -14,7 +15,13 @@ export default function KbDetailPage() {
   const [qMethod, setQMethod] = useState("local");
   const [qText, setQText] = useState("");
   const [qAnswer, setQAnswer] = useState("");
-  const reload = () => { getKb(kbId).then(setKb); listDocuments(kbId).then(setDocs); listJobsByKb(kbId).then(setJobs); };
+  const [cost, setCost] = useState<KbCost | null>(null);
+  const reload = () => {
+    getKb(kbId).then(setKb);
+    listDocuments(kbId).then(setDocs);
+    listJobsByKb(kbId).then(setJobs);
+    getKbCost(kbId).then(setCost).catch(() => {});
+  };
   useEffect(() => { reload(); }, [kbId]);
   if (!kb) return <div className="p-4">loading…</div>;
   return (
@@ -26,6 +33,12 @@ export default function KbDetailPage() {
         <button onClick={async () => { await triggerJob(kbId); reload(); }} className="bg-green-600 text-white px-3 py-1 rounded">Trigger Index</button>
         <ul>{jobs.map((j) => <li key={j.id}><Link to={`/kbs/${kbId}/jobs/${j.id}`}>job {j.id}</Link> <StatusBadge status={j.status} /></li>)}</ul>
       </section>
+      {cost && (
+        <section>
+          <h2 className="font-semibold">Cumulative Cost</h2>
+          <CostPanel totalUsd={cost.total_usd} byStep={cost.by_step} />
+        </section>
+      )}
       <section>
         <h2 className="font-semibold">Query</h2>
         <div className="flex gap-2 items-center">

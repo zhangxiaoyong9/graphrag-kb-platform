@@ -11,3 +11,6 @@ export interface UnitOut { id: number; subject_id: string; status: UnitStatus; e
 export interface KbCreate { name: string; method?: string; settings_yaml?: string; min_unit_success_ratio?: number }
 export interface DocumentCreate { title: string; text: string }
 export interface QueryResult { answer: string; method: string; error: string | null }
+export interface CostItem { model: string; prompt_tokens: number; completion_tokens: number; usd: number | null }
+export interface JobCost { total_usd: number | null; by_step: Record<string, number>; by_model: Record<string, CostItem> }
+export interface KbCost extends JobCost { by_job: Record<string, number> }
