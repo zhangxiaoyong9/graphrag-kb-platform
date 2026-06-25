@@ -29,7 +29,7 @@ test("lists kbs and creates one", async () => {
     </MemoryRouter>,
   );
   expect(await screen.findByText("demo")).toBeInTheDocument();
-  await userEvent.type(screen.getByPlaceholderText("name"), "newkb");
-  await userEvent.click(screen.getByText("Create KB"));
+  await userEvent.type(screen.getByPlaceholderText("请输入知识库名称"), "newkb");
+  await userEvent.click(screen.getByRole("button", { name: "创建知识库" }));
   expect(await screen.findByText("newkb")).toBeInTheDocument();
 });

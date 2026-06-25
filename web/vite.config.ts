@@ -9,6 +9,7 @@ export default defineConfig({
       "/jobs": "http://localhost:8000",
       "/steps": "http://localhost:8000",
       "/units": "http://localhost:8000",
+      "/health": "http://localhost:8000",
     },
   },
   test: {

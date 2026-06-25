@@ -14,19 +14,23 @@ const server = setupServer(
 );
 beforeAll(() => server.listen()); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
 
+function renderJob() {
+  return render(<MemoryRouter initialEntries={["/kbs/1/jobs/9"]}><Routes><Route path="/kbs/:id/jobs/:jobId" element={<JobDetailPage />} /></Routes></MemoryRouter>);
+}
+
 test("shows steps, units, retry failed unit", async () => {
-  render(<MemoryRouter initialEntries={["/kbs/1/jobs/9"]}><Routes><Route path="/kbs/:id/jobs/:jobId" element={<JobDetailPage />} /></Routes></MemoryRouter>);
+  renderJob();
   expect(await screen.findByText("extract_graph")).toBeInTheDocument();
   await userEvent.click(screen.getByText("extract_graph"));
   expect(await screen.findByText("chunk-fail".slice(0, 12))).toBeInTheDocument();
-  await userEvent.click(screen.getByText("retry"));
+  await userEvent.click(screen.getByRole("button", { name: "重试" }));
 });
 
-test("step-level Retry failed units button appears and calls retryStep", async () => {
-  render(<MemoryRouter initialEntries={["/kbs/1/jobs/9"]}><Routes><Route path="/kbs/:id/jobs/:jobId" element={<JobDetailPage />} /></Routes></MemoryRouter>);
+test("step-level retry button appears and calls retryStep", async () => {
+  renderJob();
   await screen.findByText("extract_graph");
   await userEvent.click(screen.getByText("extract_graph"));
-  const btn = await screen.findByRole("button", { name: "Retry failed units" });
+  const btn = await screen.findByRole("button", { name: "重试失败 unit" });
   expect(btn).toBeInTheDocument();
   await userEvent.click(btn);
 });

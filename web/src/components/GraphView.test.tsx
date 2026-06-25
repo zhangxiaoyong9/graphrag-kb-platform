@@ -25,14 +25,14 @@ test("fetches graph on mount and renders the force-graph container", async () =>
 test("shows node count note", async () => {
   vi.spyOn(client, "getGraph").mockResolvedValue(fixture);
   render(<GraphView kbId={1} />);
-  expect(await screen.findByText(/showing 2 nodes/i)).toBeInTheDocument();
+  expect(await screen.findByText(/共 2 个节点/)).toBeInTheDocument();
 });
 
 test("search input refetches with q and hop=2", async () => {
   const spy = vi.spyOn(client, "getGraph").mockResolvedValue(fixture);
   render(<GraphView kbId={1} />);
   await waitFor(() => expect(spy).toHaveBeenCalled());
-  const input = await screen.findByPlaceholderText(/search entities/i);
+  const input = await screen.findByPlaceholderText(/搜索实体/);
   fireEvent.change(input, { target: { value: "alpha" } });
   fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
   await waitFor(() => {
@@ -47,6 +47,6 @@ test("shows capped note when node count equals limit", async () => {
   // With limit=2 and 2 nodes returned, treat as capped.
   vi.spyOn(client, "getGraph").mockResolvedValue({ ...fixture });
   render(<GraphView kbId={1} limit={2} />);
-  expect(await screen.findByText(/showing 2 nodes/i)).toBeInTheDocument();
-  expect(await screen.findByText(/capped/i)).toBeInTheDocument();
+  expect(await screen.findByText(/共 2 个节点/)).toBeInTheDocument();
+  expect(await screen.findByText(/已达上限/)).toBeInTheDocument();
 });

@@ -6,16 +6,22 @@ import App from "./App";
 
 const server = setupServer(
   http.get("/kbs", () => HttpResponse.json([])),
+  http.get("/health", () =>
+    HttpResponse.json({ status: "ok", db: "ok", worker: { last_heartbeat_at: null, stale: false } }),
+  ),
 );
 beforeAll(() => server.listen());
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
-test("renders kb list page heading", async () => {
+test("renders the dashboard at /", async () => {
   render(
     <MemoryRouter>
       <App />
     </MemoryRouter>,
   );
-  expect(await screen.findByText("Knowledge Bases")).toBeInTheDocument();
+  // Sidebar brand is always present
+  expect(screen.getByText("知识库平台")).toBeInTheDocument();
+  // Dashboard hero headline
+  expect(await screen.findByText(/从非结构化文本到可检索的知识图谱/)).toBeInTheDocument();
 });

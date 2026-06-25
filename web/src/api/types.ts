@@ -18,3 +18,10 @@ export interface KbCost extends JobCost { by_job: Record<string, number> }
 export interface GraphNode { id: string; title: string; type: string; degree: number; community: string }
 export interface GraphEdge { source: string; target: string; weight: number; description: string }
 export interface GraphData { nodes: GraphNode[]; edges: GraphEdge[] }
+
+export interface HealthWorker { last_heartbeat_at: string | null; stale: boolean }
+export interface Health {
+  status: "ok" | "degraded";
+  db: "ok" | "down";
+  worker: HealthWorker;
+}

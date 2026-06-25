@@ -1,15 +1,12 @@
-const COLORS: Record<string, string> = {
-  succeeded: "bg-green-100 text-green-800",
-  failed: "bg-red-100 text-red-800",
-  running: "bg-blue-100 text-blue-800",
-  pending: "bg-gray-100 text-gray-700",
-  partially_failed: "bg-yellow-100 text-yellow-800",
-};
+import { Badge } from "./ui";
+import { statusTone, statusLabel } from "../lib/status";
 
+/** Status pill with a Chinese label and a pulsing dot while running. */
 export default function StatusBadge({ status }: { status: string }) {
+  const tone = statusTone(status);
   return (
-    <span className={`px-2 py-0.5 rounded text-xs ${COLORS[status] ?? "bg-gray-100"}`}>
-      {status}
-    </span>
+    <Badge tone={tone} dot={status === "running"} className={status === "running" ? "animate-pulse-ring" : undefined}>
+      {statusLabel(status)}
+    </Badge>
   );
 }
