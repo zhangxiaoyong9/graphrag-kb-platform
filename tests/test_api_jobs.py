@@ -25,7 +25,7 @@ def test_trigger_job_creates_pending(client):
     assert r.status_code == 202
     job_id = r.json()["id"]
     assert client.get(f"/jobs/{job_id}").json()["status"] == "pending"
-    assert len(client.get(f"/jobs/{job_id}/steps").json()) == 6
+    assert len(client.get(f"/jobs/{job_id}/steps").json()) == 7
 
 
 def test_trigger_job_missing_kb_returns_404(client):

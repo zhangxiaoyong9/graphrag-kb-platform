@@ -40,11 +40,11 @@ async def test_orchestrator_runs_pipeline_and_writes_parquet(setup):
     assert job2.status == "succeeded"
 
 
-def test_plan_has_six_steps():
+def test_plan_has_seven_steps():
     from kb_platform.engine.orchestrator import Orchestrator
 
     names = [s.name for s in Orchestrator.plan_full()]
-    assert names == ["chunk_documents", "extract_graph", "summarize_descriptions", "finalize_graph", "create_communities", "community_reports"]
+    assert names == ["chunk_documents", "extract_graph", "summarize_descriptions", "finalize_graph", "create_communities", "community_reports", "generate_text_embeddings"]
 
 
 def test_plan_full_unchanged():
@@ -53,6 +53,7 @@ def test_plan_full_unchanged():
     assert [s.name for s in Orchestrator.plan_full()] == [
         "chunk_documents", "extract_graph", "summarize_descriptions",
         "finalize_graph", "create_communities", "community_reports",
+        "generate_text_embeddings",
     ]
 
 

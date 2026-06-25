@@ -27,6 +27,7 @@ class Orchestrator:
             StepSpec("finalize_graph", StepKind.ATOMIC),
             StepSpec("create_communities", StepKind.ATOMIC),
             StepSpec("community_reports", StepKind.UNIT_FANOUT),
+            StepSpec("generate_text_embeddings", StepKind.ATOMIC),
         ]
 
     @staticmethod
@@ -42,6 +43,7 @@ class Orchestrator:
             StepSpec("create_communities", StepKind.ATOMIC),
             StepSpec("community_reports", StepKind.UNIT_FANOUT),
             StepSpec("update_clean_state", StepKind.ATOMIC),
+            StepSpec("generate_text_embeddings", StepKind.ATOMIC),
         ]
 
     async def run(self, job_id: int, min_success_ratio: float = 1.0) -> None:
@@ -116,6 +118,10 @@ class Orchestrator:
             pass  # MVP:空操作(state 合并留后续)
         elif step.name == "create_base_text_units":
             pass  # MVP:chunks already created by load_update_documents
+        elif step.name == "generate_text_embeddings":
+            from kb_platform.graph.vector_store import FakeVectorStore
+
+            atomic_steps.generate_text_embeddings(self.repo, self.adapter, step, FakeVectorStore(dim=8))
         else:
             msg = f"unknown atomic step: {step.name}"
             raise ValueError(msg)

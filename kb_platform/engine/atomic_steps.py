@@ -56,3 +56,27 @@ def merge_delta(repo: Repository, adapter, step) -> None:
     entities, relationships = adapter.merge_extractions(results)
     entities.to_parquet(root / "entities.parquet")
     relationships.to_parquet(root / "relationships.parquet")
+
+
+def generate_text_embeddings(repo: Repository, adapter, step, vector_store) -> None:
+    """Read 3 parquet collections (text_units, entities, community_reports) →
+    batch embed via ``adapter.embed_items`` → upsert into ``vector_store``.
+
+    MVP: uses FakeVectorStore in-memory; real LanceDB lands in Task 3.
+    """
+    root = _data_root(repo, step)
+    collections = [
+        ("text_unit", root / "text_units.parquet", lambda r: " ".join(str(r.get(c, "")) for c in ["text"])),
+        ("entity", root / "entities.parquet", lambda r: f"{r.get('title', '')} {str(r.get('description', ''))}"),
+        ("community", root / "community_reports.parquet", lambda r: str(r.get("full_content", ""))),
+    ]
+    for index_name, parquet_path, text_fn in collections:
+        if not parquet_path.exists():
+            continue
+        df = pd.read_parquet(parquet_path)
+        if df.empty:
+            continue
+        texts = [text_fn(row) for row in df.to_dict("records")]
+        vectors = adapter.embed_items(texts)
+        items = [{"id": str(i), "text": texts[i], "vector": vectors[i]} for i in range(len(texts))]
+        vector_store.upsert(index_name, items)
