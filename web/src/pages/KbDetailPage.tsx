@@ -27,6 +27,10 @@ export default function KbDetailPage() {
   return (
     <div className="p-4 space-y-4">
       <h1 className="text-xl font-bold">{kb.name} <span className="text-gray-500">({kb.method})</span></h1>
+      <div className="flex gap-2">
+        <a href={`/kbs/${kbId}/export?format=zip`} download className="bg-green-600 text-white px-3 py-1 rounded">Export zip</a>
+        <a href={`/kbs/${kbId}/export?format=graphml`} download className="bg-green-600 text-white px-3 py-1 rounded">Download GraphML</a>
+      </div>
       <section>
         <h2 className="font-semibold">Documents</h2>
         <DocumentManager kbId={kbId} docs={docs} reload={reload} />
