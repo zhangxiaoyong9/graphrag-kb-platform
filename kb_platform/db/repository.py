@@ -1,6 +1,6 @@
 """Data access for the control plane."""
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import selectinload
 
@@ -160,3 +160,43 @@ class Repository:
     def mark_needs_reconsolidation(self, unit_id: int) -> None:
         with session_scope(self.engine) as s:
             s.get(Unit, unit_id).needs_reconsolidation = True
+
+    # ---- worker: pending-job creation / claim / crash recovery ----
+    def create_job_pending(self, kb_id: int, method: str = "standard") -> Job:
+        from kb_platform.engine.orchestrator import Orchestrator
+
+        return self.create_job(kb_id=kb_id, type="full", specs=Orchestrator.plan(), method=method)
+
+    def claim_one_pending_job(self) -> Job | None:
+        """Atomically claim one PENDING job (PENDING -> RUNNING) and return it, or None."""
+        with session_scope(self.engine) as s:
+            job = s.scalars(
+                select(Job).where(Job.status == JobStatus.PENDING).order_by(Job.id).limit(1)
+            ).first()
+            if job is None:
+                return None
+            s.execute(update(Job).where(Job.id == job.id).values(status=JobStatus.RUNNING))
+            return s.get(Job, job.id)
+
+    def recover_stale_units(self, stale_before) -> int:
+        """Reset RUNNING units whose heartbeat is older than ``stale_before`` back to PENDING."""
+        with session_scope(self.engine) as s:
+            stale = list(
+                s.scalars(
+                    select(Unit).where(
+                        Unit.status == UnitStatus.RUNNING,
+                        Unit.heartbeat_at < stale_before,
+                    )
+                )
+            )
+            for u in stale:
+                u.status = UnitStatus.PENDING
+            return len(stale)
+
+    def recover_stale_jobs(self) -> int:
+        """Reset all RUNNING jobs back to PENDING so a worker can resume them."""
+        with session_scope(self.engine) as s:
+            jobs = list(s.scalars(select(Job).where(Job.status == JobStatus.RUNNING)))
+            for j in jobs:
+                j.status = JobStatus.PENDING
+            return len(jobs)
