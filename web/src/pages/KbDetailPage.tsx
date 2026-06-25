@@ -5,6 +5,7 @@ import type { KbOut, DocumentOut, KbCost } from "../api/types";
 import { DocumentManager } from "../components/DocumentManager";
 import StatusBadge from "../components/StatusBadge";
 import { CostPanel } from "../components/CostPanel";
+import { GraphView } from "../components/GraphView";
 
 export default function KbDetailPage() {
   const { id } = useParams();
@@ -45,6 +46,10 @@ export default function KbDetailPage() {
           <CostPanel totalUsd={cost.total_usd} byStep={cost.by_step} />
         </section>
       )}
+      <section>
+        <h2 className="font-semibold">Knowledge Graph</h2>
+        <GraphView kbId={kbId} />
+      </section>
       <section>
         <h2 className="font-semibold">Query</h2>
         <div className="flex gap-2 items-center">

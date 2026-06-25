@@ -14,3 +14,7 @@ export interface QueryResult { answer: string; method: string; error: string | n
 export interface CostItem { model: string; prompt_tokens: number; completion_tokens: number; usd: number | null }
 export interface JobCost { total_usd: number | null; by_step: Record<string, number>; by_model: Record<string, CostItem> }
 export interface KbCost extends JobCost { by_job: Record<string, number> }
+
+export interface GraphNode { id: string; title: string; type: string; degree: number; community: string }
+export interface GraphEdge { source: string; target: string; weight: number; description: string }
+export interface GraphData { nodes: GraphNode[]; edges: GraphEdge[] }

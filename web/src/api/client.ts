@@ -1,4 +1,4 @@
-import type { KbOut, DocumentOut, JobOut, StepOut, UnitOut, KbCreate, DocumentCreate, QueryResult, JobCost, KbCost } from "./types";
+import type { KbOut, DocumentOut, JobOut, StepOut, UnitOut, KbCreate, DocumentCreate, QueryResult, JobCost, KbCost, GraphData } from "./types";
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(path, { headers: { "Content-Type": "application/json" }, ...init });
@@ -33,3 +33,11 @@ export const query = (kbId: number, method: string, q: string) =>
   req<QueryResult>(`/kbs/${kbId}/query`, { method: "POST", body: JSON.stringify({ method, query: q }) });
 export const getJobCost = (kbId: number, jobId: number) => req<JobCost>(`/kbs/${kbId}/jobs/${jobId}/cost`);
 export const getKbCost = (kbId: number) => req<KbCost>(`/kbs/${kbId}/cost`);
+export const getGraph = (kbId: number, params?: { limit?: number; q?: string; hop?: number }) => {
+  const qs = new URLSearchParams();
+  if (params?.limit !== undefined) qs.set("limit", String(params.limit));
+  if (params?.q !== undefined && params.q !== "") qs.set("q", params.q);
+  if (params?.hop !== undefined) qs.set("hop", String(params.hop));
+  const tail = qs.toString();
+  return req<GraphData>(`/kbs/${kbId}/graph${tail ? `?${tail}` : ""}`);
+};
