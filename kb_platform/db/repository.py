@@ -223,6 +223,52 @@ class Repository:
         with session_scope(self.engine) as s:
             s.get(Unit, unit_id).needs_reconsolidation = True
 
+    # ---- cross-job input_hash lookups (delta strategies) ----
+    def last_succeeded_input_hash(
+        self, kb_id: int, kind: str, subject_type: str, subject_id: str
+    ) -> str | None:
+        """Most recent SUCCEEDED unit input_hash for (kb, kind, subject) across all jobs.
+
+        Delta strategies diff the current input against this to decide whether to
+        re-run. Units are per-step/per-job, so the lookup joins through Step->Job.
+        """
+        with session_scope(self.engine) as s:
+            return s.scalar(
+                select(Unit.input_hash)
+                .join(Step, Unit.step_id == Step.id)
+                .join(Job, Step.job_id == Job.id)
+                .where(
+                    Job.kb_id == kb_id,
+                    Unit.kind == kind,
+                    Unit.subject_type == subject_type,
+                    Unit.subject_id == subject_id,
+                    Unit.status == UnitStatus.SUCCEEDED,
+                )
+                .order_by(Unit.id.desc())
+                .limit(1)
+            )
+
+    def has_succeeded_input_hash(self, kb_id: int, kind: str, input_hash: str) -> bool:
+        """True if any SUCCEEDED unit (kb, kind) recorded this input_hash.
+
+        Used by delta community_reports, where community_id is unstable across
+        re-clustering, so matching is by ctx-content hash, not subject_id.
+        """
+        with session_scope(self.engine) as s:
+            row = s.scalar(
+                select(Unit.id)
+                .join(Step, Unit.step_id == Step.id)
+                .join(Job, Step.job_id == Job.id)
+                .where(
+                    Job.kb_id == kb_id,
+                    Unit.kind == kind,
+                    Unit.input_hash == input_hash,
+                    Unit.status == UnitStatus.SUCCEEDED,
+                )
+                .limit(1)
+            )
+        return row is not None
+
     # ---- worker: pending-job creation / claim / crash recovery ----
     def create_job_pending(self, kb_id: int, method: str = "standard", type: str = "full") -> Job:
         from kb_platform.engine.orchestrator import Orchestrator
