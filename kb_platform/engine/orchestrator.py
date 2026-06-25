@@ -86,6 +86,8 @@ class Orchestrator:
             atomic_steps.finalize_graph(self.repo, self.adapter, step)
         elif step.name == "create_communities":
             atomic_steps.create_communities(self.repo, self.adapter, step)
+        elif step.name == "merge_delta":
+            atomic_steps.merge_delta(self.repo, self.adapter, step)
         else:
             msg = f"unknown atomic step: {step.name}"
             raise ValueError(msg)

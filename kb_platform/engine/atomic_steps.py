@@ -1,5 +1,6 @@
 """Atomic (non-unit) indexing steps."""
 
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -31,3 +32,27 @@ def create_communities(repo: Repository, adapter, step) -> None:
     relationships = pd.read_parquet(root / "relationships.parquet")
     communities = adapter.cluster_relationships(relationships)
     communities.to_parquet(root / "communities.parquet")
+
+
+def merge_delta(repo: Repository, adapter, step) -> None:
+    """Re-merge ALL on-disk chunk extractions (old cached + new) -> entities/relationships parquet.
+
+    No LLM: all extractions are cached on disk under ``data_root/extractions/*.json``.
+    """
+    from kb_platform.graph.adapter import ExtractionResult
+
+    root = _data_root(repo, step)
+    extraction_dir = root / "extractions"
+    results: list[ExtractionResult] = []
+    if extraction_dir.exists():
+        for p in sorted(extraction_dir.glob("*.json")):
+            raw = json.loads(p.read_text())
+            results.append(
+                ExtractionResult(
+                    entities=pd.DataFrame(raw["entities"]),
+                    relationships=pd.DataFrame(raw["relationships"]),
+                )
+            )
+    entities, relationships = adapter.merge_extractions(results)
+    entities.to_parquet(root / "entities.parquet")
+    relationships.to_parquet(root / "relationships.parquet")
