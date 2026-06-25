@@ -1,7 +1,7 @@
 import { useKb } from "./kb-context";
 import { useAsync } from "../hooks/useAsync";
 import { listDocuments, listJobsByKb, getKbCost } from "../api/client";
-import { Card, CardHeader, Stat } from "../components/ui";
+import { Badge, Card, CardHeader, Stat } from "../components/ui";
 import { CostPanel } from "../components/CostPanel";
 import { JobList } from "../components/JobList";
 import { TriggerButtons, ExportButtons } from "../components/kb-actions";
@@ -37,6 +37,13 @@ export default function KbOverviewPage() {
         </div>
       </Card>
 
+      <Card>
+        <CardHeader title="模型配置" subtitle="创建知识库时通过 settings_yaml 设定（密钥不入库）" icon={<IconLayers width={18} height={18} />} />
+        <div className="mt-4">
+          <ModelConfig settings={kb?.settings} />
+        </div>
+      </Card>
+
       <div className="grid gap-5 lg:grid-cols-2">
         <Card>
           <CardHeader title="累计成本" subtitle="按步骤拆分（来源：每次 LLM 调用）" icon={<IconCost width={18} height={18} />} />
@@ -63,6 +70,36 @@ export default function KbOverviewPage() {
           </div>
         </Card>
       </div>
+    </div>
+  );
+}
+
+function ModelConfig({ settings }: { settings: Record<string, unknown> | undefined }) {
+  if (!settings) return <p className="text-[13px] text-muted">未读取到配置。</p>;
+  const llm = (settings.llm as Record<string, unknown> | undefined) ?? {};
+  const emb = (settings.embedding as Record<string, unknown> | undefined) ?? {};
+  const cr = (settings.community_reports as Record<string, unknown> | undefined) ?? {};
+  const rows: { k: string; v: string }[] = [
+    { k: "LLM provider", v: String(llm.model_provider ?? "—") },
+    { k: "LLM model", v: String(llm.model ?? "—") },
+    { k: "Embedding model", v: String(emb.model ?? "—") },
+  ];
+  return (
+    <div className="space-y-2">
+      <div className="grid gap-2 sm:grid-cols-3">
+        {rows.map((r) => (
+          <div key={r.k} className="rounded-lg border border-line bg-surface-2/40 px-3 py-2">
+            <p className="text-[11px] text-muted">{r.k}</p>
+            <p className="mt-0.5 truncate font-mono text-[13px] text-ink">{r.v}</p>
+          </div>
+        ))}
+      </div>
+      <p className="text-[12px] text-muted">
+        社区报告结构化输出：
+        <Badge tone={cr.structured_output === false ? "warning" : "info"} className="ml-1">
+          {cr.structured_output === false ? "关闭（纯文本回退）" : "开启（json_schema）"}
+        </Badge>
+      </p>
     </div>
   );
 }
