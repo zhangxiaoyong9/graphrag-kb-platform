@@ -34,7 +34,7 @@ async def test_full_index_then_retry_single_chunk(kb):
     assert len(chunks_preview) >= 2  # 前置:确实有多个 chunk
     fail_id = chunks_preview[0].chunk_id
     orch = Orchestrator(repo=repo, adapter=FakeGraphAdapter(fail_on={fail_id}), data_root=data_root)
-    job = repo.create_job(kb_id=1, type="full", specs=Orchestrator.plan())
+    job = repo.create_job(kb_id=1, type="full", specs=Orchestrator.plan_full())
     await orch.run(job.id)
 
     # job 因 extract_graph 步 partially_failed 而失败(阈值 1.0)
@@ -67,7 +67,7 @@ async def test_full_index_then_retry_single_chunk(kb):
 async def test_successful_index_no_parquet_gaps(kb):
     repo, data_root = kb
     orch = Orchestrator(repo=repo, adapter=FakeGraphAdapter(), data_root=data_root)
-    job = repo.create_job(kb_id=1, type="full", specs=Orchestrator.plan())
+    job = repo.create_job(kb_id=1, type="full", specs=Orchestrator.plan_full())
     await orch.run(job.id)
     assert repo.get_job(job.id).status == "succeeded"
     assert os.path.exists(f"{data_root}/entities.parquet")

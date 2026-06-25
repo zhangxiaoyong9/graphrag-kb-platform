@@ -28,7 +28,7 @@ def kb(tmp_path):
 async def test_full_pipeline_produces_all_four_parquets(kb):
     repo, data_root = kb
     orch = Orchestrator(repo=repo, adapter=FakeGraphAdapter(), data_root=data_root)
-    job = repo.create_job(kb_id=1, type="full", specs=Orchestrator.plan())
+    job = repo.create_job(kb_id=1, type="full", specs=Orchestrator.plan_full())
     await orch.run(job.id)
     assert repo.get_job(job.id).status == "succeeded"
     for name in ("entities", "relationships", "communities", "community_reports"):
@@ -47,7 +47,7 @@ async def test_proceed_on_failure_with_threshold(kb):
     failing = FakeGraphAdapter()
     fail_id = failing.chunk_document(1, repo.get_documents(1)[0].text)[0].chunk_id
     orch = Orchestrator(repo=repo, adapter=FakeGraphAdapter(fail_on={fail_id}), data_root=data_root)
-    job = repo.create_job(kb_id=1, type="full", specs=Orchestrator.plan())
+    job = repo.create_job(kb_id=1, type="full", specs=Orchestrator.plan_full())
     await orch.run(job.id, min_success_ratio=0.01)  # 极宽松,允许单 chunk 失败仍推进
     # extract_graph 步在宽松阈值下 SUCCEEDED(带着缺口),整个 job 应成功
     assert repo.get_job(job.id).status == "succeeded"
@@ -64,7 +64,7 @@ async def test_late_retry_marks_needs_reconsolidation(kb):
     failing = FakeGraphAdapter()
     fail_id = failing.chunk_document(1, repo.get_documents(1)[0].text)[0].chunk_id
     orch = Orchestrator(repo=repo, adapter=FakeGraphAdapter(fail_on={fail_id}), data_root=data_root)
-    job = repo.create_job(kb_id=1, type="full", specs=Orchestrator.plan())
+    job = repo.create_job(kb_id=1, type="full", specs=Orchestrator.plan_full())
     await orch.run(job.id, min_success_ratio=0.01)
     extract = [s for s in repo.get_steps(job.id) if s.name == "extract_graph"][0]
     failed_unit = [u for u in repo.list_units(extract.id) if u.status == UnitStatus.FAILED][0]

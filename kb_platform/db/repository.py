@@ -175,10 +175,11 @@ class Repository:
             s.get(Unit, unit_id).needs_reconsolidation = True
 
     # ---- worker: pending-job creation / claim / crash recovery ----
-    def create_job_pending(self, kb_id: int, method: str = "standard") -> Job:
+    def create_job_pending(self, kb_id: int, method: str = "standard", type: str = "full") -> Job:
         from kb_platform.engine.orchestrator import Orchestrator
 
-        return self.create_job(kb_id=kb_id, type="full", specs=Orchestrator.plan(), method=method)
+        specs = Orchestrator.plan_incremental() if type == "incremental" else Orchestrator.plan_full()
+        return self.create_job(kb_id=kb_id, type=type, specs=specs, method=method)
 
     def claim_one_pending_job(self) -> Job | None:
         """Atomically claim one PENDING job (PENDING -> RUNNING) and return it, or None."""

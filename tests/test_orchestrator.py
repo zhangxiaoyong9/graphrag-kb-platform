@@ -25,7 +25,7 @@ async def test_orchestrator_runs_pipeline_and_writes_parquet(setup):
     adapter = FakeGraphAdapter()
     orch = Orchestrator(repo=repo, adapter=adapter, data_root=data_root)
 
-    job = repo.create_job(kb_id=1, type="full", specs=Orchestrator.plan())
+    job = repo.create_job(kb_id=1, type="full", specs=Orchestrator.plan_full())
     await orch.run(job.id)
 
     # chunk 步产出 chunk 行
@@ -43,5 +43,25 @@ async def test_orchestrator_runs_pipeline_and_writes_parquet(setup):
 def test_plan_has_six_steps():
     from kb_platform.engine.orchestrator import Orchestrator
 
-    names = [s.name for s in Orchestrator.plan()]
+    names = [s.name for s in Orchestrator.plan_full()]
     assert names == ["chunk_documents", "extract_graph", "summarize_descriptions", "finalize_graph", "create_communities", "community_reports"]
+
+
+def test_plan_full_unchanged():
+    from kb_platform.engine.orchestrator import Orchestrator
+
+    assert [s.name for s in Orchestrator.plan_full()] == [
+        "chunk_documents", "extract_graph", "summarize_descriptions",
+        "finalize_graph", "create_communities", "community_reports",
+    ]
+
+
+def test_plan_incremental_returns_delta_steps():
+    from kb_platform.engine.orchestrator import Orchestrator
+
+    names = [s.name for s in Orchestrator.plan_incremental()]
+    # 起步:至少含 load_update_documents + extract_graph + merge_delta(后续任务补全)
+    assert "extract_graph" in names
+    assert "merge_delta" in names
+    assert "load_update_documents" in names
+    assert "update_clean_state" in names
