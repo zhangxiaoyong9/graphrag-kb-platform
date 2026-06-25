@@ -179,3 +179,29 @@ def test_atomic_step_progress_is_none(client):
     assert len(atomic_steps) > 0
     for s in atomic_steps:
         assert s["progress"] is None
+
+
+def test_trigger_job_rejects_bad_type(tmp_path):
+    from kb_platform.api.app import create_app
+    from kb_platform.db.engine import create_engine
+    from kb_platform.db.repository import Repository
+
+    engine = create_engine(f"sqlite:///{tmp_path}/db.sqlite")
+    Base.metadata.create_all(engine)
+    repo = Repository(engine)
+    from kb_platform.db.models import KnowledgeBase
+    from kb_platform.db.engine import session_scope
+
+    with session_scope(repo.engine) as s:
+        s.add(
+            KnowledgeBase(name="k", method="standard", settings_json="{}", data_root=str(tmp_path))
+        )
+        s.flush()
+        kb_id = s.get(KnowledgeBase, 1).id
+    from fastapi.testclient import TestClient
+
+    client = TestClient(create_app(repo, data_root=str(tmp_path)))
+    r = client.post(f"/kbs/{kb_id}/jobs", json={"type": "bogus"})
+    assert r.status_code == 422
+    r2 = client.post(f"/kbs/{kb_id}/jobs", json={"type": "incremental"})
+    assert r2.status_code == 202

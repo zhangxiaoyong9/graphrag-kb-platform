@@ -6,6 +6,8 @@ stable, field-restricted response shape via FastAPI ``response_model``.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel
 
 
@@ -41,7 +43,7 @@ class DocumentOut(BaseModel):
 
 class JobCreate(BaseModel):
     method: str = "standard"
-    type: str = "full"
+    type: Literal["full", "incremental"] = "full"
 
 
 class JobCreated(BaseModel):
