@@ -249,6 +249,11 @@ def build_default_adapter(
     )
     completion = create_completion(model_config)
 
+    from kb_platform.graph.cost_capture import CostCapturingCompletion
+
+    model_id = model_config.model
+    completion = CostCapturingCompletion(completion, model_id=model_id)
+
     def extractor_factory() -> GraphExtractor:
         return GraphExtractor(
             model=completion, prompt=GRAPH_EXTRACTION_PROMPT, max_gleanings=max_gleanings

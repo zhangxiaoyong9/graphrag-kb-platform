@@ -103,3 +103,69 @@ async def test_unit_running_stamps_worker_id_and_heartbeat(setup):
     units = repo.list_units(step_id)
     assert all(u.worker_id == "w1" for u in units)
     assert all(u.heartbeat_at is not None for u in units)
+
+
+@pytest.mark.asyncio
+async def test_unit_worker_records_cost_from_completion(setup):
+    """A strategy whose run_unit calls a CostCapturingCompletion yields cost_json on the unit."""
+    import json
+
+    from kb_platform.db.enums import StepStatus
+    from kb_platform.engine.strategy import Subject, UnitResult
+    from kb_platform.graph.cost_capture import CostCapturingCompletion
+
+    repo, step_id, data_root = setup
+
+    class FakeUsage:
+        prompt_tokens = 10
+        completion_tokens = 5
+
+    class FakeResp:
+        usage = FakeUsage()
+
+    class FakeCompletion:
+        async def completion_async(self, **kw):
+            return FakeResp()
+
+    class CostStrategy:
+        kind = "extract_graph"
+
+        def __init__(self):
+            self._done = False
+
+        def next_units_batch(self, repo, step):
+            if self._done:
+                return None
+            self._done = True
+            # One unit over chunk c1 (seeded by the fixture).
+            return [Subject("chunk", "c1")]
+
+        async def run_unit(self, adapter, unit, repo):
+            await adapter.completion.completion_async(messages="x")
+            return UnitResult(payload=None)
+
+        def persist(self, data_root, unit, result):
+            return None
+
+        def finalize(self, repo, adapter, step, data_root, min_success_ratio):
+            return StepStatus.SUCCEEDED
+
+    adapter = type(
+        "A", (), {"completion": CostCapturingCompletion(FakeCompletion(), model_id="gpt-4o-mini")}
+    )()
+    worker = UnitWorker(
+        repo=repo,
+        adapter=adapter,
+        data_root=data_root,
+        strategies={"extract_graph": CostStrategy()},
+    )
+    step = repo.get_step(step_id)
+    await worker.run_unit_fanout(step, 1.0)
+
+    units = repo.list_units(step_id)
+    assert len(units) == 1
+    assert units[0].cost_json is not None
+    cost = json.loads(units[0].cost_json)
+    assert cost["items"][0]["prompt_tokens"] == 10
+    assert cost["items"][0]["completion_tokens"] == 5
+    assert cost["items"][0]["model"] == "gpt-4o-mini"

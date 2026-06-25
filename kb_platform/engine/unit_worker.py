@@ -76,8 +76,13 @@ class UnitWorker:
                 pass
 
     async def _process(self, strategy, unit) -> None:
+        from kb_platform.graph.cost_capture import use_recorder
+
         try:
-            result = await strategy.run_unit(self.adapter, unit, self.repo)
+            with use_recorder() as rec:
+                result = await strategy.run_unit(self.adapter, unit, self.repo)
+            if result.cost_json is None and rec:
+                result.cost_json = rec.to_json()
             strategy.persist(self.data_root, unit, result)
             self.repo.set_unit_succeeded(
                 unit.id,
