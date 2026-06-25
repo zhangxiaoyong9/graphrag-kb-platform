@@ -109,15 +109,24 @@ POST   /kbs/{id}/documents/upload (multipart)     # C  markitdown 全家桶
 - `false`（DeepSeek 等不支持 json_schema）：strategy 改走「纯文本 completion + 宽松解析」——同一份 reports prompt 但要求模型直接输出 JSON 对象，`json.loads` 解析（带正则兜底抽取 `{...}`），再映射到 report 数据类。失败的单社区 unit 走现有 proceed-on-failure（`min_success_ratio`），不整步崩。
 - 测试：mock 一个「拒 response_format」的 completion → `false` 路径仍产出合法 report；`true` 路径行为不变。
 
-### 4.5 H — delta-aware summarize / community_reports
-- 增量管线顺序对齐 full 管线（`chunk→extract→summarize→finalize→cluster→community_reports`）。`plan_incremental` 现为 `load_update_documents → extract_graph(delta) → merge_delta → cluster → reconsolidate`，缺 summarize 与 community_reports。补成：
-  `load_update_documents → extract_graph(delta) → merge_delta →` **`summarize(delta)`** `→ finalize →` **`cluster`** `→` **`community_reports(delta)`** `→ reconsolidate`
-  （即：summarize 在 merge_delta 之后、cluster 之前；community_reports 在 cluster 之后——与 full 管线一致，因为 cluster 跑在已摘要的实体图上。）
-  - **`SummarizeDeltaStrategy`**（subject_type=`entity`，继承 `SummarizeStrategy` 的 `run_unit/persist/finalize`，仅覆写 `next_units_batch`）：对每个实体算 `current_hash = hash(排序后的合并描述集合)`；查该 entity 最近一次 SUCCEEDED summarize unit 的 `input_hash`，**不同或缺失**才排程。`finalize` 照常把新摘要 merge 回持久化摘要。
-  - **`CommunityReportsDeltaStrategy`**（subject_type=`community`，同理继承 `CommunityReportsStrategy`）：cluster 后对每个社区算 `current_hash = hash(排序后的成员实体 id)`；与最近 SUCCEEDED report unit 的 `input_hash` 比，变更/新增才排程。**消失的社区**（被合并）旧报告保留不删（YAGNI）。
-- 首次增量（紧接 full build）：所有 entity/community 已有 full 期写入的 `input_hash`，故只有真正受新文档影响的才重跑 → unit 数 ≪ 全量。
-- `reconsolidate`（增量后自动跑）逻辑不变，只是 `needs_reconsolidation` 标记来源包含 delta 摘要/报告。
-- 测试：`incremental(加 1 文档)` 断言 summarize/report 的 **unit 数远小于全量**且只命中受影响实体/社区；`input_hash` 命中缓存的不重排。
+### 4.5 H — delta-aware summarize / community_reports（成本优化）
+
+**前提澄清**：`plan_incremental` 已包含 `summarize_descriptions` 与 `community_reports`（`orchestrator.py`），三策略已在 `strategies/__init__.py` 全局注册。增量目前对这两步跑**全量策略**（每次重摘要/重报告所有实体/社区——正确但费钱）。H 把它们改成 **delta 作用域**，是纯成本优化，非补缺失步骤。
+
+**跨 job 比对**：增量 job 的 step/unit 全新，无法复用上 job 的 unit。新增 `Repository.last_succeeded_input_hash(kb_id, kind, subject_type, subject_id)`（JOIN unit→step→job，id desc 取最近 SUCCEEDED 的 `input_hash`）作为 diff 依据。
+
+- **`SummarizeDeltaStrategy`**（继承 `SummarizeDescriptionsStrategy`）：
+  - `next_units_batch`：对每个 >1 描述的实体算当前描述集合 hash；与 `last_succeeded_input_hash(kb, summarize, entity, title)` 比，**不同或缺失**才排程（title 跨 job 稳定）。
+  - `finalize` 覆写：除本 job 成功摘要外，**结转**磁盘上 `summaries/{title}.json`（历史摘要，持久跨 job），保证未变更实体也落回单串描述。
+- **`CommunityReportsDeltaStrategy`**（继承 `CommunityReportsStrategy`）——社区 ID 在 `create_communities`(Leiden) 后会重排，**按 community_id 跨 job 匹配不可靠**，因此按 **ctx 内容 hash** 匹配（`run_unit` 已算此 hash）：
+  - `next_units_batch`：逐层（最深先）只排「该社区 ctx hash 在本 KB 历史中无 SUCCEEDED 报告 unit」的社区（新增 `Repository.has_succeeded_input_hash(kb, kind, input_hash)`）。
+  - `persist` 覆写：除 `reports/{community_id}.json` 外，额外写 `reports_by_hash/{input_hash}.json` sidecar（抗 community_id 不稳定）。
+  - `finalize` 覆写：对每个新社区算 ctx hash；命中 sidecar 则复用其内容（重映射 `community` 字段为新 id），否则用本 job 新报告 → 写 `community_reports.parquet`。
+- 首次增量（紧接 full build）：历史 `input_hash` 已就位，只有真正受新文档影响的实体/社区才重跑 → LLM 调用数 ≪ 全量。
+- `reconsolidate`（增量后自动跑）逻辑不变。
+- 测试：`incremental(加 1 文档)` 断言 summarize/report 的 **unit 数 ≪ 全量**且只命中受影响项；hash 命中的不重排；结转后 `entities.parquet`/`community_reports.parquet` 覆盖全部实体/社区。
+
+> **勘误（2026-06-25）**：初版误称「把这两步加进 `plan_incremental`」——实际它们早已在管线中（只是全量）。本节为修正版。另： multipart 文件上传已存在于 `POST /kbs/{id}/documents`（`routes_kbs.py`），但仅 `decode("utf-8")`；Wave 3 的 C 改为**把该 multipart 路径接到 `adapter.read_document`（markitdown）**，而非新增 `/documents/upload` 端点。
 
 ## 5. Wave 2 — 成本采集 + 聚合 + 可视化（A）
 
