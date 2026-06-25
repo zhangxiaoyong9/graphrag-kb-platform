@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from kb_platform.api.routes_cost import router as cost_router
+from kb_platform.api.routes_export import router as export_router
 from kb_platform.api.routes_health import router as health_router
 from kb_platform.api.routes_jobs import router as jobs_router
 from kb_platform.api.routes_kbs import router
@@ -50,6 +51,7 @@ def create_app(
     app.include_router(query_router)
     app.include_router(cost_router)
     app.include_router(health_router)
+    app.include_router(export_router)
 
     dist = Path(WEB_DIST)
     if dist.exists():
