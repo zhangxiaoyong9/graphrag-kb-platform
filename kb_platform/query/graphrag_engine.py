@@ -371,7 +371,38 @@ class GraphRagQueryEngine:
                 }
                 if resolved_key:
                     entry["api_key"] = resolved_key
-                values["completion_models"] = {"default_completion_model": entry}
+                # graphrag validates api_key as required; only inject when a key
+                # was resolved, otherwise leave unset and let graphrag surface
+                # its own "not configured" error (per Task 12 review guidance).
+                if "api_key" in entry:
+                    values["completion_models"] = {"default_completion_model": entry}
+        # graphrag's query factory also resolves embedding models via
+        # config.embedding_models["default_embedding_model"] for vector-based
+        # methods (local/basic/drift). Derive it from the KB `embedding`
+        # settings when present (same credential resolution as above). Do NOT
+        # fall back to `llm` — a chat model is not an embedding model; if no
+        # embedding settings are configured, leave it unset so graphrag raises
+        # its own honest "not configured" error.
+        if not values.get("embedding_models"):
+            emb = dict(values.get("embedding") or {})
+            if emb:
+                provider = emb.get("model_provider", "openai")
+                resolved_key = (
+                    emb.get("api_key")
+                    or (os.getenv(emb["api_key_env"]) if emb.get("api_key_env") else None)
+                    or os.getenv(f"{provider.upper()}_API_KEY")
+                )
+                entry = {
+                    "type": emb.get("type", "litellm"),
+                    "model_provider": provider,
+                    "model": emb.get("model", "text-embedding-3-small"),
+                    "api_base": emb.get("api_base"),
+                    "api_version": emb.get("api_version"),
+                }
+                if resolved_key:
+                    entry["api_key"] = resolved_key
+                if "api_key" in entry:
+                    values["embedding_models"] = {"default_embedding_model": entry}
         return GraphRagConfig.model_validate(values)
 
     def _build_embedding_store(self, config, embedding_name: str):

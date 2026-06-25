@@ -115,3 +115,36 @@ def test_resolve_config_keeps_explicit_completion_models():
     )
     cfg = eng._resolve_config()
     assert cfg.completion_models["default_completion_model"].model == "explicit"
+
+
+def test_resolve_config_injects_default_embedding_model(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-emb")
+    from kb_platform.query.graphrag_engine import GraphRagQueryEngine
+
+    eng = GraphRagQueryEngine(
+        data_root=".",
+        model_config={
+            "llm": {"model": "deepseek-chat"},
+            "embedding": {
+                "model_provider": "openai",
+                "model": "text-embedding-3-small",
+                "api_key_env": "OPENAI_API_KEY",
+            },
+        },
+    )
+    cfg = eng._resolve_config(root=".")
+    emb = cfg.embedding_models["default_embedding_model"]
+    assert emb.model == "text-embedding-3-small"
+    assert emb.api_key == "sk-emb"
+    # completion_models injection (from llm) still happens alongside
+    assert cfg.completion_models["default_completion_model"].model == "deepseek-chat"
+
+
+def test_resolve_config_no_embedding_when_settings_absent():
+    from kb_platform.query.graphrag_engine import GraphRagQueryEngine
+
+    eng = GraphRagQueryEngine(data_root=".", model_config={"llm": {"model": "x"}})
+    cfg = eng._resolve_config()
+    # no `embedding` settings -> embedding_models not synthesized (graphrag will
+    # raise its own "not configured" error for vector methods, which is honest)
+    assert not cfg.embedding_models
