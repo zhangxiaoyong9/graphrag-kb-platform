@@ -11,8 +11,8 @@ import type { JobCost } from "../api/types";
 export default function JobDetailPage() {
   const { id, jobId } = useParams();
   const kbId = Number(id);
-  const id2 = Number(jobId);
-  const job = useJobPolling(id2);
+  const jobIdNum = Number(jobId);
+  const job = useJobPolling(jobIdNum);
   const [selected, setSelected] = useState<number | null>(null);
   const [cost, setCost] = useState<JobCost | null>(null);
   const status = job?.status;
@@ -21,14 +21,14 @@ export default function JobDetailPage() {
   // don't keep polling a static snapshot. Effect re-runs on status change,
   // and when status is terminal the interval is never scheduled.
   useEffect(() => {
-    if (!kbId || !id2) return;
+    if (!kbId || !jobIdNum) return;
     let stop = false;
-    const tick = () => getJobCost(kbId, id2).then((c) => { if (!stop) setCost(c); }).catch(() => {});
+    const tick = () => getJobCost(kbId, jobIdNum).then((c) => { if (!stop) setCost(c); }).catch(() => {});
     tick();
     if (status && ["succeeded", "failed", "cancelled"].includes(status)) return;
     const h = setInterval(tick, 2000);
     return () => { stop = true; clearInterval(h); };
-  }, [kbId, id2, status]);
+  }, [kbId, jobIdNum, status]);
 
   if (!job) return <div className="p-4">loading…</div>;
   const step = job.steps.find((s) => s.id === selected) ?? null;

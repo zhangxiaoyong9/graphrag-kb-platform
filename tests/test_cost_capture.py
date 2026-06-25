@@ -39,9 +39,6 @@ def test_completion_wrapper_captures_usage(monkeypatch):
     from kb_platform.graph.cost_capture import CostCapturingCompletion, use_recorder
 
     # Stub the registry lookup so cost is deterministic regardless of live data.
-    def fake_costs(_model_id):
-        return {"input_cost_per_token": 0.0, "output_cost_per_token": 0.0}
-
     monkeypatch.setattr(
         "kb_platform.graph.cost_capture._compute_cost",
         lambda model_id, pt, ct: 0.0,
@@ -93,7 +90,7 @@ def test_completion_wrapper_no_recorder_no_error():
         assert current_recorder() is None
         wrapper = CostCapturingCompletion(FakeInner(), model_id="deepseek-chat")
         resp = await wrapper.completion_async(messages="hi")
-        assert resp is FakeResp() or resp.usage.prompt_tokens == 5
+        assert resp.usage.prompt_tokens == 5
 
     asyncio.run(main())
 
