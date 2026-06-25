@@ -8,7 +8,14 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from starlette.formparsers import UploadFile
 
-from kb_platform.api.models import DocumentCreate, DocumentOut, JobListItem, KbCreate, KbOut
+from kb_platform.api.models import (
+    DocumentCreate,
+    DocumentOut,
+    JobListItem,
+    KbCreate,
+    KbDetailOut,
+    KbOut,
+)
 from kb_platform.db.engine import session_scope
 from kb_platform.db.models import KnowledgeBase
 from kb_platform.input.doc_reader import read_document
@@ -19,6 +26,33 @@ router = APIRouter()
 def _parse_settings(settings_yaml: str | None) -> str:
     """Validate the incoming YAML-as-string settings; return canonical JSON string."""
     return json.dumps(json.loads(settings_yaml or "{}"))
+
+
+_SENSITIVE = ("key", "token", "secret", "password")
+
+
+def _redact(settings_json: str | None) -> dict:
+    """Parse stored settings JSON and mask any sensitive values.
+
+    Keys are never stored in the DB (resolved from env at runtime), but this
+    is defense-in-depth for anything a user may have pasted into settings_yaml.
+    """
+    try:
+        data = json.loads(settings_json or "{}")
+    except (TypeError, ValueError):
+        return {}
+
+    def _walk(node):
+        if isinstance(node, dict):
+            return {
+                k: ("***" if any(s in k.lower() for s in _SENSITIVE) else _walk(v))
+                for k, v in node.items()
+            }
+        if isinstance(node, list):
+            return [_walk(v) for v in node]
+        return node
+
+    return _walk(data)
 
 
 @router.post("/kbs", response_model=KbOut, status_code=201)
@@ -46,14 +80,16 @@ def list_kbs(request: Request) -> list[KbOut]:
         ]
 
 
-@router.get("/kbs/{kb_id}", response_model=KbOut)
-def get_kb(kb_id: int, request: Request) -> KbOut:
+@router.get("/kbs/{kb_id}", response_model=KbDetailOut)
+def get_kb(kb_id: int, request: Request) -> KbDetailOut:
     repo = request.app.state.repo
     with session_scope(repo.engine) as s:
         kb = s.get(KnowledgeBase, kb_id)
         if not kb:
             raise HTTPException(404)
-        return KbOut(id=kb.id, name=kb.name, method=kb.method)
+        return KbDetailOut(
+            id=kb.id, name=kb.name, method=kb.method, settings=_redact(kb.settings_json)
+        )
 
 
 @router.post("/kbs/{kb_id}/documents", response_model=DocumentOut, status_code=201)

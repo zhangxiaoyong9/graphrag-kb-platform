@@ -27,6 +27,12 @@ class KbOut(BaseModel):
     method: str
 
 
+class KbDetailOut(KbOut):
+    """GET /kbs/{id}: adds the (redacted) parsed settings."""
+
+    settings: dict
+
+
 # --- Document ------------------------------------------------------------
 
 
