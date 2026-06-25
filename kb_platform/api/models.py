@@ -107,3 +107,25 @@ class QueryResultOut(BaseModel):
     answer: str
     method: str
     error: str | None = None
+
+
+# --- Cost -----------------------------------------------------------------
+
+
+class CostItem(BaseModel):
+    """Per-model cost summary; keys mirror Repository._sum_cost's model slot."""
+
+    model: str
+    prompt_tokens: int
+    completion_tokens: int
+    usd: float | None
+
+
+class JobCostOut(BaseModel):
+    total_usd: float | None
+    by_step: dict[str, float]
+    by_model: dict[str, CostItem]
+
+
+class KbCostOut(JobCostOut):
+    by_job: dict[int, float]
