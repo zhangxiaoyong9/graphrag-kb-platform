@@ -44,6 +44,40 @@ _ENTITY_DESCRIPTION = "entity_description"
 _TEXT_UNIT_TEXT = "text_unit_text"
 
 
+class _StreamFixWrapper:
+    """Wraps a graphrag-llm completion so completion_async(stream=True) returns an
+    async generator directly (NOT a coroutine).
+
+    graphrag's BasicSearch assigns ``model.completion_async(stream=True)`` to a
+    variable WITHOUT ``await``, then does ``async for chunk in it``. But
+    graphrag-llm's ``completion_async`` is ``async def`` → returns a coroutine,
+    not an async iterator → ``TypeError: 'async for' requires __aiter__``.
+
+    This wrapper makes ``completion_async`` a regular method: for streaming calls
+    it returns an async generator (awaitable + async-iterable); for non-streaming
+    calls it returns the inner coroutine (graphrag awaits those correctly).
+    """
+
+    def __init__(self, inner) -> None:
+        self._inner = inner
+
+    def completion_async(self, **kwargs):
+        if kwargs.get("stream"):
+            return self._stream(**kwargs)
+        return self._inner.completion_async(**kwargs)
+
+    async def _stream(self, **kwargs):
+        resp = await self._inner.completion_async(**kwargs)
+        if hasattr(resp, "__aiter__"):
+            async for chunk in resp:
+                yield chunk
+        else:
+            yield resp
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
 def _join_cell(value) -> str:
     """Flatten a parquet cell (str / list / numpy array) into a single string.
 
@@ -301,6 +335,10 @@ class GraphRagQueryEngine:
                 config=config,
                 response_type=response_type,
             )
+            # graphrag's BasicSearch calls model.completion_async(stream=True) WITHOUT
+            # await, expecting an async iterator directly. graphrag-llm returns a
+            # coroutine → TypeError. Wrap the model so streaming returns an async gen.
+            engine.model = _StreamFixWrapper(engine.model)
         else:
             return QueryResult(
                 answer="",
