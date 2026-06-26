@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
+import { afterEach, afterAll, beforeAll, expect, test } from "vitest";
 import UnitTable from "./UnitTable";
 
 const makeUnits = (n: number) =>
@@ -39,3 +40,26 @@ test("paginates 20 per page with controls", async () => {
   expect(await screen.findByText("c20")).toBeInTheDocument();
   expect(screen.getByText(/21–40.*45/)).toBeInTheDocument();
 });
+
+test("polling while active refreshes the CURRENT page (no stale-closure clobber)", async () => {
+  // Regression test for M2: the polling interval must re-arm when offset
+  // changes so the stale reload closure (capturing old offset=0) does not
+  // fire on the next tick and clobber the page back to page 1.
+  //
+  // Real timers (not fake): MSW fetch resolution chains on real timers, and
+  // fake timers don't pump those, so we use the brief's real-timer fallback.
+  render(<UnitTable stepId={1} active={true} />);
+  // page 1 initial load
+  expect(await screen.findByText("c0")).toBeInTheDocument();
+  // paginate to page 2
+  await userEvent.click(screen.getByRole("button", { name: /下一页/ }));
+  expect(await screen.findByText("c20")).toBeInTheDocument();
+  // wait > 2s so the polling interval fires at least once. With the bug
+  // (deps array missing offset), the stale reload closure captures offset=0
+  // and the assertion below fails because c0 reappears / c20 disappears.
+  await new Promise((r) => setTimeout(r, 2500));
+  // page 2 must still be displayed
+  expect(screen.getByText("c20")).toBeInTheDocument();
+  expect(screen.queryByText("c0")).not.toBeInTheDocument();
+  expect(screen.getByText(/21–40.*45/)).toBeInTheDocument();
+}, 10000);

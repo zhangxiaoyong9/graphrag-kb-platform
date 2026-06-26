@@ -35,10 +35,13 @@ export default function UnitTable({ stepId, active }: { stepId: number | null; a
   useEffect(reload, [stepId, filter, offset]);
   useEffect(() => {
     if (active) {
+      // Re-arm the interval whenever offset/filter change so the poll always
+      // refreshes the CURRENT page rather than a stale closure capturing old
+      // offset/filter state (fixes M2 stale-closure polling bug).
       const h = setInterval(reload, 2000);
       return () => clearInterval(h);
     }
-  }, [active, stepId]);
+  }, [active, stepId, offset, filter]);
 
   // reset to first page when step/filter changes
   useEffect(() => setOffset(0), [stepId, filter]);
