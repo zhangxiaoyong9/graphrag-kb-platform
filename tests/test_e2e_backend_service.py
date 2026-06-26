@@ -38,7 +38,7 @@ async def test_full_backend_service_with_fake_adapter(tmp_path):
     assert client.get(f"/jobs/{job_id}").json()["status"] == "succeeded"
     steps = client.get(f"/jobs/{job_id}/steps").json()
     extract = [s for s in steps if s["name"] == "extract_graph"][0]
-    units = client.get(f"/steps/{extract['id']}/units").json()
+    units = client.get(f"/steps/{extract['id']}/units").json()["items"]
     assert len(units) >= 1 and all(u["status"] == "succeeded" for u in units)
     # Four parquet outputs.
     for name in ("entities", "relationships", "communities", "community_reports"):

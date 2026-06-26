@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import selectinload
 
@@ -158,6 +158,23 @@ class Repository:
     def list_units(self, step_id: int) -> list[Unit]:
         with session_scope(self.engine) as s:
             return list(s.scalars(select(Unit).where(Unit.step_id == step_id)))
+
+    def list_units_page(
+        self, step_id: int, status: str | None, limit: int, offset: int
+    ) -> tuple[list[Unit], int]:
+        """Paginated units for display: status filter + LIMIT/OFFSET + COUNT in SQL.
+
+        (list_units(step_id) — the unpaginated all-units method — stays for retry.py.)
+        """
+        with session_scope(self.engine) as s:
+            q = select(Unit).where(Unit.step_id == step_id)
+            cq = select(func.count()).select_from(Unit).where(Unit.step_id == step_id)
+            if status:
+                q = q.where(Unit.status == status)
+                cq = cq.where(Unit.status == status)
+            total = s.scalar(cq) or 0
+            items = list(s.scalars(q.order_by(Unit.id).limit(limit).offset(offset)))
+            return items, total
 
     def set_unit_succeeded(
         self,

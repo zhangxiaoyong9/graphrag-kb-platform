@@ -42,16 +42,16 @@ def test_step_units_filtered_by_status(client):
     steps = client.get(f"/jobs/{job_id}/steps").json()
     extract = [s for s in steps if s["name"] == "extract_graph"][0]
     # No units yet -- job is pending and the worker has not run.
-    assert client.get(f"/steps/{extract['id']}/units").json() == []
+    assert client.get(f"/steps/{extract['id']}/units").json()["items"] == []
     # Seed units directly via the repo (the worker would do this).
     repo.add_units(extract["id"], [("chunk", "c1"), ("chunk", "c2")], kind="extract_graph")
-    units = client.get(f"/steps/{extract['id']}/units").json()
+    units = client.get(f"/steps/{extract['id']}/units").json()["items"]
     assert len(units) == 2
     # status= filter: mark one failed and filter for pending.
     unit_id = units[0]["id"]
     repo.set_unit_failed(unit_id, "boom")
-    pending = client.get(f"/steps/{extract['id']}/units?status=pending").json()
-    failed = client.get(f"/steps/{extract['id']}/units?status=failed").json()
+    pending = client.get(f"/steps/{extract['id']}/units?status=pending").json()["items"]
+    failed = client.get(f"/steps/{extract['id']}/units?status=failed").json()["items"]
     assert len(pending) == 1
     assert len(failed) == 1
 
@@ -70,7 +70,7 @@ def test_retry_unit_resets_to_pending(client):
     r = client.post(f"/units/{unit.id}/retry")
     assert r.status_code == 200
     assert r.json()["ok"] is True
-    after = [u for u in client.get(f"/steps/{extract['id']}/units").json() if u["id"] == unit.id][0]
+    after = [u for u in client.get(f"/steps/{extract['id']}/units").json()["items"] if u["id"] == unit.id][0]
     assert after["status"] == "pending"
     assert after["error"] is None
 

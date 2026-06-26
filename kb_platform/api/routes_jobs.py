@@ -8,6 +8,7 @@ from kb_platform.api.models import (
     JobOut,
     StepOut,
     UnitOut,
+    UnitPage,
     UnitProgress,
 )
 
@@ -60,23 +61,28 @@ def get_steps(job_id: int, request: Request) -> list[StepOut]:
     return [_step_out(repo, s) for s in repo.get_steps(job_id)]
 
 
-@router.get("/steps/{step_id}/units", response_model=list[UnitOut])
-def get_units(step_id: int, request: Request, status: str | None = None) -> list[UnitOut]:
+def _unit_out(u) -> UnitOut:
+    return UnitOut(
+        id=u.id,
+        subject_id=u.subject_id,
+        status=u.status,
+        error=u.error,
+        llm_raw_output=u.llm_raw_output,
+        needs_reconsolidation=u.needs_reconsolidation,
+    )
+
+
+@router.get("/steps/{step_id}/units", response_model=UnitPage)
+def get_units(
+    step_id: int,
+    request: Request,
+    status: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> UnitPage:
     repo = request.app.state.repo
-    units = repo.list_units(step_id)
-    if status:
-        units = [u for u in units if u.status == status]
-    return [
-        UnitOut(
-            id=u.id,
-            subject_id=u.subject_id,
-            status=u.status,
-            error=u.error,
-            llm_raw_output=u.llm_raw_output,
-            needs_reconsolidation=u.needs_reconsolidation,
-        )
-        for u in units
-    ]
+    items, total = repo.list_units_page(step_id, status, limit, offset)
+    return UnitPage(items=[_unit_out(u) for u in items], total=total)
 
 
 @router.post("/units/{unit_id}/retry")

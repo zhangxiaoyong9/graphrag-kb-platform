@@ -109,6 +109,13 @@ class UnitOut(BaseModel):
     needs_reconsolidation: bool = False
 
 
+class UnitPage(BaseModel):
+    """Paginated unit list for a step (display)."""
+
+    items: list[UnitOut]
+    total: int
+
+
 class JobOut(BaseModel):
     id: int
     status: str
