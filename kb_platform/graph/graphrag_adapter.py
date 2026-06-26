@@ -153,11 +153,18 @@ class GraphRagAdapter:
         return e, rr
 
     def embed_items(self, texts: list[str]) -> list[list[float]]:
-        """Embed texts via graphrag's configured embedding model."""
+        """Embed texts via graphrag-llm's configured embedding model.
+
+        graphrag-llm's LiteLLMEmbedding.embedding takes ``input=list[str]``
+        (LLMEmbeddingArgs) and returns an LLMEmbeddingResponse whose
+        ``.embeddings`` is the list of vectors in input order.
+        """
         if self._embed_factory is None:
             raise RuntimeError("embed_factory not configured")
+        if not texts:
+            return []
         embedder = self._embed_factory()
-        return embedder.embedding_batch(texts)
+        return embedder.embedding(input=texts).embeddings
 
 
 def _parse_report_json(text: str, context: dict) -> CommunityReport:
