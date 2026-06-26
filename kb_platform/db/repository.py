@@ -8,7 +8,7 @@ from sqlalchemy.orm import selectinload
 
 from kb_platform.db.engine import session_scope
 from kb_platform.db.enums import JobStatus, StepStatus, UnitStatus
-from kb_platform.db.models import Chunk, Document, Job, Step, Unit
+from kb_platform.db.models import Chunk, Document, Job, KnowledgeBase, Step, Unit
 from kb_platform.engine.spec import StepSpec
 
 
@@ -327,6 +327,20 @@ class Repository:
                 .limit(1)
             )
         return row is not None
+
+    # ---- knowledge base ----
+    def update_kb(
+        self, kb_id: int, *, name: str, method: str, settings_json: str
+    ) -> KnowledgeBase | None:
+        """Full-replace name/method/settings_json. Returns the KB or None if missing."""
+        with session_scope(self.engine) as s:
+            kb = s.get(KnowledgeBase, kb_id)
+            if kb is None:
+                return None
+            kb.name = name
+            kb.method = method
+            kb.settings_json = settings_json
+            return kb
 
     # ---- worker: pending-job creation / claim / crash recovery ----
     def create_job_pending(self, kb_id: int, method: str = "standard", type: str = "full") -> Job:

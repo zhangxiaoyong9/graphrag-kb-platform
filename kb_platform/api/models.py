@@ -21,6 +21,18 @@ class KbCreate(BaseModel):
     min_unit_success_ratio: float | None = None
 
 
+class KbUpdate(BaseModel):
+    """PATCH /kbs/{id} body — full replace of name/method/settings.
+
+    Note: min_unit_success_ratio is NOT here — it's a per-job trigger param,
+    not persisted on the KB (KnowledgeBase has no such column).
+    """
+
+    name: str
+    method: str = "standard"
+    settings_yaml: str | None = None
+
+
 class KbOut(BaseModel):
     id: int
     name: str

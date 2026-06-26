@@ -15,6 +15,7 @@ from kb_platform.api.models import (
     KbCreate,
     KbDetailOut,
     KbOut,
+    KbUpdate,
 )
 from kb_platform.db.engine import session_scope
 from kb_platform.db.models import KnowledgeBase
@@ -31,6 +32,19 @@ def _parse_settings(settings_yaml: str | None) -> str:
 _SENSITIVE = ("key", "token", "secret", "password")
 
 
+def _is_sensitive(key: str) -> bool:
+    """True if ``key`` looks like it holds a credential.
+
+    Matches a sensitive token as the whole key (``token``) or as a trailing
+    segment in snake_case (``api_key``, ``auth_token``, ``client_secret``).
+    Substring matching is intentionally avoided so that non-secret variants
+    such as ``api_key_env`` (the *name* of an env var, recommended in the
+    README) are returned in cleartext for the config-edit form to backfill.
+    """
+    k = key.lower()
+    return any(k == s or k.endswith("_" + s) for s in _SENSITIVE)
+
+
 def _redact(settings_json: str | None) -> dict:
     """Parse stored settings JSON and mask any sensitive values.
 
@@ -45,8 +59,7 @@ def _redact(settings_json: str | None) -> dict:
     def _walk(node):
         if isinstance(node, dict):
             return {
-                k: ("***" if any(s in k.lower() for s in _SENSITIVE) else _walk(v))
-                for k, v in node.items()
+                k: ("***" if _is_sensitive(k) else _walk(v)) for k, v in node.items()
             }
         if isinstance(node, list):
             return [_walk(v) for v in node]
@@ -90,6 +103,19 @@ def get_kb(kb_id: int, request: Request) -> KbDetailOut:
         return KbDetailOut(
             id=kb.id, name=kb.name, method=kb.method, settings=_redact(kb.settings_json)
         )
+
+
+@router.patch("/kbs/{kb_id}", response_model=KbDetailOut)
+def update_kb(kb_id: int, payload: KbUpdate, request: Request) -> KbDetailOut:
+    """Update a KB's name/method/settings (full replace)."""
+    repo = request.app.state.repo
+    settings = _parse_settings(payload.settings_yaml)
+    kb = repo.update_kb(kb_id, name=payload.name, method=payload.method, settings_json=settings)
+    if kb is None:
+        raise HTTPException(404)
+    return KbDetailOut(
+        id=kb.id, name=kb.name, method=kb.method, settings=_redact(kb.settings_json)
+    )
 
 
 @router.post("/kbs/{kb_id}/documents", response_model=DocumentOut, status_code=201)
