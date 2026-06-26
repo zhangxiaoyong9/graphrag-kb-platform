@@ -29,6 +29,7 @@ class GraphRagAdapter:
         report_factory: Callable[[], object] | None = None,
         embed_factory: Callable[[], object] | None = None,
         completion=None,
+        max_cluster_size: int = 10,
     ) -> None:
         self._chunker = chunker
         self._extractor_factory = extractor_factory
@@ -39,6 +40,7 @@ class GraphRagAdapter:
         self._report_factory = report_factory
         self._embed_factory = embed_factory
         self._completion = completion
+        self._max_cluster_size = max_cluster_size
 
     def chunk_document(self, doc_id: int, text: str) -> list[ChunkText]:
         return [
@@ -116,7 +118,9 @@ class GraphRagAdapter:
         from graphrag.index.operations.cluster_graph import cluster_graph
 
         cluster_fn = self._cluster_fn or cluster_graph
-        communities = cluster_fn(edges=relationships, max_cluster_size=10, use_lcc=False)
+        communities = cluster_fn(
+            edges=relationships, max_cluster_size=self._max_cluster_size, use_lcc=False
+        )
         # communities: list[(level:int, cluster_id:int, parent:int, nodes:list[str])]
         return pd.DataFrame(
             [
@@ -277,7 +281,15 @@ def build_default_adapter(
     data_root: str,
     model_config,
     embed_model_config=None,
+    chunk_size: int = 1200,
+    chunk_overlap: int = 100,
+    encoding_model: str = "cl100k_base",
+    max_cluster_size: int = 10,
+    entity_types=None,
     max_gleanings: int = 0,
+    summarize_max_length: int = 500,
+    summarize_max_input_tokens: int = 32000,
+    report_max_length: int = 2000,
 ) -> GraphRagAdapter:
     """Wire a GraphRagAdapter with a real graphrag chunker + LLM extractor."""
     # NOTE: graphrag_chunking/__init__.py is empty — import from submodules.
@@ -298,10 +310,13 @@ def build_default_adapter(
     from graphrag.prompts.index.community_report import COMMUNITY_REPORT_PROMPT
     from graphrag.config.defaults import DEFAULT_ENTITY_TYPES
 
-    tokenizer = get_tokenizer(encoding_model="cl100k_base")
+    tokenizer = get_tokenizer(encoding_model=encoding_model)
     chunker = create_chunker(
         ChunkingConfig(
-            type=ChunkerType.Tokens, encoding_model="cl100k_base", size=1200, overlap=100
+            type=ChunkerType.Tokens,
+            encoding_model=encoding_model,
+            size=chunk_size,
+            overlap=chunk_overlap,
         ),
         encode=tokenizer.encode,
         decode=tokenizer.decode,
@@ -324,8 +339,8 @@ def build_default_adapter(
     def summarize_factory() -> SummarizeExtractor:
         return SummarizeExtractor(
             model=completion,
-            max_summary_length=500,
-            max_input_tokens=32000,
+            max_summary_length=summarize_max_length,
+            max_input_tokens=summarize_max_input_tokens,
             summarization_prompt=SUMMARIZE_PROMPT,
             on_error=_raise_on_error,
         )
@@ -334,7 +349,7 @@ def build_default_adapter(
         return CommunityReportsExtractor(
             model=completion,
             extraction_prompt=COMMUNITY_REPORT_PROMPT,
-            max_report_length=2000,
+            max_report_length=report_max_length,
             on_error=_raise_on_error,
         )
 
@@ -352,11 +367,12 @@ def build_default_adapter(
     return GraphRagAdapter(
         chunker=chunker,
         extractor_factory=extractor_factory,
-        entity_types=list(DEFAULT_ENTITY_TYPES),
+        entity_types=entity_types or list(DEFAULT_ENTITY_TYPES),
         summarize_factory=summarize_factory,
         report_factory=report_factory,
         embed_factory=embed_factory,
         completion=completion,
+        max_cluster_size=max_cluster_size,
     )
 
 
