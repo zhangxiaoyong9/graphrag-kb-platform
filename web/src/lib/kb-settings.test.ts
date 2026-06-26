@@ -37,7 +37,7 @@ describe("buildSettings", () => {
   });
 
   it("emits embedding when enabled + filled", () => {
-    const s = { ...base, embedding: { enabled: true, provider: "ollama", model: "nomic-embed-text", apiBase: "http://localhost:11434", apiKey: "ollama", apiKeyEnv: "", apiVersion: "" } };
+    const s = { ...base, embedding: { enabled: true, provider: "ollama", model: "nomic-embed-text", apiBase: "http://localhost:11434", apiKey: "ollama", apiKeyEnv: "", apiKeyEnvs: "", apiVersion: "" } };
     expect(buildSettings(s)).toEqual({
       embedding: { model_provider: "ollama", model: "nomic-embed-text", api_base: "http://localhost:11434", api_key: "ollama" },
     });
