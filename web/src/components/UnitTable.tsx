@@ -13,21 +13,37 @@ const FILTERS: { key: string; label: string }[] = [
   { key: "failed", label: "失败" },
 ];
 
-/** Per-step unit list with status filter + per-unit retry. Polls while active. */
+const LIMIT = 20;
+
+/** Per-step unit list with status filter + per-unit retry. Paginates 20/page; polls while active. */
 export default function UnitTable({ stepId, active }: { stepId: number | null; active: boolean }) {
   const [units, setUnits] = useState<UnitOut[]>([]);
+  const [total, setTotal] = useState(0);
   const [filter, setFilter] = useState("");
+  const [offset, setOffset] = useState(0);
 
   const reload = () => {
-    if (stepId != null) getUnits(stepId, filter || undefined).then(setUnits).catch(() => {});
+    if (stepId != null) {
+      getUnits(stepId, { status: filter || undefined, limit: LIMIT, offset })
+        .then((page) => {
+          setUnits(page.items);
+          setTotal(page.total);
+        })
+        .catch(() => {});
+    }
   };
-  useEffect(reload, [stepId, filter]);
+  useEffect(reload, [stepId, filter, offset]);
   useEffect(() => {
     if (active) {
       const h = setInterval(reload, 2000);
       return () => clearInterval(h);
     }
   }, [active, stepId]);
+
+  // reset to first page when step/filter changes
+  useEffect(() => setOffset(0), [stepId, filter]);
+
+  const end = Math.min(offset + LIMIT, total);
 
   return (
     <div>
@@ -97,6 +113,28 @@ export default function UnitTable({ stepId, active }: { stepId: number | null; a
           </table>
         </div>
       )}
+
+      <div className="mt-3 flex items-center justify-between text-[12px] text-muted">
+        <span className="nums">
+          第 {total === 0 ? 0 : offset + 1}–{end} 条 / 共 {total} 条
+        </span>
+        <div className="flex gap-2">
+          <button
+            className="btn btn-sm btn-secondary"
+            disabled={offset === 0}
+            onClick={() => setOffset((o) => Math.max(0, o - LIMIT))}
+          >
+            上一页
+          </button>
+          <button
+            className="btn btn-sm btn-secondary"
+            disabled={offset + LIMIT >= total}
+            onClick={() => setOffset((o) => o + LIMIT)}
+          >
+            下一页
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

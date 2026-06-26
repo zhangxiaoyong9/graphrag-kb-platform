@@ -8,7 +8,7 @@ import JobDetailPage from "./JobDetailPage";
 const server = setupServer(
   http.get("/jobs/9", () => HttpResponse.json({ id: 9, status: "partially_failed", steps: [{ id: 91, name: "extract_graph", ordinal: 2, kind: "unit_fanout", status: "partially_failed", progress: { pending: 0, running: 0, succeeded: 1, failed: 1, total: 2 } }] })),
   http.get("/kbs/1/jobs/9/cost", () => HttpResponse.json({ total_usd: 0.0123, by_step: { workflow_a: 0.01, workflow_b: 0.0023 }, by_model: {} })),
-  http.get("/steps/91/units", () => HttpResponse.json([{ id: 911, subject_id: "chunk-fail", status: "failed", error: "boom", llm_raw_output: null, needs_reconsolidation: false }])),
+  http.get("/steps/91/units", () => HttpResponse.json({ items: [{ id: 911, subject_id: "chunk-fail", status: "failed", error: "boom", llm_raw_output: null, needs_reconsolidation: false }], total: 1 })),
   http.post("/units/911/retry", () => HttpResponse.json({ ok: true })),
   http.post("/steps/91/retry", () => HttpResponse.json({ reset: 1 })),
 );

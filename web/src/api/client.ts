@@ -28,7 +28,15 @@ export const listJobsByKb = (kbId: number) => req<{ id: number; status: string }
 export const triggerJob = (kbId: number, method = "standard", type = "full") => req<{ id: number; status: string }>(`/kbs/${kbId}/jobs`, { method: "POST", body: JSON.stringify({ method, type }) });
 export const getJob = (id: number) => req<JobOut>(`/jobs/${id}`);
 export const getSteps = (jobId: number) => req<StepOut[]>(`/jobs/${jobId}/steps`);
-export const getUnits = (stepId: number, status?: string) => req<UnitOut[]>(`/steps/${stepId}/units` + (status ? `?status=${status}` : ""));
+export interface UnitPage { items: UnitOut[]; total: number }
+export const getUnits = (stepId: number, opts: { status?: string; limit?: number; offset?: number } = {}) => {
+  const qs = new URLSearchParams();
+  if (opts.status) qs.set("status", opts.status);
+  if (opts.limit != null) qs.set("limit", String(opts.limit));
+  if (opts.offset != null) qs.set("offset", String(opts.offset));
+  const tail = qs.toString();
+  return req<UnitPage>(`/steps/${stepId}/units${tail ? `?${tail}` : ""}`);
+};
 export const retryUnit = (id: number) => req<{ ok: boolean }>(`/units/${id}/retry`, { method: "POST" });
 export const retryStep = (id: number) => req<{ reset: number }>(`/steps/${id}/retry`, { method: "POST" });
 export const query = (kbId: number, method: string, q: string) =>
