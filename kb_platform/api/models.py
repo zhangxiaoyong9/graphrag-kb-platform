@@ -61,6 +61,34 @@ class DocumentOut(BaseModel):
     chunk_count: int = 0
 
 
+class DocumentCitationOut(BaseModel):
+    id: str
+    label: str
+    snippet: str
+    chunk_id: str
+    ordinal: int
+
+
+class DocumentDetailOut(DocumentOut):
+    text: str = ""
+    citations: list[DocumentCitationOut] = []
+
+
+class EvidenceSourceOut(BaseModel):
+    document_id: int
+    document_title: str
+    chunk_id: str
+    ordinal: int
+
+
+class EvidenceOut(BaseModel):
+    citation_id: str
+    matched: str
+    before: str | None = None
+    after: str | None = None
+    source: EvidenceSourceOut
+
+
 # --- Job / step / unit ---------------------------------------------------
 
 

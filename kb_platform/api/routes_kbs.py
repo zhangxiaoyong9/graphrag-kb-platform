@@ -9,8 +9,12 @@ from sqlalchemy import select
 from starlette.formparsers import UploadFile
 
 from kb_platform.api.models import (
+    DocumentCitationOut,
     DocumentCreate,
+    DocumentDetailOut,
     DocumentOut,
+    EvidenceOut,
+    EvidenceSourceOut,
     JobListItem,
     KbCreate,
     KbDetailOut,
@@ -27,6 +31,25 @@ router = APIRouter()
 def _parse_settings(settings_yaml: str | None) -> str:
     """Validate the incoming YAML-as-string settings; return canonical JSON string."""
     return json.dumps(json.loads(settings_yaml or "{}"))
+
+
+def _snippet(text: str, limit: int = 220) -> str:
+    """Return a compact one-line snippet for citation lists."""
+    one_line = " ".join((text or "").split())
+    if len(one_line) <= limit:
+        return one_line
+    return one_line[: limit - 1].rstrip() + "…"
+
+
+def _citation_id(chunk_id: str) -> str:
+    return f"chunk:{chunk_id}"
+
+
+def _chunk_id_from_citation(citation_id: str) -> str | None:
+    prefix = "chunk:"
+    if not citation_id.startswith(prefix):
+        return None
+    return citation_id[len(prefix):]
 
 
 _SENSITIVE = ("key", "token", "secret", "password")
@@ -162,6 +185,72 @@ def list_documents(kb_id: int, request: Request) -> list[DocumentOut]:
         )
         for d in repo.get_documents(kb_id)
     ]
+
+
+@router.get("/kbs/{kb_id}/documents/{doc_id}", response_model=DocumentDetailOut)
+def get_document_detail(kb_id: int, doc_id: int, request: Request) -> DocumentDetailOut:
+    repo = request.app.state.repo
+    doc = repo.get_document(kb_id, doc_id)
+    if doc is None:
+        raise HTTPException(404)
+    chunks = repo.get_document_chunks(kb_id, doc_id)
+    citations = [
+        DocumentCitationOut(
+            id=_citation_id(chunk.chunk_id),
+            label=f"分块 {chunk.ordinal + 1}",
+            snippet=_snippet(chunk.text),
+            chunk_id=chunk.chunk_id,
+            ordinal=chunk.ordinal,
+        )
+        for chunk in chunks
+    ]
+    return DocumentDetailOut(
+        id=doc.id,
+        title=doc.title,
+        status=doc.status,
+        bytes=doc.bytes,
+        chunk_count=len(chunks),
+        text=doc.text or "",
+        citations=citations,
+    )
+
+
+@router.get(
+    "/kbs/{kb_id}/documents/{doc_id}/citations/{citation_id}/evidence",
+    response_model=EvidenceOut,
+)
+def get_document_evidence(
+    kb_id: int,
+    doc_id: int,
+    citation_id: str,
+    request: Request,
+) -> EvidenceOut:
+    repo = request.app.state.repo
+    doc = repo.get_document(kb_id, doc_id)
+    if doc is None:
+        raise HTTPException(404)
+    chunk_id = _chunk_id_from_citation(citation_id)
+    if chunk_id is None:
+        raise HTTPException(404)
+    chunks = repo.get_document_chunks(kb_id, doc_id)
+    index = next((i for i, chunk in enumerate(chunks) if chunk.chunk_id == chunk_id), None)
+    if index is None:
+        raise HTTPException(404)
+    chunk = chunks[index]
+    before = chunks[index - 1].text if index > 0 else None
+    after = chunks[index + 1].text if index + 1 < len(chunks) else None
+    return EvidenceOut(
+        citation_id=citation_id,
+        matched=chunk.text,
+        before=before,
+        after=after,
+        source=EvidenceSourceOut(
+            document_id=doc.id,
+            document_title=doc.title,
+            chunk_id=chunk.chunk_id,
+            ordinal=chunk.ordinal,
+        ),
+    )
 
 
 @router.delete("/kbs/{kb_id}/documents/{doc_id}", status_code=204)

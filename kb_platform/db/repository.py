@@ -40,6 +40,20 @@ class Repository:
         with session_scope(self.engine) as s:
             return list(s.scalars(select(Document).where(Document.kb_id == kb_id)))
 
+    def get_document(self, kb_id: int, doc_id: int) -> Document | None:
+        with session_scope(self.engine) as s:
+            return s.scalar(select(Document).where(Document.id == doc_id, Document.kb_id == kb_id))
+
+    def get_document_chunks(self, kb_id: int, doc_id: int) -> list[Chunk]:
+        with session_scope(self.engine) as s:
+            return list(
+                s.scalars(
+                    select(Chunk)
+                    .where(Chunk.kb_id == kb_id, Chunk.document_id == doc_id)
+                    .order_by(Chunk.ordinal)
+                )
+            )
+
     def add_chunks(self, chunks: list[Chunk]) -> None:
         with session_scope(self.engine) as s:
             for c in chunks:
