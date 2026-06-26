@@ -290,6 +290,9 @@ def build_default_adapter(
     summarize_max_length: int = 500,
     summarize_max_input_tokens: int = 32000,
     report_max_length: int = 2000,
+    extract_prompt: str | None = None,
+    summarize_prompt: str | None = None,
+    community_report_prompt: str | None = None,
 ) -> GraphRagAdapter:
     """Wire a GraphRagAdapter with a real graphrag chunker + LLM extractor."""
     # NOTE: graphrag_chunking/__init__.py is empty — import from submodules.
@@ -331,7 +334,7 @@ def build_default_adapter(
     def extractor_factory() -> GraphExtractor:
         return GraphExtractor(
             model=completion,
-            prompt=GRAPH_EXTRACTION_PROMPT,
+            prompt=extract_prompt or GRAPH_EXTRACTION_PROMPT,
             max_gleanings=max_gleanings,
             on_error=_raise_on_error,
         )
@@ -341,14 +344,14 @@ def build_default_adapter(
             model=completion,
             max_summary_length=summarize_max_length,
             max_input_tokens=summarize_max_input_tokens,
-            summarization_prompt=SUMMARIZE_PROMPT,
+            summarization_prompt=summarize_prompt or SUMMARIZE_PROMPT,
             on_error=_raise_on_error,
         )
 
     def report_factory() -> CommunityReportsExtractor:
         return CommunityReportsExtractor(
             model=completion,
-            extraction_prompt=COMMUNITY_REPORT_PROMPT,
+            extraction_prompt=community_report_prompt or COMMUNITY_REPORT_PROMPT,
             max_report_length=report_max_length,
             on_error=_raise_on_error,
         )
@@ -437,4 +440,7 @@ def build_adapter_from_settings(
         summarize_max_length=summarize.get("max_length", 500),
         summarize_max_input_tokens=summarize.get("max_input_tokens", 32000),
         report_max_length=reports.get("max_length", 2000),
+        extract_prompt=extract_graph.get("prompt"),
+        summarize_prompt=summarize.get("prompt"),
+        community_report_prompt=reports.get("prompt"),
     )

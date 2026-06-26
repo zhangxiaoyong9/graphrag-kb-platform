@@ -106,3 +106,35 @@ def test_build_adapter_from_settings_entity_types_csv_string(monkeypatch):
         "/tmp/_unused_",
     )
     assert captured["entity_types"] == ["ORG", "PERSON"]  # csv string -> list, trimmed
+
+
+def test_build_adapter_from_settings_reads_prompts(monkeypatch):
+    import json
+    import kb_platform.graph.graphrag_adapter as ga
+
+    captured: dict = {}
+    monkeypatch.setattr(ga, "build_default_adapter", lambda **kw: captured.update(kw) or object())
+    ga.build_adapter_from_settings(
+        json.dumps({
+            "llm": {"model": "x", "api_key": "k"},
+            "extract_graph": {"prompt": "EXTRACT-PROMPT-X"},
+            "summarize_descriptions": {"prompt": "SUMM-PROMPT-Y"},
+            "community_reports": {"prompt": "REPORT-PROMPT-Z"},
+        }),
+        "/tmp/_unused_",
+    )
+    assert captured["extract_prompt"] == "EXTRACT-PROMPT-X"
+    assert captured["summarize_prompt"] == "SUMM-PROMPT-Y"
+    assert captured["community_report_prompt"] == "REPORT-PROMPT-Z"
+
+
+def test_build_adapter_from_settings_prompts_default_none(monkeypatch):
+    import json
+    import kb_platform.graph.graphrag_adapter as ga
+    captured: dict = {}
+    monkeypatch.setattr(ga, "build_default_adapter", lambda **kw: captured.update(kw) or object())
+    ga.build_adapter_from_settings(json.dumps({"llm": {"model": "x", "api_key": "k"}}), "/tmp/_unused_")
+    assert captured["extract_prompt"] is None
+    assert captured["summarize_prompt"] is None
+    assert captured["community_report_prompt"] is None
+

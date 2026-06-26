@@ -155,3 +155,17 @@ def delete_document(kb_id: int, doc_id: int, request: Request):
 def list_jobs(kb_id: int, request: Request) -> list[JobListItem]:
     repo = request.app.state.repo
     return [JobListItem(id=j.id, status=j.status) for j in repo.list_jobs_by_kb(kb_id)]
+
+
+@router.get("/prompts/defaults")
+def prompt_defaults() -> dict:
+    """Return graphrag's built-in indexing prompts (for the form's 'view default')."""
+    from graphrag.prompts.index.community_report import COMMUNITY_REPORT_PROMPT
+    from graphrag.prompts.index.extract_graph import GRAPH_EXTRACTION_PROMPT
+    from graphrag.prompts.index.summarize_descriptions import SUMMARIZE_PROMPT
+
+    return {
+        "extract_graph": GRAPH_EXTRACTION_PROMPT,
+        "summarize_descriptions": SUMMARIZE_PROMPT,
+        "community_reports": COMMUNITY_REPORT_PROMPT,
+    }
