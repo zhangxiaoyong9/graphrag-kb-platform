@@ -1,3 +1,7 @@
+# Copyright (c) 2024 Microsoft Corporation.
+# Licensed under the MIT License.
+# Copyright (c) 2024 Microsoft Corporation.
+# Licensed under the MIT License.
 """KB + document endpoints."""
 
 import json

@@ -1,3 +1,7 @@
+# Copyright (c) 2024 Microsoft Corporation.
+# Licensed under the MIT License.
+# Copyright (c) 2024 Microsoft Corporation.
+# Licensed under the MIT License.
 """Tests for document detail browsing and chunk-backed evidence."""
 
 from __future__ import annotations

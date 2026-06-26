@@ -1,3 +1,5 @@
+# Copyright (c) 2024 Microsoft Corporation.
+# Licensed under the MIT License.
 """Pydantic request/response models for the API layer.
 
 These give write endpoints 422 validation on bad input and all endpoints a

@@ -1,8 +1,10 @@
+# Copyright (c) 2024 Microsoft Corporation.
+# Licensed under the MIT License.
 """SQLAlchemy ORM models for the control plane."""
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from kb_platform.db.enums import JobStatus, StepKind, StepStatus, UnitKind, UnitStatus
@@ -37,6 +39,7 @@ class Document(Base):
 
 class Chunk(Base):
     __tablename__ = "chunk"
+    __table_args__ = (Index("ix_chunk_kb_document_ordinal", "kb_id", "document_id", "ordinal"),)
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     chunk_id: Mapped[str] = mapped_column(String, index=True)  # sha512(text)
     kb_id: Mapped[int] = mapped_column(ForeignKey("knowledge_base.id"))
