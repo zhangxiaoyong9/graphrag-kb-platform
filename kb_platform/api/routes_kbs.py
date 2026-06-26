@@ -41,15 +41,18 @@ def _snippet(text: str, limit: int = 220) -> str:
     return one_line[: limit - 1].rstrip() + "…"
 
 
-def _citation_id(chunk_id: str) -> str:
-    return f"chunk:{chunk_id}"
+def _citation_id(chunk_row_id: int) -> str:
+    return f"chunk:{chunk_row_id}"
 
 
-def _chunk_id_from_citation(citation_id: str) -> str | None:
+def _chunk_row_id_from_citation(citation_id: str) -> int | None:
     prefix = "chunk:"
     if not citation_id.startswith(prefix):
         return None
-    return citation_id[len(prefix):]
+    try:
+        return int(citation_id[len(prefix):])
+    except ValueError:
+        return None
 
 
 _SENSITIVE = ("key", "token", "secret", "password")
@@ -196,7 +199,7 @@ def get_document_detail(kb_id: int, doc_id: int, request: Request) -> DocumentDe
     chunks = repo.get_document_chunks(kb_id, doc_id)
     citations = [
         DocumentCitationOut(
-            id=_citation_id(chunk.chunk_id),
+            id=_citation_id(chunk.id),
             label=f"分块 {chunk.ordinal + 1}",
             snippet=_snippet(chunk.text),
             chunk_id=chunk.chunk_id,
@@ -226,27 +229,25 @@ def get_document_evidence(
     request: Request,
 ) -> EvidenceOut:
     repo = request.app.state.repo
-    doc = repo.get_document(kb_id, doc_id)
-    if doc is None:
+    doc_title = repo.get_document_title(kb_id, doc_id)
+    if doc_title is None:
         raise HTTPException(404)
-    chunk_id = _chunk_id_from_citation(citation_id)
-    if chunk_id is None:
+    chunk_row_id = _chunk_row_id_from_citation(citation_id)
+    if chunk_row_id is None:
         raise HTTPException(404)
-    chunks = repo.get_document_chunks(kb_id, doc_id)
-    index = next((i for i, chunk in enumerate(chunks) if chunk.chunk_id == chunk_id), None)
-    if index is None:
+    chunk = repo.get_document_chunk_by_id(kb_id, doc_id, chunk_row_id)
+    if chunk is None:
         raise HTTPException(404)
-    chunk = chunks[index]
-    before = chunks[index - 1].text if index > 0 else None
-    after = chunks[index + 1].text if index + 1 < len(chunks) else None
+    before = repo.get_document_chunk_by_ordinal(kb_id, doc_id, chunk.ordinal - 1)
+    after = repo.get_document_chunk_by_ordinal(kb_id, doc_id, chunk.ordinal + 1)
     return EvidenceOut(
         citation_id=citation_id,
         matched=chunk.text,
-        before=before,
-        after=after,
+        before=before.text if before is not None else None,
+        after=after.text if after is not None else None,
         source=EvidenceSourceOut(
-            document_id=doc.id,
-            document_title=doc.title,
+            document_id=doc_id,
+            document_title=doc_title,
             chunk_id=chunk.chunk_id,
             ordinal=chunk.ordinal,
         ),

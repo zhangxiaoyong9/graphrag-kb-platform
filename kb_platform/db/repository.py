@@ -44,6 +44,10 @@ class Repository:
         with session_scope(self.engine) as s:
             return s.scalar(select(Document).where(Document.id == doc_id, Document.kb_id == kb_id))
 
+    def get_document_title(self, kb_id: int, doc_id: int) -> str | None:
+        with session_scope(self.engine) as s:
+            return s.scalar(select(Document.title).where(Document.id == doc_id, Document.kb_id == kb_id))
+
     def get_document_chunks(self, kb_id: int, doc_id: int) -> list[Chunk]:
         with session_scope(self.engine) as s:
             return list(
@@ -51,6 +55,28 @@ class Repository:
                     select(Chunk)
                     .where(Chunk.kb_id == kb_id, Chunk.document_id == doc_id)
                     .order_by(Chunk.ordinal)
+                )
+            )
+
+    def get_document_chunk_by_id(self, kb_id: int, doc_id: int, chunk_id: int) -> Chunk | None:
+        with session_scope(self.engine) as s:
+            return s.scalar(
+                select(Chunk).where(
+                    Chunk.id == chunk_id,
+                    Chunk.kb_id == kb_id,
+                    Chunk.document_id == doc_id,
+                )
+            )
+
+    def get_document_chunk_by_ordinal(
+        self, kb_id: int, doc_id: int, ordinal: int
+    ) -> Chunk | None:
+        with session_scope(self.engine) as s:
+            return s.scalar(
+                select(Chunk).where(
+                    Chunk.kb_id == kb_id,
+                    Chunk.document_id == doc_id,
+                    Chunk.ordinal == ordinal,
                 )
             )
 

@@ -45,6 +45,61 @@ def _seed_document(repo: Repository, *, kb_id: int = 1) -> int:
     return doc_id
 
 
+def _seed_document_with_duplicate_chunks(repo: Repository, *, kb_id: int = 1) -> int:
+    with session_scope(repo.engine) as s:
+        doc = Document(
+            kb_id=kb_id,
+            title="duplicates.md",
+            source_uri="",
+            content_hash="hash-duplicates",
+            status="parsed",
+            bytes=183,
+            text="Intro.\nRepeated paragraph.\nMiddle.\nRepeated paragraph.\nOutro.",
+        )
+        s.add(doc)
+        s.flush()
+        doc_id = doc.id
+        s.add(Chunk(chunk_id="dup-hash", kb_id=kb_id, document_id=doc_id, ordinal=0, text="Intro."))
+        s.add(Chunk(chunk_id="dup-hash", kb_id=kb_id, document_id=doc_id, ordinal=1, text="Repeated paragraph."))
+        s.add(Chunk(chunk_id="mid-hash", kb_id=kb_id, document_id=doc_id, ordinal=2, text="Middle."))
+        s.add(Chunk(chunk_id="dup-hash", kb_id=kb_id, document_id=doc_id, ordinal=3, text="Repeated paragraph."))
+        s.add(Chunk(chunk_id="out-hash", kb_id=kb_id, document_id=doc_id, ordinal=4, text="Outro."))
+    return doc_id
+
+
+def test_document_detail_uses_unique_citation_ids_for_duplicate_chunk_hashes(repo_and_client):
+    repo, client = repo_and_client
+    doc_id = _seed_document_with_duplicate_chunks(repo)
+
+    r = client.get(f"/kbs/1/documents/{doc_id}")
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    chunks = repo.get_document_chunks(1, doc_id)
+    expected_ids = [f"chunk:{chunk.id}" for chunk in chunks]
+    assert [citation["id"] for citation in body["citations"]] == expected_ids
+    assert len(set(expected_ids)) == len(expected_ids)
+    assert body["citations"][1]["chunk_id"] == "dup-hash"
+    assert body["citations"][3]["chunk_id"] == "dup-hash"
+
+    second_duplicate_citation = urllib.parse.quote(body["citations"][3]["id"], safe="")
+    evidence = client.get(f"/kbs/1/documents/{doc_id}/citations/{second_duplicate_citation}/evidence")
+
+    assert evidence.status_code == 200, evidence.text
+    assert evidence.json() == {
+        "citation_id": body["citations"][3]["id"],
+        "matched": "Repeated paragraph.",
+        "before": "Middle.",
+        "after": "Outro.",
+        "source": {
+            "document_id": doc_id,
+            "document_title": "duplicates.md",
+            "chunk_id": "dup-hash",
+            "ordinal": 3,
+        },
+    }
+
+
 def test_document_detail_returns_text_and_chunk_citations(repo_and_client):
     repo, client = repo_and_client
     doc_id = _seed_document(repo)
@@ -53,6 +108,7 @@ def test_document_detail_returns_text_and_chunk_citations(repo_and_client):
 
     assert r.status_code == 200, r.text
     body = r.json()
+    chunks = repo.get_document_chunks(1, doc_id)
     assert body["id"] == doc_id
     assert body["title"] == "alpha.md"
     assert body["status"] == "parsed"
@@ -60,9 +116,14 @@ def test_document_detail_returns_text_and_chunk_citations(repo_and_client):
     assert body["chunk_count"] == 3
     assert body["text"] == "Alpha introduction.\nBeta details.\nGamma conclusion."
     assert body["citations"] == [
-        {"id": "chunk:c1", "label": "分块 1", "snippet": "Alpha introduction.", "chunk_id": "c1", "ordinal": 0},
-        {"id": "chunk:c2", "label": "分块 2", "snippet": "Beta details.", "chunk_id": "c2", "ordinal": 1},
-        {"id": "chunk:c3", "label": "分块 3", "snippet": "Gamma conclusion.", "chunk_id": "c3", "ordinal": 2},
+        {
+            "id": f"chunk:{chunk.id}",
+            "label": f"分块 {chunk.ordinal + 1}",
+            "snippet": chunk.text,
+            "chunk_id": chunk.chunk_id,
+            "ordinal": chunk.ordinal,
+        }
+        for chunk in chunks
     ]
 
 
@@ -109,13 +170,14 @@ def test_document_detail_wrong_kb_404(repo_and_client):
 def test_evidence_returns_matched_chunk_with_before_after_context(repo_and_client):
     repo, client = repo_and_client
     doc_id = _seed_document(repo)
-    citation_id = urllib.parse.quote("chunk:c2", safe="")
+    chunks = repo.get_document_chunks(1, doc_id)
+    citation_id = urllib.parse.quote(f"chunk:{chunks[1].id}", safe="")
 
     r = client.get(f"/kbs/1/documents/{doc_id}/citations/{citation_id}/evidence")
 
     assert r.status_code == 200, r.text
     assert r.json() == {
-        "citation_id": "chunk:c2",
+        "citation_id": f"chunk:{chunks[1].id}",
         "matched": "Beta details.",
         "before": "Alpha introduction.",
         "after": "Gamma conclusion.",
@@ -131,7 +193,8 @@ def test_evidence_returns_matched_chunk_with_before_after_context(repo_and_clien
 def test_evidence_allows_missing_before_or_after_context(repo_and_client):
     repo, client = repo_and_client
     doc_id = _seed_document(repo)
-    citation_id = urllib.parse.quote("chunk:c1", safe="")
+    chunks = repo.get_document_chunks(1, doc_id)
+    citation_id = urllib.parse.quote(f"chunk:{chunks[0].id}", safe="")
 
     r = client.get(f"/kbs/1/documents/{doc_id}/citations/{citation_id}/evidence")
 
