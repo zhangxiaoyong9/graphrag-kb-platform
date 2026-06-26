@@ -269,6 +269,14 @@ class GraphRagQueryEngine:
         community_level = 2
         response_type = "multiple paragraphs"
 
+        # Optional custom query prompts from KB settings.
+        ls = (self._model_config if isinstance(self._model_config, dict) else {}) if self._model_config else {}
+        qp = ls.get("query_prompts") or {}
+        local_prompt = qp.get("local_system")
+        global_map_prompt = qp.get("global_map")
+        global_reduce_prompt = qp.get("global_reduce")
+        basic_prompt = qp.get("basic_system")
+
         def _read(name: str) -> pd.DataFrame:
             path = os.path.join(root, name)
             if not os.path.exists(path):
@@ -308,6 +316,7 @@ class GraphRagQueryEngine:
                 covariates={},
                 response_type=response_type,
                 description_embedding_store=store,
+                system_prompt=local_prompt,
             )
         elif method == "global":
             engine = get_global_search_engine(
@@ -316,12 +325,11 @@ class GraphRagQueryEngine:
                 entities=entities,
                 communities=communities,
                 response_type=response_type,
+                map_system_prompt=global_map_prompt,
+                reduce_system_prompt=global_reduce_prompt,
             )
         elif method == "drift":
             store = self._build_embedding_store(config, _ENTITY_DESCRIPTION)
-            # drift needs community report full_content embeddings — populate them
-            # from the community_full_content LanceDB table before constructing the engine
-            # (graphrag's read_indexer_report_embeddings does the lookup by report.id).
             report_store = self._build_embedding_store(config, _COMMUNITY_FULL_CONTENT)
             from graphrag.query.indexer_adapters import read_indexer_report_embeddings
             read_indexer_report_embeddings(reports, report_store)
@@ -333,6 +341,8 @@ class GraphRagQueryEngine:
                 relationships=relationships,
                 description_embedding_store=store,
                 response_type=response_type,
+                local_system_prompt=local_prompt,
+                reduce_system_prompt=global_reduce_prompt,
             )
         elif method == "basic":
             store = self._build_embedding_store(config, _TEXT_UNIT_TEXT)
@@ -341,6 +351,7 @@ class GraphRagQueryEngine:
                 text_unit_embeddings=store,
                 config=config,
                 response_type=response_type,
+                system_prompt=basic_prompt,
             )
             # graphrag's BasicSearch calls model.completion_async(stream=True) WITHOUT
             # await, expecting an async iterator directly. graphrag-llm returns a

@@ -14,6 +14,7 @@ export interface KbFormState {
   communityReports: { structuredOutput: boolean; maxLength: number };
   cluster: { maxClusterSize: number };
   prompts: { extract: string; summarize: string; communityReport: string };
+  queryPrompts: { localSystem: string; globalMap: string; globalReduce: string; basicSystem: string };
   concurrency: number;
   advancedOverride: string;
 }
@@ -31,6 +32,7 @@ export const DEFAULTS: KbFormState = {
   communityReports: { structuredOutput: true, maxLength: 2000 },
   cluster: { maxClusterSize: 10 },
   prompts: { extract: "", summarize: "", communityReport: "" },
+  queryPrompts: { localSystem: "", globalMap: "", globalReduce: "", basicSystem: "" },
   concurrency: 4,
   advancedOverride: "",
 };
@@ -109,6 +111,17 @@ export function buildSettings(state: KbFormState): Record<string, unknown> {
     out.community_reports = b;
   }
 
+  // query prompts
+  const qp = state.queryPrompts;
+  if (qp.localSystem.trim() || qp.globalMap.trim() || qp.globalReduce.trim() || qp.basicSystem.trim()) {
+    const q: Record<string, string> = {};
+    if (qp.localSystem.trim()) q.local_system = qp.localSystem.trim();
+    if (qp.globalMap.trim()) q.global_map = qp.globalMap.trim();
+    if (qp.globalReduce.trim()) q.global_reduce = qp.globalReduce.trim();
+    if (qp.basicSystem.trim()) q.basic_system = qp.basicSystem.trim();
+    out.query_prompts = q;
+  }
+
   if (state.concurrency !== DEFAULTS.concurrency) out.concurrency = state.concurrency;
 
   const envs = _apiKeyEnvs(state.llm.apiKeyEnvs);
@@ -131,6 +144,7 @@ export function parseSettings(settings: Record<string, unknown>, method: string,
   const su = (settings.summarize_descriptions as Record<string, unknown> | undefined) ?? {};
   const cr = (settings.community_reports as Record<string, unknown> | undefined) ?? {};
   const cl = (settings.cluster_graph as Record<string, unknown> | undefined) ?? {};
+  const qpS = (settings.query_prompts as Record<string, unknown> | undefined) ?? {};
   const etRaw = eg.entity_types;
   const et = Array.isArray(etRaw) ? etRaw.join(", ") : typeof etRaw === "string" ? etRaw : "";
   return {
@@ -181,6 +195,12 @@ export function parseSettings(settings: Record<string, unknown>, method: string,
       extract: f(eg, "prompt", ""),
       summarize: f(su, "prompt", ""),
       communityReport: f(cr, "prompt", ""),
+    },
+    queryPrompts: {
+      localSystem: f(qpS, "local_system", ""),
+      globalMap: f(qpS, "global_map", ""),
+      globalReduce: f(qpS, "global_reduce", ""),
+      basicSystem: f(qpS, "basic_system", ""),
     },
     concurrency: Number(settings.concurrency ?? DEFAULTS.concurrency),
     advancedOverride: "",

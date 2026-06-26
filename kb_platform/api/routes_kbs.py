@@ -185,13 +185,21 @@ def list_jobs(kb_id: int, request: Request) -> list[JobListItem]:
 
 @router.get("/prompts/defaults")
 def prompt_defaults() -> dict:
-    """Return graphrag's built-in indexing prompts (for the form's 'view default')."""
+    """Return graphrag's built-in indexing + query prompts (for the form's 'view default')."""
     from graphrag.prompts.index.community_report import COMMUNITY_REPORT_PROMPT
     from graphrag.prompts.index.extract_graph import GRAPH_EXTRACTION_PROMPT
     from graphrag.prompts.index.summarize_descriptions import SUMMARIZE_PROMPT
+    from graphrag.prompts.query.basic_search_system_prompt import BASIC_SEARCH_SYSTEM_PROMPT
+    from graphrag.prompts.query.global_search_map_system_prompt import MAP_SYSTEM_PROMPT
+    from graphrag.prompts.query.global_search_reduce_system_prompt import REDUCE_SYSTEM_PROMPT
+    from graphrag.prompts.query.local_search_system_prompt import LOCAL_SEARCH_SYSTEM_PROMPT
 
     return {
         "extract_graph": GRAPH_EXTRACTION_PROMPT,
         "summarize_descriptions": SUMMARIZE_PROMPT,
         "community_reports": COMMUNITY_REPORT_PROMPT,
+        "local_system": LOCAL_SEARCH_SYSTEM_PROMPT,
+        "global_map": MAP_SYSTEM_PROMPT,
+        "global_reduce": REDUCE_SYSTEM_PROMPT,
+        "basic_system": BASIC_SEARCH_SYSTEM_PROMPT,
     }

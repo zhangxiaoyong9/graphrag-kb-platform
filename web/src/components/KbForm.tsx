@@ -48,9 +48,10 @@ export default function KbForm({
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [defaults, setDefaults] = useState<PromptDefaults | null>(null);
   const [defaultsError, setDefaultsError] = useState(false);
-  const [showDef, setShowDef] = useState<
-    Record<"extract" | "summarize" | "report", boolean>
-  >({ extract: false, summarize: false, report: false });
+  const [showDef, setShowDef] = useState<Record<string, boolean>>({
+    extract: false, summarize: false, report: false,
+    q_localSystem: false, q_globalMap: false, q_globalReduce: false, q_basicSystem: false,
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -559,6 +560,49 @@ export default function KbForm({
             )}
           </div>
         </div>
+
+        {/* 查询 Prompt */}
+        <p className="px-1 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wider text-muted">
+          查询 Prompt（留空=用 graphrag 默认）
+        </p>
+        {([
+          ["localSystem", "local 检索 prompt", "local_system"],
+          ["globalMap", "global map prompt", "global_map"],
+          ["globalReduce", "global reduce prompt", "global_reduce"],
+          ["basicSystem", "basic 检索 prompt", "basic_system"],
+        ] as const).map(([field, label, defaultKey]) => (
+          <div key={field} className="mt-3">
+            <div className="mb-1 flex items-center justify-between">
+              <span className="text-[13px] font-medium text-body">{label}</span>
+              <button
+                type="button"
+                className="text-[12px] text-brand hover:underline"
+                onClick={() =>
+                  setShowDef((d) => ({
+                    ...d,
+                    [`q_${field}`]: !d[`q_${field}`],
+                  }))
+                }
+              >
+                {showDef[`q_${field}`] ? "隐藏默认" : "查看 graphrag 默认"}
+              </button>
+            </div>
+            <textarea
+              className="textarea h-28 font-mono text-[12px]"
+              value={s.queryPrompts[field]}
+              onChange={(e) =>
+                set("queryPrompts", { ...s.queryPrompts, [field]: e.target.value })
+              }
+              placeholder="留空使用 graphrag 默认"
+            />
+            {showDef[`q_${field}`] && (
+              <pre className="mt-1 max-h-64 overflow-auto rounded-lg bg-surface-2 p-3 text-[11px] text-muted whitespace-pre-wrap">
+                {defaults?.[defaultKey] ??
+                  (defaultsError ? "加载默认失败" : "加载默认中…")}
+              </pre>
+            )}
+          </div>
+        ))}
       </details>
 
       {/* 高级：只读预览 + 覆盖框 */}

@@ -58,5 +58,9 @@ export interface PromptDefaults {
   extract_graph: string;
   summarize_descriptions: string;
   community_reports: string;
+  local_system: string;
+  global_map: string;
+  global_reduce: string;
+  basic_system: string;
 }
 export const getPromptDefaults = () => req<PromptDefaults>("/prompts/defaults");
