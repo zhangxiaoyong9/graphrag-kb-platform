@@ -83,6 +83,8 @@ class UnitWorker:
                 result = await strategy.run_unit(self.adapter, unit, self.repo)
             if result.cost_json is None and rec:
                 result.cost_json = rec.to_json()
+            if result.llm_raw_output is None and rec:
+                result.llm_raw_output = rec.raw_output()
             strategy.persist(self.data_root, unit, result)
             self.repo.set_unit_succeeded(
                 unit.id,

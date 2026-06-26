@@ -31,9 +31,10 @@ class _Accum:
 
 @dataclass
 class CostRecorder:
-    """Accumulates per-model token + cost totals for one unit."""
+    """Accumulates per-model token + cost totals for one unit + raw LLM outputs."""
 
     _by_model: dict[str, _Accum] = field(default_factory=dict)
+    _raw_outputs: list[str] = field(default_factory=list)
 
     def __bool__(self) -> bool:
         return bool(self._by_model)
@@ -72,6 +73,15 @@ class CostRecorder:
             else:
                 total += a.estimated_cost_usd
         return json.dumps({"items": items, "total_usd": total if known else None})
+
+    def add_raw_output(self, text: str) -> None:
+        if text:
+            self._raw_outputs.append(text)
+
+    def raw_output(self) -> str | None:
+        if not self._raw_outputs:
+            return None
+        return "\n---\n".join(self._raw_outputs)
 
 
 _recorder_var: contextvars.ContextVar[CostRecorder | None] = contextvars.ContextVar(
@@ -121,6 +131,9 @@ class CostCapturingCompletion:
         rec = current_recorder()
         if rec is None:
             return
+        content = getattr(response, "content", None)
+        if content:
+            rec.add_raw_output(content)
         usage = getattr(response, "usage", None)
         if usage is None:
             return

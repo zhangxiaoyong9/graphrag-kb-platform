@@ -115,6 +115,14 @@ export default function UnitTable({ stepId, active }: { stepId: number | null; a
                         </pre>
                       </details>
                     )}
+                    {u.llm_raw_output && (
+                      <details className="mt-1">
+                        <summary className="cursor-pointer text-brand hover:underline">LLM 输出</summary>
+                        <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded-lg bg-surface-2 p-2 text-[11px] text-body">
+                          {u.llm_raw_output}
+                        </pre>
+                      </details>
+                    )}
                   </td>
                 </tr>
               ))}
