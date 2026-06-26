@@ -290,6 +290,7 @@ def build_default_adapter(
     summarize_max_length: int = 500,
     summarize_max_input_tokens: int = 32000,
     report_max_length: int = 2000,
+    extra_api_keys: list[str] | None = None,
     extract_prompt: str | None = None,
     summarize_prompt: str | None = None,
     community_report_prompt: str | None = None,
@@ -326,10 +327,29 @@ def build_default_adapter(
     )
     completion = create_completion(model_config)
 
-    from kb_platform.graph.cost_capture import CostCapturingCompletion
+    from kb_platform.graph.cost_capture import CostCapturingCompletion, LoadBalancingCompletion
 
     model_id = model_config.model
-    completion = CostCapturingCompletion(completion, model_id=model_id)
+    wrapped = CostCapturingCompletion(completion, model_id=model_id)
+
+    # Multi-key load balancing: construct one completion per extra key + round-robin.
+    if extra_api_keys:
+        from graphrag_llm.config import ModelConfig as _MC
+
+        wrappers = [wrapped]
+        for key in extra_api_keys:
+            extra_cfg = _MC(
+                type=model_config.type,
+                model_provider=model_config.model_provider,
+                model=model_config.model,
+                api_base=model_config.api_base,
+                api_version=model_config.api_version,
+                api_key=key,
+            )
+            wrappers.append(CostCapturingCompletion(create_completion(extra_cfg), model_id=model_id))
+        wrapped = LoadBalancingCompletion(wrappers)
+
+    completion = wrapped
 
     def extractor_factory() -> GraphExtractor:
         return GraphExtractor(
@@ -427,6 +447,12 @@ def build_adapter_from_settings(
         et = [t.strip() for t in et.split(",") if t.strip()]
 
     embed_model_config = _build_embed_model_config(settings)
+
+    # multi-key load balancing: resolve extra keys from llm.api_key_envs
+    api_key_envs = llm.get("api_key_envs") or []
+    extra_keys = [os.getenv(env) for env in (api_key_envs if isinstance(api_key_envs, list) else [])]
+    extra_keys = [k for k in extra_keys if k]
+
     return build_default_adapter(
         data_root=data_root,
         model_config=model_config,
@@ -443,4 +469,5 @@ def build_adapter_from_settings(
         extract_prompt=extract_graph.get("prompt"),
         summarize_prompt=summarize.get("prompt"),
         community_report_prompt=reports.get("prompt"),
+        extra_api_keys=extra_keys or None,
     )

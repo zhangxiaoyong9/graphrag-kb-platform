@@ -158,3 +158,26 @@ class CostCapturingCompletion:
 
     def __getattr__(self, name):  # proxy anything else (e.g. model_id) to the inner
         return getattr(self._inner, name)
+
+
+class LoadBalancingCompletion:
+    """Round-robin across multiple CostCapturingCompletion instances (each with a
+    different api key) for multi-key load balancing. Delegates cost + raw-output
+    capture to the inner wrappers."""
+
+    def __init__(self, wrapped: list[CostCapturingCompletion]) -> None:
+        self._wrapped = wrapped
+        self._idx = 0
+
+    async def completion_async(self, **kwargs):
+        w = self._wrapped[self._idx % len(self._wrapped)]
+        self._idx += 1
+        return await w.completion_async(**kwargs)
+
+    def completion(self, **kwargs):
+        w = self._wrapped[self._idx % len(self._wrapped)]
+        self._idx += 1
+        return w.completion(**kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._wrapped[0], name)

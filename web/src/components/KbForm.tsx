@@ -195,6 +195,14 @@ export default function KbForm({
               onChange={(e) => set("llm", { ...s.llm, apiVersion: e.target.value })}
             />
           </Field>
+          <Field label="api_key_envs" hint="多 key 负载均衡（逗号分隔环境变量名）">
+            <input
+              className="input"
+              value={s.llm.apiKeyEnvs}
+              placeholder="DEEPSEEK_API_KEY_1, DEEPSEEK_API_KEY_2"
+              onChange={(e) => set("llm", { ...s.llm, apiKeyEnvs: e.target.value })}
+            />
+          </Field>
         </div>
       </details>
 

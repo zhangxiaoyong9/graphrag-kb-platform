@@ -1,6 +1,6 @@
 /** KB config form state, defaults, and settings-serializer (replaces hand-written JSON). */
 
-export interface LlmFields { provider: string; model: string; apiBase: string; apiKeyEnv: string; apiKey: string; apiVersion: string }
+export interface LlmFields { provider: string; model: string; apiBase: string; apiKeyEnv: string; apiKey: string; apiVersion: string; apiKeyEnvs: string }
 export interface EmbeddingFields extends LlmFields { enabled: boolean }
 
 export interface KbFormState {
@@ -18,7 +18,7 @@ export interface KbFormState {
   advancedOverride: string;
 }
 
-const EMPTY_LLM: LlmFields = { provider: "", model: "", apiBase: "", apiKeyEnv: "", apiKey: "", apiVersion: "" };
+const EMPTY_LLM: LlmFields = { provider: "", model: "", apiBase: "", apiKeyEnv: "", apiKey: "", apiVersion: "", apiKeyEnvs: "" };
 
 export const DEFAULTS: KbFormState = {
   method: "standard",
@@ -39,6 +39,10 @@ const LLM_MAP: [keyof LlmFields, string][] = [
   ["provider", "model_provider"], ["model", "model"], ["apiBase", "api_base"],
   ["apiKeyEnv", "api_key_env"], ["apiKey", "api_key"], ["apiVersion", "api_version"],
 ];
+
+function _apiKeyEnvs(csv: string): string[] {
+  return csv.split(",").map((t) => t.trim()).filter(Boolean);
+}
 
 function pickLlm(f: LlmFields): Record<string, string> {
   const out: Record<string, string> = {};
@@ -107,6 +111,13 @@ export function buildSettings(state: KbFormState): Record<string, unknown> {
 
   if (state.concurrency !== DEFAULTS.concurrency) out.concurrency = state.concurrency;
 
+  const envs = _apiKeyEnvs(state.llm.apiKeyEnvs);
+  if (envs.length) {
+    const b = (out.llm ?? {}) as Record<string, unknown>;
+    b.api_key_envs = envs;
+    out.llm = b;
+  }
+
   return out;
 }
 
@@ -134,6 +145,7 @@ export function parseSettings(settings: Record<string, unknown>, method: string,
       apiKeyEnv: f(llm, "api_key_env", ""),
       apiKey: "",
       apiVersion: f(llm, "api_version", ""),
+      apiKeyEnvs: Array.isArray(llm.api_key_envs) ? llm.api_key_envs.join(", ") : (typeof llm.api_key_envs === "string" ? llm.api_key_envs : ""),
     },
     embedding: {
       ...DEFAULTS.embedding,
