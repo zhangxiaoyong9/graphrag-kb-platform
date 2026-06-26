@@ -42,6 +42,7 @@ _NO_REPORTS_MSG = "no community reports; re-index with a json_schema-capable mod
 # graphrag canonical embedding names (graphrag.config.embeddings).
 _ENTITY_DESCRIPTION = "entity_description"
 _TEXT_UNIT_TEXT = "text_unit_text"
+_COMMUNITY_FULL_CONTENT = "community_full_content"
 
 
 class _StreamFixWrapper:
@@ -318,6 +319,12 @@ class GraphRagQueryEngine:
             )
         elif method == "drift":
             store = self._build_embedding_store(config, _ENTITY_DESCRIPTION)
+            # drift needs community report full_content embeddings — populate them
+            # from the community_full_content LanceDB table before constructing the engine
+            # (graphrag's read_indexer_report_embeddings does the lookup by report.id).
+            report_store = self._build_embedding_store(config, _COMMUNITY_FULL_CONTENT)
+            from graphrag.query.indexer_adapters import read_indexer_report_embeddings
+            read_indexer_report_embeddings(reports, report_store)
             engine = get_drift_search_engine(
                 config,
                 reports=reports,
