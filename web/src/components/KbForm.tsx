@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { createKb } from "../api/client";
+import { useEffect, useState } from "react";
+import { createKb, getPromptDefaults, type PromptDefaults } from "../api/client";
 import type { KbOut } from "../api/types";
 import { Button, Field } from "./ui";
 import { IconPlus } from "./icons";
@@ -24,6 +24,26 @@ export default function KbForm({ onCreated }: { onCreated: (kb: KbOut) => void }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [defaults, setDefaults] = useState<PromptDefaults | null>(null);
+  const [defaultsError, setDefaultsError] = useState(false);
+  const [showDef, setShowDef] = useState<
+    Record<"extract" | "summarize" | "report", boolean>
+  >({ extract: false, summarize: false, report: false });
+
+  useEffect(() => {
+    let cancelled = false;
+    setDefaultsError(false);
+    getPromptDefaults()
+      .then((d) => {
+        if (!cancelled) setDefaults(d);
+      })
+      .catch(() => {
+        if (!cancelled) setDefaultsError(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const set = <K extends keyof KbFormState>(k: K, v: KbFormState[K]) =>
     setS((p) => ({ ...p, [k]: v }));
@@ -387,6 +407,111 @@ export default function KbForm({ onCreated }: { onCreated: (kb: KbOut) => void }
               }
             />
           </Field>
+        </div>
+      </details>
+
+      {/* 提示词 Prompts */}
+      <details>
+        <summary className="text-[13px] font-medium text-body cursor-pointer select-none">
+          提示词 Prompts（留空=用 graphrag 默认）
+        </summary>
+        <div className="mt-3 space-y-4">
+          {/* 抽取 prompt */}
+          <div>
+            <div className="mb-1 flex items-center justify-between">
+              <span className="text-[13px] font-medium text-body">
+                图谱抽取 extract_graph prompt
+              </span>
+              <button
+                type="button"
+                className="text-[12px] text-brand hover:underline"
+                onClick={() =>
+                  setShowDef((d) => ({ ...d, extract: !d.extract }))
+                }
+              >
+                {showDef.extract ? "隐藏默认" : "查看 graphrag 默认"}
+              </button>
+            </div>
+            <textarea
+              className="textarea h-28 font-mono text-[12px]"
+              value={s.prompts.extract}
+              onChange={(e) =>
+                set("prompts", { ...s.prompts, extract: e.target.value })
+              }
+              placeholder="留空使用 graphrag 默认；可粘贴 prompt-tune 产出或自定义中文 prompt"
+            />
+            {showDef.extract && (
+              <pre className="mt-1 max-h-64 overflow-auto rounded-lg bg-surface-2 p-3 text-[11px] text-muted whitespace-pre-wrap">
+                {defaults?.extract_graph ??
+                  (defaultsError ? "加载默认失败" : "加载默认中…")}
+              </pre>
+            )}
+          </div>
+          {/* 摘要 summarize_descriptions prompt */}
+          <div>
+            <div className="mb-1 flex items-center justify-between">
+              <span className="text-[13px] font-medium text-body">
+                描述摘要 summarize_descriptions prompt
+              </span>
+              <button
+                type="button"
+                className="text-[12px] text-brand hover:underline"
+                onClick={() =>
+                  setShowDef((d) => ({ ...d, summarize: !d.summarize }))
+                }
+              >
+                {showDef.summarize ? "隐藏默认" : "查看 graphrag 默认"}
+              </button>
+            </div>
+            <textarea
+              className="textarea h-28 font-mono text-[12px]"
+              value={s.prompts.summarize}
+              onChange={(e) =>
+                set("prompts", { ...s.prompts, summarize: e.target.value })
+              }
+              placeholder="留空使用 graphrag 默认"
+            />
+            {showDef.summarize && (
+              <pre className="mt-1 max-h-64 overflow-auto rounded-lg bg-surface-2 p-3 text-[11px] text-muted whitespace-pre-wrap">
+                {defaults?.summarize_descriptions ??
+                  (defaultsError ? "加载默认失败" : "加载默认中…")}
+              </pre>
+            )}
+          </div>
+          {/* 社区报告 community_reports prompt */}
+          <div>
+            <div className="mb-1 flex items-center justify-between">
+              <span className="text-[13px] font-medium text-body">
+                社区报告 community_reports prompt
+              </span>
+              <button
+                type="button"
+                className="text-[12px] text-brand hover:underline"
+                onClick={() =>
+                  setShowDef((d) => ({ ...d, report: !d.report }))
+                }
+              >
+                {showDef.report ? "隐藏默认" : "查看 graphrag 默认"}
+              </button>
+            </div>
+            <textarea
+              className="textarea h-28 font-mono text-[12px]"
+              value={s.prompts.communityReport}
+              onChange={(e) =>
+                set("prompts", {
+                  ...s.prompts,
+                  communityReport: e.target.value,
+                })
+              }
+              placeholder="留空使用 graphrag 默认"
+            />
+            {showDef.report && (
+              <pre className="mt-1 max-h-64 overflow-auto rounded-lg bg-surface-2 p-3 text-[11px] text-muted whitespace-pre-wrap">
+                {defaults?.community_reports ??
+                  (defaultsError ? "加载默认失败" : "加载默认中…")}
+              </pre>
+            )}
+          </div>
         </div>
       </details>
 
