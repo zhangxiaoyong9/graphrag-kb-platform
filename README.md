@@ -1,145 +1,187 @@
 # KB Platform
 
-Knowledge base management platform built on top of Microsoft [GraphRAG](https://github.com/microsoft/graphrag). Provides a REST API + React dashboard for creating knowledge bases, indexing documents, tracking every chunk and pipeline step, and querying the resulting graph with local / global / drift / basic search.
+Knowledge base management platform built on top of Microsoft [GraphRAG](https://github.com/microsoft/graphrag). Provides a REST API + a React dashboard for creating knowledge bases, indexing documents, tracking every chunk and pipeline step, and querying the graph with local / global / drift / basic search.
 
-## Quick start
+- **Control plane:** SQLite (jobs / steps / units / documents / retries).
+- **Data plane:** parquet (entities / relationships / communities / reports / text units) + LanceDB vectors.
+- **Two processes:** an HTTP API server (also hosts the built SPA) + an independent background worker that runs indexing. The server never runs indexing; the worker never serves HTTP.
+
+---
+
+## Requirements
+
+- Python 3.11–3.13 + [`uv`](https://docs.astral.sh/uv/)
+- Node 18+ (only to build the dashboard; not needed at runtime if you use a prebuilt `web/dist/`)
+- An LLM provider key in the environment (e.g. `DEEPSEEK_API_KEY` or `OPENAI_API_KEY`). Keys are **never stored** — resolved from `llm.api_key_env` → `{PROVIDER}_API_KEY` env → explicit `api_key`.
+- _(Optional)_ [Ollama](https://ollama.com) for local embeddings — needed if your LLM provider has no embedding model (e.g. DeepSeek).
+
+---
+
+## Deployment
+
+### 1. Backend (API server + worker)
 
 ```bash
 # clone & install
 git clone https://github.com/zhangxiaoyong9/graphrag-kb-platform.git kb-platform
 cd kb-platform
-uv sync
+uv sync                              # install Python dependencies
 
-# create the database (once)
+# create the SQLite database (once)
 uv run alembic upgrade head
+```
 
-# start the API server
+Run **two** processes (separate terminals):
+
+```bash
+# Terminal 1 — API server: REST endpoints + hosts the built SPA
+export DEEPSEEK_API_KEY=sk-...       # your LLM provider key
 uv run python -m kb_platform.server kb.db . 127.0.0.1 8000
 
-# in another terminal, start the background worker
+# Terminal 2 — background worker: polls SQLite → runs indexing jobs
+export DEEPSEEK_API_KEY=sk-...       # same key (worker makes the LLM calls)
 uv run python -m kb_platform.worker kb.db
 ```
 
-The dashboard is served at `http://127.0.0.1:8000` (Vite SPA; API routes take priority over the catch-all).
+Server CLI: `python -m kb_platform.server [db_path] [data_root] [host] [port]` (defaults `kb.db . 127.0.0.1 8000`). The `data_root` holds the parquet index output + `<data_root>/vectors/` LanceDB tables.
 
-To use real LLM indexing + query, set your provider key in the environment (e.g. `DEEPSEEK_API_KEY` / `OPENAI_API_KEY`) and supply a `settings_yaml` when creating a KB:
+> **Proxy gotcha:** if your machine sets `all_proxy`/`http_proxy`/`https_proxy` (e.g. Surge, Clash), litellm will route **localhost** calls (Ollama embeddings) through the proxy and fail. Run the server/worker with the proxy unset for localhost — `env -u all_proxy -u http_proxy -u https_proxy ... python -m kb_platform.server ...` — or set `NO_PROXY=localhost,127.0.0.1`.
+
+### 2. Frontend (React dashboard)
+
+**Production (recommended):** the API server hosts the prebuilt SPA from `web/dist/`. Build it once, then just use the server — no separate frontend process.
+
+```bash
+cd web
+npm install
+npm run build        # outputs web/dist/ (tsc -b && vite build)
+```
+
+Open **`http://127.0.0.1:8000`** — that's it. Re-run `npm run build` after frontend upgrades; the server picks up the new `dist/` on next start.
+
+**Development (hot reload):** run the Vite dev server with the backend running on :8000 (it proxies `/kbs`, `/jobs`, `/steps`, `/units`, `/health` to the backend):
+
+```bash
+cd web && npm install && npm run dev      # http://localhost:5173
+```
+
+### 3. (Optional) Local embeddings via Ollama
+
+DeepSeek (and other chat-only providers) have no embedding model, so `local`/`basic`/`drift` queries need a separate embedder. Run one locally with Ollama:
+
+```bash
+ollama pull nomic-embed-text
+ollama serve                                # http://localhost:11434
+```
+
+Then include an `embedding` block when creating the KB (the placeholder `api_key` satisfies graphrag-llm's validator; litellm ignores it for Ollama):
 
 ```json
-POST /kbs {
+POST /kbs
+{
   "name": "my-kb",
-  "settings_yaml": "{\"llm\":{\"model_provider\":\"deepseek\",\"model\":\"deepseek-chat\"}}"
+  "settings_yaml": "{
+    \"llm\": {\"model_provider\":\"deepseek\",\"model\":\"deepseek-chat\",\"api_key_env\":\"DEEPSEEK_API_KEY\"},
+    \"embedding\": {\"model_provider\":\"ollama\",\"model\":\"nomic-embed-text\",\"api_base\":\"http://localhost:11434\",\"api_key\":\"ollama\"},
+    \"community_reports\": {\"structured_output\": false}
+  }"
 }
 ```
 
-The adapter resolves credentials from `llm.api_key_env` → `{PROVIDER}_API_KEY` env var → explicit `api_key` arg — no key is ever stored in the database.
+---
 
-## Architecture
+## Creating a KB + indexing
 
-**Control plane (SQLite)** — tracks jobs, steps, units, documents, and retries.
+```bash
+curl -X POST http://127.0.0.1:8000/kbs -H 'Content-Type: application/json' \
+  -d '{"name":"my-kb","method":"standard","settings_yaml":"{...see above...}"}'
+curl -X POST http://127.0.0.1:8000/kbs/1/documents -H 'Content-Type: application/json' \
+  -d '{"title":"intro","text":"..."}'           # or multipart file upload
+curl -X POST http://127.0.0.1:8000/kbs/1/jobs -H 'Content-Type: application/json' \
+  -d '{"type":"full"}'                          # "full" or "incremental"
+```
 
-**Data plane (parquet + LanceDB)** — the knowledge graph output (entities, relationships, communities, community reports, text units) plus embeddings under `<data_root>/vectors/`.
+Or just use the dashboard at `http://127.0.0.1:8000`.
 
-**Worker** — polls SQLite for pending jobs, runs the indexing engine (chunk → extract → summarize → finalize → cluster → community reports → embed). Per-job exception isolation; crash recovery resets stale units; graceful SIGTERM/SIGINT shutdown finishes the in-flight unit then exits. The API server never runs indexing directly.
+## Dashboard
 
-**Server** — FastAPI REST API + serves the built React SPA under `/assets` with a history fallback catch-all (API routes registered first → always win).
-
-### Process boundaries
-
-| Process | Entry point | What it does |
-|---------|------------|--------------|
-| API server | `python -m kb_platform.server` | REST endpoints + SPA hosting |
-| Worker | `python -m kb_platform.worker` | Polls SQLite → runs/indexing jobs |
-
-## Frontend
-
-Open `http://127.0.0.1:8000` after starting the server — no extra config needed.
+Grouped SaaS-style sidebar (工作台 / 知识库 / 检索与问答 / 分析与监控 / 系统管理). Key surfaces:
 
 | Page | What you can do |
-|------|----------------|
-| KB list | Create / browse knowledge bases |
-| KB detail | Document manager (file upload / paste / list / delete), trigger full / incremental indexing, cumulative **cost**, **export** (zip / GraphML), interactive **graph** viz, jobs, query box |
-| Job detail | Step timeline + per-step progress bars + unit table + per-step **cost** bars |
-| Retry | Single-unit retry + batch retry all failed units in a step |
-| Query | Pick search method (local / global / drift / basic) → ask a question → see answer |
+|------|-----------------|
+| Overview | KB count, recent jobs, system health |
+| KB management / Documents / Graph | Create KBs; cross-KB document center; cross-KB graph explorer |
+| Retrieval test / Chat | Pick KB + method (local/global/drift/basic), see **answer + real sources + token usage + server elapsed** |
+| Analytics / Jobs / Cost | Aggregated stats; every job across KBs; cost by step/model/job |
+| KB detail | Document manager (upload/paste/list/delete), trigger full/incremental, cumulative **cost**, **export** (zip/GraphML), interactive **graph**, jobs, query; **model-config card** shows the KB's LLM/embedding settings |
+| Job detail | Step timeline + per-step progress + unit table + per-unit/step **retry** + per-step cost |
+| System status / Settings / API Keys | Health + API reference; read-only config guidance; API-key placeholder |
 
-The graph view uses [react-force-graph-2d](https://github.com/vasturiano/react-force-graph-2d): nodes are entities (sized/colored by degree/community), with a search box to focus a neighborhood. Cost bars are pure CSS (no chart library).
-
-Stack: React 18 + TypeScript + Vite + Tailwind CSS. The built SPA lives in `web/dist/`; the API server hosts it automatically (`/assets` static files + history fallback; API routes are registered first and always win).
+Graph viz uses [react-force-graph-2d](https://github.com/vasturiano/react-force-graph-2d); cost bars are pure CSS.
 
 ## API
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | Liveness: DB ping + worker heartbeat staleness |
-| `POST` | `/kbs` | Create a knowledge base |
-| `GET` | `/kbs` | List all KBs |
-| `GET` | `/kbs/{id}` | Get a single KB |
-| `POST` | `/kbs/{id}/documents` | Add a document — JSON `{title, text}` **or** multipart file upload (parsed via [markitdown](https://github.com/microsoft/markitdown): `.txt`, `.md`, `.pdf`, `.docx`, `.html`, …) |
-| `GET` | `/kbs/{id}/documents` | List documents (with `bytes` + `chunk_count`) |
-| `DELETE` | `/kbs/{id}/documents/{doc_id}` | Delete a document + its chunks (**graph is not shrunk** — re-run incremental to refresh) |
-| `POST` | `/kbs/{id}/jobs` | Trigger a job (`type: "full"` or `"incremental"`) |
-| `GET` | `/kbs/{id}/jobs` | List jobs for a KB |
-| `GET` | `/kbs/{id}/cost` | Cumulative cost by step / model / job |
-| `GET` | `/kbs/{id}/jobs/{jid}/cost` | One job's cost by step / model |
-| `GET` | `/kbs/{id}/export?format=zip\|graphml` | Download the index (zip of parquet + GraphML, or standalone GraphML) |
-| `GET` | `/kbs/{id}/graph?limit=&q=&hop=` | Graph viz data (Top-N entities by degree, or a search neighborhood, with community coloring) |
-| `GET` | `/jobs/{id}` | Get job status |
-| `GET` | `/jobs/{id}/steps` | Get step timeline with per-step progress |
-| `GET` | `/steps/{id}/units` | Get unit table for a step |
+| `POST` | `/kbs` | Create a KB |
+| `GET` | `/kbs` | List KBs |
+| `GET` | `/kbs/{id}` | KB detail (incl. redacted `settings`) |
+| `POST` | `/kbs/{id}/documents` | Add doc — JSON `{title,text}` **or** multipart file (via [markitdown](https://github.com/microsoft/markitdown): `.txt/.md/.pdf/.docx/.html`…) |
+| `GET` | `/kbs/{id}/documents` | List docs (`bytes` + `chunk_count`) |
+| `DELETE` | `/kbs/{id}/documents/{doc_id}` | Delete doc + chunks (**graph not shrunk** — re-run incremental) |
+| `POST` | `/kbs/{id}/jobs` | Trigger job (`type: "full"` / `"incremental"`) |
+| `GET` | `/kbs/{id}/jobs` | List jobs |
+| `GET` | `/kbs/{id}/cost` | Cumulative cost by step/model/job |
+| `GET` | `/kbs/{id}/jobs/{jid}/cost` | One job's cost by step/model |
+| `GET` | `/kbs/{id}/export?format=zip\|graphml` | Download index (zip of parquet+GraphML, or GraphML) |
+| `GET` | `/kbs/{id}/graph?limit=&q=&hop=` | Graph viz data (Top-N by degree, or search neighborhood, community coloring) |
+| `GET` | `/jobs/{id}` | Job status |
+| `GET` | `/jobs/{id}/steps` | Step timeline + per-step progress |
+| `GET` | `/steps/{id}/units` | Unit table for a step |
 | `POST` | `/steps/{id}/retry` | Retry all failed units in a step |
 | `POST` | `/units/{id}/retry` | Retry a single failed unit |
-| `POST` | `/kbs/{id}/query` | Query (`method: "local"` / `"global"` / `"drift"` / `"basic"`) |
+| `POST` | `/kbs/{id}/query` | Query → `{answer, method, error, elapsed_ms, prompt_tokens, output_tokens, llm_calls, sources}` |
 
-Upload size is capped at 25 MiB by default (`KB_MAX_UPLOAD_BYTES` env). Cost is captured per LLM call via graphrag-llm's model-cost registry; unknown models contribute tokens but no USD (never fails a unit).
+Upload cap 25 MiB (`KB_MAX_UPLOAD_BYTES`). Cost is captured per LLM call via graphrag-llm's model-cost registry; unknown models contribute tokens but no USD (never fails a unit).
 
 ## Indexing pipeline
 
-Full indexing (`type: "full"`):
+Full (`type: "full"`):
 
 ```
 chunk_documents → extract_graph → summarize_descriptions → finalize_graph →
 create_communities → community_reports → generate_text_embeddings
 ```
 
-Incremental indexing (`type: "incremental"`) re-runs only what changed: delta-filtered extract (only new chunks' LLM), merge-delta (re-merges ALL cached on-disk extractions, zero LLM), then **delta-scoped** summarize and community_reports — only entities whose descriptions changed and communities whose context changed are re-LLM'd (the rest carry over via on-disk summaries / a `reports_by_hash` sidecar, since Leiden reassigns community ids each run). Old documents are never re-parsed.
+Incremental (`type: "incremental"`) re-runs only what changed: delta-filtered extract (only new chunks' LLM), merge-delta (re-merges ALL cached on-disk extractions, zero LLM), then **delta-scoped** summarize and community_reports — only changed entities/communities are re-LLM'd (the rest carry over via on-disk summaries / a `reports_by_hash` sidecar; Leiden reassigns community ids each run). Old documents are never re-parsed.
 
-Every LLM step is tracked at the chunk/entity/community level (unit) with `pending → running → succeeded/failed` status; failed units can be retried individually or as a step.
+Every LLM step is tracked at the chunk/entity/community level (unit): `pending → running → succeeded/failed`; failed units can be retried individually or per-step.
 
-**DeepSeek community reports:** set `community_reports.structured_output: false` in the KB settings to generate reports via a plain-text completion + lenient JSON parse (DeepSeek rejects `response_format: json_schema`; the plain path works around it). Default is `true` (graphrag's structured output, for OpenAI/GPT-4o).
+**DeepSeek community reports:** set `community_reports.structured_output: false` in KB settings → plain-text completion + lenient JSON parse (DeepSeek rejects `response_format: json_schema`). Default `true` (graphrag structured output, for OpenAI/GPT-4o).
 
 ## Query
 
-All four graphrag search methods are supported:
+| Method | Needs community reports | Needs embeddings | Description |
+|--------|------------------------|------------------|-------------|
+| `local` | no | yes (entity) | Entity-grounded retrieval + community summaries |
+| `global` | yes | no | Map-reduce over community reports |
+| `drift` | yes | yes | Dense retrieval focused search |
+| `basic` | no | yes (text-unit) | Text-unit vector search (simplest, fastest) |
 
-| Method | Needs community reports | Description |
-|--------|------------------------|-------------|
-| `local` | no | Entity-grounded retrieval with community summaries |
-| `global` | yes | Map-reduce over community reports |
-| `drift` | yes | Dense retrieval focused search |
-| `basic` | no | Text-unit-level vector search (simplest, fastest) |
-
-`global` and `drift` require community reports. DeepSeek rejects `response_format: json_schema`, so for those methods either use a json-schema-capable model (e.g. GPT-4o), or set the KB's `community_reports.structured_output: false` to use the plain-text report fallback (see [Indexing pipeline](#indexing-pipeline)).
+The query endpoint resolves the LLM from the KB `llm` settings and the embedder from `embedding` (so Ollama works for the vector methods). The response carries real server-side `elapsed_ms`, token usage, and extracted source entities / text snippets.
 
 ## Development
 
 ```bash
-uv sync                          # install all deps (including dev)
-uv run alembic upgrade head      # create/update the database schema
-uv run pytest                    # run all backend tests (160)
+uv sync                          # install all deps (incl. dev)
+uv run alembic upgrade head      # create/update DB schema
+uv run pytest                    # backend tests
 uv run ruff check .              # lint
-uv run ruff format --check .     # format check
-
-# frontend
-cd web && npm install && npm run build && npm test   # 19 vitest tests
+cd web && npm install && npm run build && npm test   # frontend build + vitest
 ```
 
-Tests use `FakeGraphAdapter` (deterministic, no LLM), `FakeVectorStore` (in-memory), and `FakeQueryEngine`. Real-LLM integration tests need a provider key in the environment.
-
-### Requirements
-
-- Python 3.11–3.13
-- [uv](https://docs.astral.sh/uv/) for dependency management
-- Node 18+ (for the React dashboard)
+Tests use `FakeGraphAdapter` (deterministic, no LLM), `FakeVectorStore` (in-memory), `FakeQueryEngine`. Real-LLM integration tests need a provider key in the environment.
 
 ## Project structure
 
@@ -148,14 +190,14 @@ kb_platform/
   api/            FastAPI app, routes (kbs/jobs/query/health/cost/export/graph), models
   db/             SQLAlchemy models, repository, engine helpers
   engine/         Indexing orchestrator, atomic steps, unit worker, strategies (incl. delta)
-  graph/          GraphAdapter seam, vector_store, GraphML writer, cost capture (completion wrapper)
+  graph/          GraphAdapter seam, vector store, GraphML writer, cost capture, embed_items
   input/          Document readers (markitdown)
-  query/          QueryEngine seam (Fake + GraphRagQueryEngine)
+  query/          QueryEngine seam (Fake + GraphRagQueryEngine + context source extraction)
   reconsolidate/  Post-incremental extraction re-merge
   worker.py       Background indexing worker (SQLite-as-queue, graceful shutdown)
-  server.py       HTTP API server entry point
-web/              React + TypeScript + Vite + Tailwind SPA (DocumentManager, GraphView, CostPanel, …)
+  server.py       HTTP API server entry point (loop="asyncio")
+web/              React + TypeScript + Vite + Tailwind SPA
 tests/            Backend tests (unit + integration; pytest)
-docs/             Design specs and implementation plans
+docs/             Design specs, plans, verification records, screenshots
 alembic/          Database migrations
 ```
