@@ -43,11 +43,11 @@ export const demoSteps: JobOut["steps"] = [
 export const demoJob: JobOut = { id: 7, status: "running", steps: demoSteps };
 
 export const demoUnits: UnitOut[] = [
-  { id: 911, subject_id: "chunk-0042-nvidia", status: "succeeded", error: null, llm_raw_output: null, needs_reconsolidation: false },
-  { id: 912, subject_id: "chunk-0043-tesla", status: "succeeded", error: null, llm_raw_output: null, needs_reconsolidation: false },
-  { id: 913, subject_id: "chunk-0044-byd", status: "failed", error: "LiteLLM RateLimitError: 429 Too Many Requests (retry budget exhausted).", llm_raw_output: null, needs_reconsolidation: false },
-  { id: 914, subject_id: "chunk-0045-catl", status: "pending", error: null, llm_raw_output: null, needs_reconsolidation: false },
-  { id: 915, subject_id: "chunk-0046-lg", status: "running", error: null, llm_raw_output: null, needs_reconsolidation: false },
+  { id: 911, subject_id: "chunk-0042-nvidia", status: "succeeded", error: null, llm_raw_output: null, needs_reconsolidation: false, input_text: null },
+  { id: 912, subject_id: "chunk-0043-tesla", status: "succeeded", error: null, llm_raw_output: null, needs_reconsolidation: false, input_text: null },
+  { id: 913, subject_id: "chunk-0044-byd", status: "failed", error: "LiteLLM RateLimitError: 429 Too Many Requests (retry budget exhausted).", llm_raw_output: null, needs_reconsolidation: false, input_text: null },
+  { id: 914, subject_id: "chunk-0045-catl", status: "pending", error: null, llm_raw_output: null, needs_reconsolidation: false, input_text: null },
+  { id: 915, subject_id: "chunk-0046-lg", status: "running", error: null, llm_raw_output: null, needs_reconsolidation: false, input_text: null },
 ];
 
 export const demoJobCost: JobCost = {

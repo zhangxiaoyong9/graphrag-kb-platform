@@ -107,6 +107,7 @@ class UnitOut(BaseModel):
     error: str | None = None
     llm_raw_output: str | None = None
     needs_reconsolidation: bool = False
+    input_text: str | None = None
 
 
 class UnitPage(BaseModel):

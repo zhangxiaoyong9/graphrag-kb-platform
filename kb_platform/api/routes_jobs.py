@@ -61,7 +61,7 @@ def get_steps(job_id: int, request: Request) -> list[StepOut]:
     return [_step_out(repo, s) for s in repo.get_steps(job_id)]
 
 
-def _unit_out(u) -> UnitOut:
+def _unit_out(u, input_text: str | None = None) -> UnitOut:
     return UnitOut(
         id=u.id,
         subject_id=u.subject_id,
@@ -69,6 +69,7 @@ def _unit_out(u) -> UnitOut:
         error=u.error,
         llm_raw_output=u.llm_raw_output,
         needs_reconsolidation=u.needs_reconsolidation,
+        input_text=input_text,
     )
 
 
@@ -82,13 +83,20 @@ def get_units(
 ) -> UnitPage:
     repo = request.app.state.repo
     items, total = repo.list_units_page(step_id, status, limit, offset)
-    return UnitPage(items=[_unit_out(u) for u in items], total=total)
+    # batch-lookup chunk texts for extract_graph units (request-content preview)
+    chunk_ids = [u.subject_id for u in items if u.subject_type == "chunk"]
+    chunk_texts = repo.get_chunk_texts(chunk_ids)
+    return UnitPage(
+        items=[_unit_out(u, chunk_texts.get(u.subject_id)) for u in items],
+        total=total,
+    )
 
 
 @router.post("/units/{unit_id}/retry")
 def retry_unit(unit_id: int, request: Request):
     repo = request.app.state.repo
     repo.reset_unit_to_pending(unit_id)
+    repo.reset_step_if_succeeded_for_unit(unit_id)  # SUCCEEDED→PARTIALLY_FAILED so orchestrator re-runs
     repo.reactivate_job_for_unit(unit_id)  # re-queue so the worker re-claims it
     return {"ok": True}
 

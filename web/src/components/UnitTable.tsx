@@ -88,17 +88,15 @@ export default function UnitTable({ stepId, active }: { stepId: number | null; a
                   <td className="px-3 py-2 font-mono text-[12px] text-body">{short(u.subject_id)}</td>
                   <td className="px-3 py-2"><StatusBadge status={u.status} /></td>
                   <td className="px-3 py-2">
-                    {u.status === "failed" && (
-                      <button
-                        onClick={async () => {
-                          await retryUnit(u.id);
-                          reload();
-                        }}
-                        className="text-[13px] font-medium text-brand hover:underline"
-                      >
-                        重试
-                      </button>
-                    )}
+                    <button
+                      onClick={async () => {
+                        await retryUnit(u.id);
+                        reload();
+                      }}
+                      className="text-[13px] font-medium text-brand hover:underline"
+                    >
+                      重试
+                    </button>
                   </td>
                   <td className="max-w-[280px] px-3 py-2 text-[12px] text-muted">
                     {u.error && (
@@ -106,6 +104,14 @@ export default function UnitTable({ stepId, active }: { stepId: number | null; a
                         <summary className="cursor-pointer text-danger hover:underline">查看错误</summary>
                         <pre className="mt-1 whitespace-pre-wrap rounded-lg bg-danger-soft/60 p-2 text-[11px] text-danger">
                           {u.error}
+                        </pre>
+                      </details>
+                    )}
+                    {u.input_text && (
+                      <details className="mt-1">
+                        <summary className="cursor-pointer text-info hover:underline">请求内容</summary>
+                        <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded-lg bg-surface-2 p-2 text-[11px] text-body">
+                          {u.input_text}
                         </pre>
                       </details>
                     )}

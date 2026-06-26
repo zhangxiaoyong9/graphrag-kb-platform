@@ -213,6 +213,26 @@ class Repository:
                 u.error = None
             return len(units)
 
+    def reset_step_if_succeeded_for_unit(self, unit_id: int) -> None:
+        """If the unit's step is SUCCEEDED, set it to PARTIALLY_FAILED so the
+        orchestrator re-runs it (picks up the PENDING retried unit; other units
+        use cached results). Needed because the orchestrator skips SUCCEEDED steps."""
+        with session_scope(self.engine) as s:
+            unit = s.get(Unit, unit_id)
+            if unit is None:
+                return
+            step = s.get(Step, unit.step_id)
+            if step is not None and step.status == StepStatus.SUCCEEDED:
+                step.status = StepStatus.PARTIALLY_FAILED
+
+    def get_chunk_texts(self, chunk_ids: list[str]) -> dict[str, str]:
+        """Batch lookup chunk texts by chunk_id (for unit request-content preview)."""
+        if not chunk_ids:
+            return {}
+        with session_scope(self.engine) as s:
+            rows = s.scalars(select(Chunk).where(Chunk.chunk_id.in_(chunk_ids)))
+            return {r.chunk_id: r.text for r in rows}
+
     def reactivate_job_for_unit(self, unit_id: int) -> None:
         """Re-queue a FAILED job so the worker re-claims a retried unit.
 
