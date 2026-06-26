@@ -214,10 +214,49 @@ def _format_community_context(context: dict) -> str:
     )
 
 
+def _build_embed_model_config(settings: dict):
+    """Build an embedding ModelConfig from KB `embedding` settings, or None.
+
+    Mirrors the LLM credential resolution in ``build_adapter_from_settings``.
+    Providers without a key (ollama) get a placeholder api_key so graphrag-llm's
+    ApiKey validator passes (litellm ignores it for ollama). A keyed provider
+    whose key can't be resolved returns None -> embedding left unconfigured
+    (build_default_adapter then falls back to the LLM model_config, whose own
+    embedding creation is best-effort / optional).
+    """
+    emb = settings.get("embedding") or {}
+    if not emb:
+        return None
+    import os
+
+    from graphrag_llm.config import ModelConfig
+
+    provider = emb.get("model_provider", "openai")
+    resolved = (
+        emb.get("api_key")
+        or (os.getenv(emb["api_key_env"]) if emb.get("api_key_env") else None)
+        or os.getenv(f"{provider.upper()}_API_KEY")
+    )
+    if not resolved:
+        if provider == "ollama":
+            resolved = "ollama"
+        else:
+            return None
+    return ModelConfig(
+        type=emb.get("type", "litellm"),
+        model_provider=provider,
+        model=emb.get("model", "text-embedding-3-small"),
+        api_base=emb.get("api_base"),
+        api_version=emb.get("api_version"),
+        api_key=resolved,
+    )
+
+
 def build_default_adapter(
     *,
     data_root: str,
     model_config,
+    embed_model_config=None,
     max_gleanings: int = 0,
 ) -> GraphRagAdapter:
     """Wire a GraphRagAdapter with a real graphrag chunker + LLM extractor."""
@@ -277,7 +316,7 @@ def build_default_adapter(
     try:
         from graphrag_llm.embedding import create_embedding
 
-        embedder = create_embedding(model_config)
+        embedder = create_embedding(embed_model_config or model_config)
 
         def embed_factory():
             return embedder
@@ -333,4 +372,9 @@ def build_adapter_from_settings(
         api_version=llm.get("api_version"),
         api_key=resolved_key,
     )
-    return build_default_adapter(data_root=data_root, model_config=model_config)
+    embed_model_config = _build_embed_model_config(settings)
+    return build_default_adapter(
+        data_root=data_root,
+        model_config=model_config,
+        embed_model_config=embed_model_config,
+    )
