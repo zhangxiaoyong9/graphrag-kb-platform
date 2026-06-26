@@ -105,3 +105,67 @@ export function buildSettings(state: KbFormState): Record<string, unknown> {
 
   return out;
 }
+
+export function parseSettings(settings: Record<string, unknown>, method: string, minRatio: string): KbFormState {
+  const f = (b: unknown, k: string, d: string) => String(((b as Record<string, unknown> | undefined) ?? {})[k] ?? d);
+  const n = (b: unknown, k: string, d: number) => Number(((b as Record<string, unknown> | undefined) ?? {})[k] ?? d);
+  const llm = (settings.llm as Record<string, unknown> | undefined) ?? {};
+  const emb = (settings.embedding as Record<string, unknown> | undefined) ?? {};
+  const ch = (settings.chunking as Record<string, unknown> | undefined) ?? {};
+  const eg = (settings.extract_graph as Record<string, unknown> | undefined) ?? {};
+  const su = (settings.summarize_descriptions as Record<string, unknown> | undefined) ?? {};
+  const cr = (settings.community_reports as Record<string, unknown> | undefined) ?? {};
+  const cl = (settings.cluster_graph as Record<string, unknown> | undefined) ?? {};
+  const etRaw = eg.entity_types;
+  const et = Array.isArray(etRaw) ? etRaw.join(", ") : typeof etRaw === "string" ? etRaw : "";
+  return {
+    ...DEFAULTS,
+    method,
+    minRatio,
+    llm: {
+      ...DEFAULTS.llm,
+      provider: f(llm, "model_provider", ""),
+      model: f(llm, "model", ""),
+      apiBase: f(llm, "api_base", ""),
+      apiKeyEnv: f(llm, "api_key_env", ""),
+      apiKey: "",
+      apiVersion: f(llm, "api_version", ""),
+    },
+    embedding: {
+      ...DEFAULTS.embedding,
+      enabled: !!settings.embedding,
+      provider: f(emb, "model_provider", ""),
+      model: f(emb, "model", ""),
+      apiBase: f(emb, "api_base", ""),
+      apiKeyEnv: f(emb, "api_key_env", ""),
+      apiKey: "",
+      apiVersion: f(emb, "api_version", ""),
+    },
+    chunking: {
+      size: n(ch, "size", DEFAULTS.chunking.size),
+      overlap: n(ch, "overlap", DEFAULTS.chunking.overlap),
+      encodingModel: f(ch, "encoding_model", DEFAULTS.chunking.encodingModel),
+    },
+    extractGraph: {
+      entityTypes: et,
+      maxGleanings: n(eg, "max_gleanings", DEFAULTS.extractGraph.maxGleanings),
+    },
+    summarize: {
+      maxLength: n(su, "max_length", DEFAULTS.summarize.maxLength),
+      maxInputTokens: n(su, "max_input_tokens", DEFAULTS.summarize.maxInputTokens),
+    },
+    communityReports: {
+      structuredOutput: (cr.structured_output ?? DEFAULTS.communityReports.structuredOutput) as boolean,
+      maxLength: n(cr, "max_length", DEFAULTS.communityReports.maxLength),
+    },
+    cluster: {
+      maxClusterSize: n(cl, "max_cluster_size", DEFAULTS.cluster.maxClusterSize),
+    },
+    prompts: {
+      extract: f(eg, "prompt", ""),
+      summarize: f(su, "prompt", ""),
+      communityReport: f(cr, "prompt", ""),
+    },
+    advancedOverride: "",
+  };
+}

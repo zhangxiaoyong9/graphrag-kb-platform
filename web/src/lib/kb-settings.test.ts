@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSettings, DEFAULTS, type KbFormState } from "./kb-settings";
+import { buildSettings, parseSettings, DEFAULTS, type KbFormState } from "./kb-settings";
 
 const base: KbFormState = {
   ...DEFAULTS,
@@ -76,5 +76,38 @@ describe("buildSettings", () => {
 
   it("omits prompts when all empty", () => {
     expect(buildSettings({ ...base, prompts: { extract: "", summarize: "", communityReport: "" } })).toEqual({});
+  });
+});
+
+describe("parseSettings", () => {
+  it("parseSettings round-trips llm + chunking + prompt", () => {
+    const s = parseSettings(
+      {
+        llm: { model_provider: "deepseek", model: "deepseek-chat", api_key_env: "DEEPSEEK_API_KEY" },
+        chunking: { size: 300 },
+        extract_graph: { prompt: "MY-PROMPT" },
+      },
+      "fast",
+      "0.8",
+    );
+    expect(s.method).toBe("fast");
+    expect(s.minRatio).toBe("0.8");
+    expect(s.llm).toMatchObject({ provider: "deepseek", model: "deepseek-chat", apiKeyEnv: "DEEPSEEK_API_KEY" });
+    expect(s.chunking.size).toBe(300);
+    expect(s.prompts.extract).toBe("MY-PROMPT");
+    // defaults for absent
+    expect(s.cluster.maxClusterSize).toBe(10);
+    expect(s.embedding.enabled).toBe(false);
+  });
+
+  it("parseSettings entity_types list -> csv + embedding enabled", () => {
+    const s = parseSettings(
+      { extract_graph: { entity_types: ["ORG", "PERSON"] }, embedding: { model_provider: "ollama", model: "nomic-embed-text" } },
+      "standard",
+      "1.0",
+    );
+    expect(s.extractGraph.entityTypes).toBe("ORG, PERSON");
+    expect(s.embedding.enabled).toBe(true);
+    expect(s.embedding.model).toBe("nomic-embed-text");
   });
 });

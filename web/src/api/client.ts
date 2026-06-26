@@ -9,6 +9,8 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 export const listKbs = () => req<KbOut[]>("/kbs");
 export const createKb = (b: KbCreate) => req<KbOut>("/kbs", { method: "POST", body: JSON.stringify(b) });
 export const getKb = (id: number) => req<KbOut>(`/kbs/${id}`);
+export const updateKb = (id: number, body: { name: string; method: string; settings_yaml: string }) =>
+  req<KbOut>(`/kbs/${id}`, { method: "PATCH", body: JSON.stringify(body) });
 export const listDocuments = (kbId: number) => req<DocumentOut[]>(`/kbs/${kbId}/documents`);
 export const addDocument = (kbId: number, b: DocumentCreate) => req<DocumentOut>(`/kbs/${kbId}/documents`, { method: "POST", body: JSON.stringify(b) });
 export const uploadFile = async (kbId: number, file: File): Promise<DocumentOut> => {
