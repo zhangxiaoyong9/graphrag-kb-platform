@@ -1,4 +1,4 @@
-import type { KbOut, DocumentOut, JobOut, StepOut, UnitOut, KbCreate, DocumentCreate, QueryResult, JobCost, KbCost, GraphData, Health } from "./types";
+import type { KbOut, DocumentOut, DocumentDetail, EvidenceDetail, JobOut, StepOut, UnitOut, KbCreate, DocumentCreate, QueryResult, JobCost, KbCost, GraphData, Health } from "./types";
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(path, { headers: { "Content-Type": "application/json" }, ...init });
@@ -12,6 +12,9 @@ export const getKb = (id: number) => req<KbOut>(`/kbs/${id}`);
 export const updateKb = (id: number, body: { name: string; method: string; settings_yaml: string }) =>
   req<KbOut>(`/kbs/${id}`, { method: "PATCH", body: JSON.stringify(body) });
 export const listDocuments = (kbId: number) => req<DocumentOut[]>(`/kbs/${kbId}/documents`);
+export const getDocumentDetail = (kbId: number, docId: number) => req<DocumentDetail>(`/kbs/${kbId}/documents/${docId}`);
+export const getDocumentEvidence = (kbId: number, docId: number, citationId: string) =>
+  req<EvidenceDetail>(`/kbs/${kbId}/documents/${docId}/citations/${encodeURIComponent(citationId)}/evidence`);
 export const addDocument = (kbId: number, b: DocumentCreate) => req<DocumentOut>(`/kbs/${kbId}/documents`, { method: "POST", body: JSON.stringify(b) });
 export const uploadFile = async (kbId: number, file: File): Promise<DocumentOut> => {
   const form = new FormData();

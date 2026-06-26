@@ -4,6 +4,30 @@ export type UnitStatus = "pending" | "running" | "succeeded" | "failed";
 
 export interface KbOut { id: number; name: string; method: string; settings?: Record<string, unknown> }
 export interface DocumentOut { id: number; title: string; status: string | null; bytes: number; chunk_count: number }
+export interface DocumentCitation {
+  id: string;
+  label: string;
+  snippet: string;
+  chunk_id: string;
+  ordinal: number;
+}
+export interface DocumentDetail extends DocumentOut {
+  text: string;
+  citations: DocumentCitation[];
+}
+export interface EvidenceContext {
+  document_id: number;
+  document_title: string;
+  chunk_id: string;
+  ordinal: number;
+}
+export interface EvidenceDetail {
+  citation_id: string;
+  matched: string;
+  before: string | null;
+  after: string | null;
+  source: EvidenceContext;
+}
 export interface UnitProgress { pending: number; running: number; succeeded: number; failed: number; total: number }
 export interface StepOut { id: number; name: string; ordinal: number; kind: string; status: StepStatus; progress: UnitProgress | null }
 export interface JobOut { id: number; status: JobStatus; steps: StepOut[] }
