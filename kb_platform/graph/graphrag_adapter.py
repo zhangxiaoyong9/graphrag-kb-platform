@@ -413,9 +413,28 @@ def build_adapter_from_settings(
         api_version=llm.get("api_version"),
         api_key=resolved_key,
     )
+    chunking = settings.get("chunking") or {}
+    cluster_graph = settings.get("cluster_graph") or {}
+    extract_graph = settings.get("extract_graph") or {}
+    summarize = settings.get("summarize_descriptions") or {}
+    reports = settings.get("community_reports") or {}
+
+    et = extract_graph.get("entity_types")
+    if isinstance(et, str):
+        et = [t.strip() for t in et.split(",") if t.strip()]
+
     embed_model_config = _build_embed_model_config(settings)
     return build_default_adapter(
         data_root=data_root,
         model_config=model_config,
         embed_model_config=embed_model_config,
+        chunk_size=chunking.get("size", 1200),
+        chunk_overlap=chunking.get("overlap", 100),
+        encoding_model=chunking.get("encoding_model", "cl100k_base"),
+        max_cluster_size=cluster_graph.get("max_cluster_size", 10),
+        entity_types=et,
+        max_gleanings=extract_graph.get("max_gleanings", 0),
+        summarize_max_length=summarize.get("max_length", 500),
+        summarize_max_input_tokens=summarize.get("max_input_tokens", 32000),
+        report_max_length=reports.get("max_length", 2000),
     )

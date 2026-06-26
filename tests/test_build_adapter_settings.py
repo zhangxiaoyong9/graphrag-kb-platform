@@ -64,3 +64,45 @@ def test_build_default_adapter_defaults_match_current(monkeypatch):
     cfg = captured["chunker_cfg"]
     assert cfg.size == 1200 and cfg.overlap == 100 and cfg.encoding_model == "cl100k_base"
     assert adapter._max_cluster_size == 10
+
+
+def test_build_adapter_from_settings_reads_bucket2(monkeypatch):
+    import json
+    import kb_platform.graph.graphrag_adapter as ga
+
+    captured: dict = {}
+
+    def fake_build(**kw):
+        captured.update(kw)
+        # Return a sentinel — the test only inspects `captured`; calling the real
+        # build_default_adapter here would recurse (this attr is monkeypatched).
+        return object()
+
+    monkeypatch.setattr(ga, "build_default_adapter", fake_build)
+
+    settings = {
+        "llm": {"model_provider": "deepseek", "model": "deepseek-chat", "api_key": "k"},
+        "chunking": {"size": 350, "overlap": 25},
+        "cluster_graph": {"max_cluster_size": 8},
+        "extract_graph": {"entity_types": ["ORG", "PERSON"], "max_gleanings": 1},
+        "summarize_descriptions": {"max_length": 222, "max_input_tokens": 9000},
+        "community_reports": {"max_length": 4444},
+    }
+    ga.build_adapter_from_settings(json.dumps(settings), "/tmp/_unused_")
+    assert captured["chunk_size"] == 350 and captured["chunk_overlap"] == 25
+    assert captured["max_cluster_size"] == 8
+    assert captured["entity_types"] == ["ORG", "PERSON"] and captured["max_gleanings"] == 1
+    assert captured["summarize_max_length"] == 222 and captured["summarize_max_input_tokens"] == 9000
+    assert captured["report_max_length"] == 4444
+
+
+def test_build_adapter_from_settings_entity_types_csv_string(monkeypatch):
+    import json
+    import kb_platform.graph.graphrag_adapter as ga
+    captured: dict = {}
+    monkeypatch.setattr(ga, "build_default_adapter", lambda **kw: captured.update(kw) or object())
+    ga.build_adapter_from_settings(
+        json.dumps({"llm": {"model": "x", "api_key": "k"}, "extract_graph": {"entity_types": "ORG, PERSON"}}),
+        "/tmp/_unused_",
+    )
+    assert captured["entity_types"] == ["ORG", "PERSON"]  # csv string -> list, trimmed
