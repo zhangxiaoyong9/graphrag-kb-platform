@@ -14,6 +14,7 @@ export interface KbFormState {
   communityReports: { structuredOutput: boolean; maxLength: number };
   cluster: { maxClusterSize: number };
   prompts: { extract: string; summarize: string; communityReport: string };
+  concurrency: number;
   advancedOverride: string;
 }
 
@@ -30,6 +31,7 @@ export const DEFAULTS: KbFormState = {
   communityReports: { structuredOutput: true, maxLength: 2000 },
   cluster: { maxClusterSize: 10 },
   prompts: { extract: "", summarize: "", communityReport: "" },
+  concurrency: 4,
   advancedOverride: "",
 };
 
@@ -103,6 +105,8 @@ export function buildSettings(state: KbFormState): Record<string, unknown> {
     out.community_reports = b;
   }
 
+  if (state.concurrency !== DEFAULTS.concurrency) out.concurrency = state.concurrency;
+
   return out;
 }
 
@@ -166,6 +170,7 @@ export function parseSettings(settings: Record<string, unknown>, method: string,
       summarize: f(su, "prompt", ""),
       communityReport: f(cr, "prompt", ""),
     },
+    concurrency: Number(settings.concurrency ?? DEFAULTS.concurrency),
     advancedOverride: "",
   };
 }

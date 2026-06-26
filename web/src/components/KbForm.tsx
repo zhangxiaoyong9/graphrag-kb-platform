@@ -131,6 +131,16 @@ export default function KbForm({
             onChange={(e) => set("minRatio", e.target.value)}
           />
         </Field>
+        <Field label="并发数" hint="unit 级并发（默认 4）">
+          <input
+            className="input"
+            type="number"
+            min="1"
+            max="32"
+            value={s.concurrency}
+            onChange={(e) => set("concurrency", Math.max(1, Number(e.target.value)))}
+          />
+        </Field>
       </div>
 
       {/* LLM 模型 */}

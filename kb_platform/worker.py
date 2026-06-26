@@ -76,12 +76,22 @@ async def run_worker_once(
             repo=repo,
             adapter=adapter,
             data_root=data_root,
-            concurrency=concurrency,
+            concurrency=_parse_concurrency(settings_json, concurrency),
         )
         await orch.run(job.id, min_success_ratio=_parse_min_ratio(settings_json))
     except Exception:  # noqa: BLE001
         logger.exception("job %s failed; marking FAILED", job.id)
         repo.set_job_status(job.id, JobStatus.FAILED)
+
+
+def _parse_concurrency(settings_json: str, default: int = 4) -> int:
+    import json
+
+    try:
+        val = json.loads(settings_json or "{}").get("concurrency", default)
+        return max(1, int(val))
+    except Exception:
+        return default
 
 
 def _parse_min_ratio(settings_json: str) -> float:
