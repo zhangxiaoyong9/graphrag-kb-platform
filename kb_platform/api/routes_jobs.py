@@ -83,6 +83,7 @@ def get_units(step_id: int, request: Request, status: str | None = None) -> list
 def retry_unit(unit_id: int, request: Request):
     repo = request.app.state.repo
     repo.reset_unit_to_pending(unit_id)
+    repo.reactivate_job_for_unit(unit_id)  # re-queue so the worker re-claims it
     return {"ok": True}
 
 
@@ -90,4 +91,5 @@ def retry_unit(unit_id: int, request: Request):
 def retry_step(step_id: int, request: Request):
     repo = request.app.state.repo
     n = repo.reset_failed_units_to_pending(step_id)
+    repo.reactivate_job_for_step(step_id)  # re-queue so the worker re-claims it
     return {"reset": n}

@@ -196,6 +196,35 @@ class Repository:
                 u.error = None
             return len(units)
 
+    def reactivate_job_for_unit(self, unit_id: int) -> None:
+        """Re-queue a FAILED job so the worker re-claims a retried unit.
+
+        Retry resets the unit to PENDING, but the worker only claims PENDING
+        *jobs* — so without this, a retried unit in a terminal-failed job sits
+        at PENDING forever ('stuck on processing'). Idempotent: only flips
+        FAILED -> PENDING; leaves running/succeeded jobs untouched.
+        """
+        with session_scope(self.engine) as s:
+            unit = s.get(Unit, unit_id)
+            if unit is None:
+                return
+            step = s.get(Step, unit.step_id)
+            if step is None:
+                return
+            job = s.get(Job, step.job_id)
+            if job is not None and job.status == JobStatus.FAILED:
+                job.status = JobStatus.PENDING
+
+    def reactivate_job_for_step(self, step_id: int) -> None:
+        """Same as reactivate_job_for_unit, keyed by step (for retry-step)."""
+        with session_scope(self.engine) as s:
+            step = s.get(Step, step_id)
+            if step is None:
+                return
+            job = s.get(Job, step.job_id)
+            if job is not None and job.status == JobStatus.FAILED:
+                job.status = JobStatus.PENDING
+
     def get_unit_by_subject(self, step_id: int, subject_type: str, subject_id: str) -> Unit | None:
         with session_scope(self.engine) as s:
             return s.scalar(
