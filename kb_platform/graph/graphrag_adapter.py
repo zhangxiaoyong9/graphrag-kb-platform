@@ -205,6 +205,19 @@ def _parse_report_json(text: str, context: dict) -> CommunityReport:
     )
 
 
+def _raise_on_error(err: BaseException | None, _trace: str | None, _data: dict | None) -> None:
+    """graphrag extractor on_error hook: re-raise the LLM failure so the
+    platform's run_unit catches it and marks the unit FAILED.
+
+    graphrag's extractors default on_error to a no-op and return empty on any
+    exception, which hides auth/network failures as fake successes. This makes
+    them propagate. (Only the LLM call is wrapped by graphrag's try/except;
+    parse errors already propagate.)
+    """
+    if err is not None:
+        raise err
+
+
 def _format_community_context(context: dict) -> str:
     """Flatten a community context dict into the text fed to CommunityReportsExtractor."""
     ents = "\n".join(
@@ -302,7 +315,10 @@ def build_default_adapter(
 
     def extractor_factory() -> GraphExtractor:
         return GraphExtractor(
-            model=completion, prompt=GRAPH_EXTRACTION_PROMPT, max_gleanings=max_gleanings
+            model=completion,
+            prompt=GRAPH_EXTRACTION_PROMPT,
+            max_gleanings=max_gleanings,
+            on_error=_raise_on_error,
         )
 
     def summarize_factory() -> SummarizeExtractor:
@@ -311,6 +327,7 @@ def build_default_adapter(
             max_summary_length=500,
             max_input_tokens=32000,
             summarization_prompt=SUMMARIZE_PROMPT,
+            on_error=_raise_on_error,
         )
 
     def report_factory() -> CommunityReportsExtractor:
@@ -318,6 +335,7 @@ def build_default_adapter(
             model=completion,
             extraction_prompt=COMMUNITY_REPORT_PROMPT,
             max_report_length=2000,
+            on_error=_raise_on_error,
         )
 
     try:
