@@ -90,6 +90,53 @@ POST /kbs
 
 ---
 
+## 配置（model / api_base / key）
+
+所有 LLM / 嵌入设置都放在 KB 的 `settings_yaml`（建库时传入）。**密钥**是特例：调用时从环境变量解析、**绝不入库**，所以改密钥只需改环境变量（重启 worker/server 即可）——不用动 KB。但 `model` 和 `api_base` 会持久化进 KB 设置，目前**没有设置更新接口**，所以改一个已有 KB 的模型/api_base 意味着新建一个 KB（重新加文档 + 重新索引）。
+
+### `llm` 字段
+
+| 字段 | 含义 | 示例 |
+|------|------|------|
+| `model_provider` | provider | `deepseek`、`openai`、`azure`、`ollama` |
+| `model` | 模型 id | `deepseek-chat`、`gpt-4o-mini` |
+| `api_base` | 自定义端点（中转 / Azure / 自建） | `https://api.deepseek.com`、`http://localhost:11434` |
+| `api_key_env` | 持有密钥的环境变量名（**推荐**） | `DEEPSEEK_API_KEY` |
+| `api_key` | 明文密钥（**不推荐**——会入库） | `sk-...` |
+| `api_version` | Azure API 版本（仅 Azure） | `2024-06-01` |
+
+调用时凭证解析顺序：`llm.api_key` → `llm.api_key_env` 指定的环境变量 → `{PROVIDER}_API_KEY` 环境变量。优先用 `api_key_env`，让密钥留在环境里、不进数据库。
+
+### 各项怎么改
+
+- **密钥** —— `export DEEPSEEK_API_KEY=sk-new`（或对应的 `{PROVIDER}_API_KEY`），再重启 worker + server。下一个任务即生效，无需改 KB。
+- **模型 / api_base** —— 建 KB 时在 `settings_yaml` 里传新值。改已有 KB 需新建（重新加文档 + 重新索引）。`embedding.model` / `embedding.api_base` 同理，写在 `embedding` 段下。
+- 按 KB 指定密钥 —— 若某个 KB 想用与默认不同的密钥，把 `llm.api_key_env` 指到另一个环境变量名即可。
+
+### 示例（对象以字符串形式塞进 `settings_yaml`）
+
+DeepSeek，官方端点：
+```json
+{"llm":{"model_provider":"deepseek","model":"deepseek-chat","api_key_env":"DEEPSEEK_API_KEY"}}
+```
+
+OpenAI 走中转 / 自定义 base：
+```json
+{"llm":{"model_provider":"openai","model":"gpt-4o-mini","api_base":"https://your-relay.example.com/v1","api_key_env":"OPENAI_API_KEY"}}
+```
+
+Azure OpenAI（需 `api_base` + `api_version`）：
+```json
+{"llm":{"model_provider":"azure","model":"my-deployment","api_base":"https://my-resource.openai.azure.com","api_version":"2024-06-01","api_key_env":"AZURE_OPENAI_API_KEY"}}
+```
+
+DeepSeek LLM + Ollama 嵌入 + 纯文本报告（完整组合）：
+```json
+{"llm":{"model_provider":"deepseek","model":"deepseek-chat","api_key_env":"DEEPSEEK_API_KEY"},"embedding":{"model_provider":"ollama","model":"nomic-embed-text","api_base":"http://localhost:11434","api_key":"ollama"},"community_reports":{"structured_output":false}}
+```
+
+---
+
 ## 创建 KB 并索引
 
 ```bash

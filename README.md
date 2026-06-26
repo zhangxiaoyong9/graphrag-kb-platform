@@ -90,6 +90,53 @@ POST /kbs
 
 ---
 
+## Configuration (model / api_base / key)
+
+All LLM/embedding settings live in the KB's `settings_yaml` (passed at creation). The **key** is special: it's resolved from the environment at call time and **never stored**, so you change it by changing the env var (restart the worker/server) — no KB change needed. `model` and `api_base`, however, are persisted in the KB's settings, and there is **no settings-update endpoint yet**, so changing them for an existing KB means creating a new KB (re-add docs + re-index).
+
+### `llm` fields
+
+| Field | Meaning | Example |
+|-------|---------|---------|
+| `model_provider` | Provider id | `deepseek`, `openai`, `azure`, `ollama` |
+| `model` | Model id | `deepseek-chat`, `gpt-4o-mini` |
+| `api_base` | Custom endpoint (relay / Azure / self-host) | `https://api.deepseek.com`, `http://localhost:11434` |
+| `api_key_env` | Name of the env var holding the key (**recommended**) | `DEEPSEEK_API_KEY` |
+| `api_key` | Literal key (**not recommended** — stored in DB) | `sk-...` |
+| `api_version` | Azure API version (Azure only) | `2024-06-01` |
+
+Credential resolution at call time: `llm.api_key` → env var named by `llm.api_key_env` → `{PROVIDER}_API_KEY` env. Prefer `api_key_env` so secrets stay out of the DB.
+
+### How to change each
+
+- **Key** — `export DEEPSEEK_API_KEY=sk-new` (or the matching `{PROVIDER}_API_KEY`), then restart worker + server. Takes effect on the next job; no KB change.
+- **Model / api_base** — pass new values in `settings_yaml` when creating a KB. Changing an existing KB requires creating a new one (re-add documents + re-index). `embedding.model` / `embedding.api_base` work the same way under the `embedding` block.
+- Per-KB key override — point `llm.api_key_env` at a different env var name if a KB should use a different key than the provider default.
+
+### Examples (the object goes stringified into `settings_yaml`)
+
+DeepSeek, official endpoint:
+```json
+{"llm":{"model_provider":"deepseek","model":"deepseek-chat","api_key_env":"DEEPSEEK_API_KEY"}}
+```
+
+OpenAI via a relay / custom base:
+```json
+{"llm":{"model_provider":"openai","model":"gpt-4o-mini","api_base":"https://your-relay.example.com/v1","api_key_env":"OPENAI_API_KEY"}}
+```
+
+Azure OpenAI (needs `api_base` + `api_version`):
+```json
+{"llm":{"model_provider":"azure","model":"my-deployment","api_base":"https://my-resource.openai.azure.com","api_version":"2024-06-01","api_key_env":"AZURE_OPENAI_API_KEY"}}
+```
+
+DeepSeek LLM + Ollama embeddings + plain-text reports (full combo):
+```json
+{"llm":{"model_provider":"deepseek","model":"deepseek-chat","api_key_env":"DEEPSEEK_API_KEY"},"embedding":{"model_provider":"ollama","model":"nomic-embed-text","api_base":"http://localhost:11434","api_key":"ollama"},"community_reports":{"structured_output":false}}
+```
+
+---
+
 ## Creating a KB + indexing
 
 ```bash
