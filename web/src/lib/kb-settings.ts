@@ -13,6 +13,7 @@ export interface KbFormState {
   summarize: { maxLength: number; maxInputTokens: number };
   communityReports: { structuredOutput: boolean; maxLength: number };
   cluster: { maxClusterSize: number };
+  prompts: { extract: string; summarize: string; communityReport: string };
   advancedOverride: string;
 }
 
@@ -28,6 +29,7 @@ export const DEFAULTS: KbFormState = {
   summarize: { maxLength: 500, maxInputTokens: 32000 },
   communityReports: { structuredOutput: true, maxLength: 2000 },
   cluster: { maxClusterSize: 10 },
+  prompts: { extract: "", summarize: "", communityReport: "" },
   advancedOverride: "",
 };
 
@@ -84,6 +86,22 @@ export function buildSettings(state: KbFormState): Record<string, unknown> {
 
   addIf("structured_output", state.communityReports.structuredOutput, DEFAULTS.communityReports.structuredOutput, "community_reports");
   addIf("max_length", state.communityReports.maxLength, DEFAULTS.communityReports.maxLength, "community_reports");
+
+  if (state.prompts.extract.trim()) {
+    const b = (out.extract_graph ?? {}) as Record<string, unknown>;
+    b.prompt = state.prompts.extract.trim();
+    out.extract_graph = b;
+  }
+  if (state.prompts.summarize.trim()) {
+    const b = (out.summarize_descriptions ?? {}) as Record<string, unknown>;
+    b.prompt = state.prompts.summarize.trim();
+    out.summarize_descriptions = b;
+  }
+  if (state.prompts.communityReport.trim()) {
+    const b = (out.community_reports ?? {}) as Record<string, unknown>;
+    b.prompt = state.prompts.communityReport.trim();
+    out.community_reports = b;
+  }
 
   return out;
 }

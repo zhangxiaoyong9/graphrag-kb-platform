@@ -43,3 +43,10 @@ export const getGraph = (kbId: number, params?: { limit?: number; q?: string; ho
 };
 
 export const getHealth = () => req<Health>("/health");
+
+export interface PromptDefaults {
+  extract_graph: string;
+  summarize_descriptions: string;
+  community_reports: string;
+}
+export const getPromptDefaults = () => req<PromptDefaults>("/prompts/defaults");

@@ -10,6 +10,7 @@ const base: KbFormState = {
   summarize: { ...DEFAULTS.summarize },
   communityReports: { ...DEFAULTS.communityReports },
   cluster: { ...DEFAULTS.cluster },
+  prompts: { ...DEFAULTS.prompts },
   advancedOverride: "",
 };
 
@@ -60,5 +61,20 @@ describe("buildSettings", () => {
   it("entity_types csv -> list", () => {
     const s = { ...base, extractGraph: { entityTypes: "ORG, PERSON", maxGleanings: 0 } };
     expect(buildSettings(s)).toEqual({ extract_graph: { entity_types: ["ORG", "PERSON"] } });
+  });
+
+  it("emits prompts only when non-empty", () => {
+    const s = {
+      ...base,
+      prompts: { extract: "MY-EXTRACT", summarize: "", communityReport: "MY-REPORT" },
+    };
+    expect(buildSettings(s)).toEqual({
+      extract_graph: { prompt: "MY-EXTRACT" },
+      community_reports: { prompt: "MY-REPORT" },
+    });
+  });
+
+  it("omits prompts when all empty", () => {
+    expect(buildSettings({ ...base, prompts: { extract: "", summarize: "", communityReport: "" } })).toEqual({});
   });
 });
