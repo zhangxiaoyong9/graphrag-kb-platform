@@ -1,26 +1,48 @@
 import { useEffect, useState } from "react";
-import { createKb, getPromptDefaults, type PromptDefaults } from "../api/client";
+import { createKb, getPromptDefaults, updateKb, type PromptDefaults } from "../api/client";
 import type { KbOut } from "../api/types";
 import { Button, Field } from "./ui";
 import { IconPlus } from "./icons";
-import { DEFAULTS, buildSettings, type KbFormState } from "../lib/kb-settings";
+import {
+  DEFAULTS,
+  buildSettings,
+  parseSettings,
+  type KbFormState,
+} from "../lib/kb-settings";
 
 /** Sectioned, structured KB config form. Builds settings_yaml from fields so
  * users never hand-write JSON. The 高级 panel exposes a read-only preview and
  * an optional raw-settings override textarea (non-empty replaces form output). */
-export default function KbForm({ onCreated }: { onCreated: (kb: KbOut) => void }) {
-  const [s, setS] = useState<KbFormState>(() => ({
-    ...DEFAULTS,
-    llm: { ...DEFAULTS.llm },
-    embedding: { ...DEFAULTS.embedding },
-    chunking: { ...DEFAULTS.chunking },
-    extractGraph: { ...DEFAULTS.extractGraph },
-    summarize: { ...DEFAULTS.summarize },
-    communityReports: { ...DEFAULTS.communityReports },
-    cluster: { ...DEFAULTS.cluster },
-    advancedOverride: "",
-  }));
-  const [name, setName] = useState("");
+export default function KbForm({
+  onCreated,
+  kb,
+  onSaved,
+}: {
+  onCreated?: (kb: KbOut) => void;
+  kb?: KbOut;
+  onSaved?: () => void;
+}) {
+  const isEdit = !!kb;
+  const [s, setS] = useState<KbFormState>(() =>
+    isEdit
+      ? parseSettings(
+          (kb!.settings ?? {}) as Record<string, unknown>,
+          kb!.method,
+          "1.0",
+        )
+      : {
+          ...DEFAULTS,
+          llm: { ...DEFAULTS.llm },
+          embedding: { ...DEFAULTS.embedding },
+          chunking: { ...DEFAULTS.chunking },
+          extractGraph: { ...DEFAULTS.extractGraph },
+          summarize: { ...DEFAULTS.summarize },
+          communityReports: { ...DEFAULTS.communityReports },
+          cluster: { ...DEFAULTS.cluster },
+          advancedOverride: "",
+        },
+  );
+  const [name, setName] = useState(kb?.name ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -54,14 +76,20 @@ export default function KbForm({ onCreated }: { onCreated: (kb: KbOut) => void }
     setError(null);
     try {
       const settingsObj = buildSettings(s); // throws on bad advancedOverride
-      const kb = await createKb({
-        name,
-        method: s.method,
-        settings_yaml: JSON.stringify(settingsObj),
-        min_unit_success_ratio: parseFloat(s.minRatio),
-      });
-      onCreated(kb);
-      setName("");
+      const settings_yaml = JSON.stringify(settingsObj);
+      if (isEdit && kb) {
+        await updateKb(kb.id, { name, method: s.method, settings_yaml });
+        onSaved?.();
+      } else {
+        const created = await createKb({
+          name,
+          method: s.method,
+          settings_yaml,
+          min_unit_success_ratio: parseFloat(s.minRatio),
+        });
+        onCreated?.(created);
+        setName("");
+      }
     } catch (err) {
       setError(String((err as Error).message ?? err));
     } finally {
@@ -547,10 +575,12 @@ export default function KbForm({ onCreated }: { onCreated: (kb: KbOut) => void }
         )}
       </div>
 
-      {error && <p className="text-[13px] text-danger">创建失败：{error}</p>}
+      {error && (
+        <p className="text-[13px] text-danger">{isEdit ? "保存失败" : "创建失败"}：{error}</p>
+      )}
       <Button type="submit" variant="primary" disabled={busy} className="w-full">
         <IconPlus width={16} height={16} />
-        {busy ? "创建中…" : "创建知识库"}
+        {busy ? (isEdit ? "保存中…" : "创建中…") : isEdit ? "保存修改" : "创建知识库"}
       </Button>
     </form>
   );

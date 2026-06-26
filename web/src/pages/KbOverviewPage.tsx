@@ -1,19 +1,22 @@
+import { useState } from "react";
 import { useKb } from "./kb-context";
 import { useAsync } from "../hooks/useAsync";
 import { listDocuments, listJobsByKb, getKbCost } from "../api/client";
-import { Badge, Card, CardHeader, Stat } from "../components/ui";
+import { Badge, Button, Card, CardHeader, Stat } from "../components/ui";
 import { CostPanel } from "../components/CostPanel";
 import { JobList } from "../components/JobList";
+import KbForm from "../components/KbForm";
 import { TriggerButtons, ExportButtons } from "../components/kb-actions";
 import { moneyCompact } from "../lib/format";
-import { IconDoc, IconTask, IconCost, IconLayers, IconPlay } from "../components/icons";
+import { IconDoc, IconTask, IconCost, IconLayers, IconPlay, IconGear } from "../components/icons";
 
 /** KB summary tab: stats, quick actions, cumulative cost, recent jobs. */
 export default function KbOverviewPage() {
-  const { kbId, kb } = useKb();
+  const { kbId, kb, reload } = useKb();
   const docs = useAsync(() => listDocuments(kbId), [kbId]);
   const jobs = useAsync(() => listJobsByKb(kbId), [kbId]);
   const cost = useAsync(() => getKbCost(kbId).catch(() => null), [kbId]);
+  const [editOpen, setEditOpen] = useState(false);
 
   const docCount = docs.data?.length ?? 0;
   const jobCount = jobs.data?.length ?? 0;
@@ -38,7 +41,19 @@ export default function KbOverviewPage() {
       </Card>
 
       <Card>
-        <CardHeader title="模型配置" subtitle="创建知识库时通过 settings_yaml 设定（密钥不入库）" icon={<IconLayers width={18} height={18} />} />
+        <CardHeader
+          title="模型配置"
+          subtitle="创建知识库时通过 settings_yaml 设定（密钥不入库）"
+          icon={<IconLayers width={18} height={18} />}
+          actions={
+            kb && (
+              <Button variant="secondary" size="sm" onClick={() => setEditOpen(true)}>
+                <IconGear width={15} height={15} />
+                编辑配置
+              </Button>
+            )
+          }
+        />
         <div className="mt-4">
           <ModelConfig settings={kb?.settings} />
         </div>
@@ -70,6 +85,40 @@ export default function KbOverviewPage() {
           </div>
         </Card>
       </div>
+
+      {editOpen && kb && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-ink/40 p-4 backdrop-blur-sm"
+          onClick={() => setEditOpen(false)}
+        >
+          <div
+            className="card my-8 w-full max-w-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-line px-5 py-3">
+              <h3 className="text-[15px] font-semibold">编辑配置</h3>
+              <button
+                className="text-muted hover:text-ink"
+                onClick={() => setEditOpen(false)}
+              >
+                ✕
+              </button>
+            </div>
+            <div className="p-5">
+              <KbForm
+                kb={kb}
+                onSaved={() => {
+                  setEditOpen(false);
+                  reload();
+                }}
+              />
+              <p className="mt-3 text-[12px] text-muted">
+                提示：配置已更新，需重新索引才生效。
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

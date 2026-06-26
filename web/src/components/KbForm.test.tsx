@@ -120,3 +120,49 @@ test("bad JSON in advanced override shows inline error and does not submit", asy
   );
   expect(onCreated).not.toHaveBeenCalled();
 });
+
+// --- edit mode -----------------------------------------------------------
+
+const editKb = {
+  id: 1,
+  name: "kb",
+  method: "fast",
+  settings: {
+    llm: { model: "deepseek-chat", model_provider: "deepseek" },
+    chunking: { size: 300 },
+  },
+};
+
+test("edit mode pre-fills and PATCHes on submit", async () => {
+  const patched: { url: string; body: unknown }[] = [];
+  server.use(
+    http.patch("/kbs/1", async ({ request }) => {
+      const b = (await request.json()) as { name: string };
+      patched.push({ url: request.url, body: b });
+      return HttpResponse.json({
+        id: 1,
+        name: b.name,
+        method: "fast",
+        settings: {},
+      });
+    }),
+  );
+  const onSaved = vi.fn();
+  render(
+    <MemoryRouter>
+      <KbForm kb={editKb as any} onSaved={onSaved} />
+    </MemoryRouter>,
+  );
+
+  // pre-filled: model input shows deepseek-chat
+  expect((screen.getByPlaceholderText("deepseek-chat") as HTMLInputElement).value).toBe(
+    "deepseek-chat",
+  );
+
+  // submit -> PATCH (button label = 保存修改)
+  await userEvent.click(screen.getByRole("button", { name: /保存修改/ }));
+  await waitFor(() => expect(onSaved).toHaveBeenCalled());
+  const last = patched[patched.length - 1]?.body as { name: string; method: string };
+  expect(last.name).toBe("kb");
+  expect(last.method).toBe("fast");
+});
