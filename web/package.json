@@ -8,7 +8,10 @@
     "build": "tsc -b && vite build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "e2e": "npm run build && playwright test",
+    "e2e:server": "cd .. && uv run python scripts/e2e_server.py",
+    "e2e:install": "playwright install chromium"
   },
   "dependencies": {
     "react": "^18.3.1",
@@ -17,6 +20,7 @@
     "react-router-dom": "^6.26.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.48.0",
     "@testing-library/jest-dom": "^6.4.0",
     "@testing-library/react": "^16.0.0",
     "@testing-library/user-event": "^14.5.0",
