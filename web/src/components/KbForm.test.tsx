@@ -57,16 +57,17 @@ test("form has all required sections", () => {
   }
 });
 
-test("prompts section has 3 textareas and view-default toggle shows fetched default", async () => {
+test("prompts section renders view-default toggles and shows fetched default", async () => {
   renderForm();
   expect(
     screen.getByText("提示词 Prompts（留空=用 graphrag 默认）"),
   ).toBeInTheDocument();
-  // 3 view-default buttons (one per prompt)
+  // 7 view-default buttons: 3 indexing prompts (extract/summarize/report) + 4 query prompts
+  // (local/global-map/global-reduce/basic). extract renders first, so viewButtons[0] is it.
   const viewButtons = screen.getAllByRole("button", {
     name: /查看 graphrag 默认/,
   });
-  expect(viewButtons).toHaveLength(3);
+  expect(viewButtons).toHaveLength(7);
   // click the first one (extract_graph) and confirm the fetched default renders
   await userEvent.click(viewButtons[0]);
   await waitFor(() =>
