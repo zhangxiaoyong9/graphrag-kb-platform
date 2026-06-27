@@ -230,6 +230,8 @@ uv run ruff check .              # lint
 cd web && npm install && npm run build && npm test   # frontend build + vitest
 ```
 
+**E2E (Playwright, optional):** first install Chromium once — `cd web && npm run e2e:install`. Then `npm run e2e` builds the SPA and runs the suite against a no-LLM fake server (`FakeGraphAdapter` worker + injected `FakeQueryEngine`); no provider key required. The fake server can also be run standalone for debugging: `npm run e2e:server` (serves `http://127.0.0.1:18000`).
+
 Tests use `FakeGraphAdapter` (deterministic, no LLM), `FakeVectorStore` (in-memory), `FakeQueryEngine`. Real-LLM integration tests need a provider key in the environment.
 
 ## Project structure

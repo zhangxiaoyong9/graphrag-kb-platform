@@ -230,6 +230,8 @@ uv run ruff check .              # lint
 cd web && npm install && npm run build && npm test   # 前端构建 + vitest
 ```
 
+**E2E（Playwright，可选）：** 先装一次 Chromium —— `cd web && npm run e2e:install`，再 `npm run e2e`（构建 SPA 后对一个无 LLM 的假服务器跑用例：`FakeGraphAdapter` worker + 注入 `FakeQueryEngine`，无需 provider key）。也可单独起假服务器调试：`npm run e2e:server`（监听 `http://127.0.0.1:18000`）。
+
 测试使用 `FakeGraphAdapter`（确定性，无需 LLM）、`FakeVectorStore`（内存）和 `FakeQueryEngine`。真实 LLM 集成测试需要环境变量中配置 provider key。
 
 ## 项目结构

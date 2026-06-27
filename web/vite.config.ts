@@ -16,5 +16,7 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./src/setupTests.ts"],
     globals: true,
+    // Scope vitest to src/ so Playwright specs (web/e2e/*.spec.ts) aren't collected.
+    include: ["src/**/*.{test,spec}.{ts,tsx}"],
   },
 });
