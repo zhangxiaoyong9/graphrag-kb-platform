@@ -160,7 +160,7 @@ curl -X POST http://127.0.0.1:8000/kbs/1/jobs -H 'Content-Type: application/json
 | 知识库管理 / 文档管理 / 图谱管理 | 建 KB；跨 KB 文档中心；跨 KB 图谱浏览 |
 | 检索测试 / 问答对话 | 选 KB + 方法（local/global/drift/basic），展示**答案 + 真实来源 + token 用量 + 服务端耗时** |
 | 分析报表 / 任务管理 / 成本统计 | 聚合指标；跨 KB 全部任务；按 step/model/job 的成本 |
-| KB 详情 | 文档管理（上传/粘贴/列表/删除）、触发全量/增量、累计**成本**、**导出**（zip/GraphML）、可交互**图谱**、任务、检索；**模型配置卡**展示 LLM/嵌入设置 |
+| KB 详情 | 文档管理（上传/粘贴/列表/删除）、文档详情浏览与来源证据抽屉、触发全量/增量、累计**成本**、**导出**（zip/GraphML）、可交互**图谱**、实体/关系浏览、任务、检索；**模型配置卡**展示 LLM/嵌入设置 |
 | 任务详情 | 步骤时间线 + 每步进度 + unit 列表 + 单 unit/整步**重试** + 每步成本 |
 | 系统状态 / 系统设置 / API Keys | 健康 + API 参考；只读配置说明；API Key 预留页 |
 
@@ -176,6 +176,8 @@ curl -X POST http://127.0.0.1:8000/kbs/1/jobs -H 'Content-Type: application/json
 | `GET` | `/kbs/{id}` | KB 详情（含脱敏后的 `settings`） |
 | `POST` | `/kbs/{id}/documents` | 添加文档——JSON `{title,text}` **或** multipart 文件（经 [markitdown](https://github.com/microsoft/markitdown)：`.txt/.md/.pdf/.docx/.html` 等） |
 | `GET` | `/kbs/{id}/documents` | 文档列表（含 `bytes` + `chunk_count`） |
+| `GET` | `/kbs/{id}/documents/{doc_id}` | 文档详情：返回存储正文和基于分块的引用列表 |
+| `GET` | `/kbs/{id}/documents/{doc_id}/citations/{citation_id}/evidence` | 单条引用的证据详情：命中分块 + 前后上下文 |
 | `DELETE` | `/kbs/{id}/documents/{doc_id}` | 删除文档及其分块（**图不回缩**——重跑增量刷新） |
 | `POST` | `/kbs/{id}/jobs` | 触发任务（`type: "full"` / `"incremental"`） |
 | `GET` | `/kbs/{id}/jobs` | KB 任务列表 |
