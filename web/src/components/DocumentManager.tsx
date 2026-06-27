@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { addDocument, uploadFile, deleteDocument } from "../api/client";
 import type { DocumentOut } from "../api/types";
 import { humanBytes } from "../lib/format";
@@ -77,14 +78,19 @@ export function DocumentManager({
                     </p>
                   </div>
                 </div>
-                <button
-                  onClick={() => onDelete(d)}
-                  className="btn btn-sm btn-danger"
-                  aria-label={`删除文档 ${d.title}`}
-                >
-                  <IconTrash width={14} height={14} />
-                  删除
-                </button>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Link to={`/kbs/${kbId}/documents/${d.id}`} className="btn btn-sm btn-secondary" aria-label={`查看文档 ${d.title}`}>
+                    查看
+                  </Link>
+                  <button
+                    onClick={() => onDelete(d)}
+                    className="btn btn-sm btn-danger"
+                    aria-label={`删除文档 ${d.title}`}
+                  >
+                    <IconTrash width={14} height={14} />
+                    删除
+                  </button>
+                </div>
               </li>
             );
           })}

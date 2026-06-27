@@ -1,4 +1,5 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { vi } from "vitest";
 import { DocumentManager } from "./DocumentManager";
 import type { DocumentOut } from "../api/types";
@@ -9,16 +10,30 @@ const docs: DocumentOut[] = [
   { id: 2, title: "beta.txt", status: null, bytes: 0, chunk_count: 0 },
 ];
 
+function renderManager(reload = vi.fn()) {
+  return render(
+    <MemoryRouter>
+      <DocumentManager kbId={1} docs={docs} reload={reload} />
+    </MemoryRouter>,
+  );
+}
+
 test("renders document rows with title, bytes, chunks, status", () => {
-  render(<DocumentManager kbId={1} docs={docs} reload={vi.fn()} />);
+  renderManager();
   expect(screen.getByText("alpha.md")).toBeInTheDocument();
   expect(screen.getByText(/2(\.0)? KB|2,048 B/)).toBeInTheDocument();
   expect(screen.getByText(/3 个分块/)).toBeInTheDocument();
   expect(screen.getByText(/0 个分块/)).toBeInTheDocument();
 });
 
+test("renders a detail link for each document", () => {
+  renderManager();
+  expect(screen.getByRole("link", { name: "查看文档 alpha.md" })).toHaveAttribute("href", "/kbs/1/documents/1");
+  expect(screen.getByRole("link", { name: "查看文档 beta.txt" })).toHaveAttribute("href", "/kbs/1/documents/2");
+});
+
 test("shows a file input for multipart upload", () => {
-  render(<DocumentManager kbId={1} docs={docs} reload={vi.fn()} />);
+  renderManager();
   expect(screen.getByLabelText(/上传文件/)).toBeInTheDocument();
 });
 
@@ -26,7 +41,7 @@ test("delete button confirms with graph-not-shrunk copy and calls deleteDocument
   const spy = vi.spyOn(client, "deleteDocument").mockResolvedValue(undefined);
   const reload = vi.fn();
   const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-  render(<DocumentManager kbId={1} docs={docs} reload={reload} />);
+  renderManager(reload);
   fireEvent.click(screen.getAllByRole("button", { name: /删除/ })[0]);
   expect(confirmSpy).toHaveBeenCalledWith(expect.stringMatching(/图谱不会自动回缩/));
   await waitFor(() => expect(spy).toHaveBeenCalledWith(1, 1));
@@ -38,7 +53,7 @@ test("delete button confirms with graph-not-shrunk copy and calls deleteDocument
 test("delete is cancelled when confirm returns false", async () => {
   const spy = vi.spyOn(client, "deleteDocument").mockResolvedValue(undefined);
   vi.spyOn(window, "confirm").mockReturnValue(false);
-  render(<DocumentManager kbId={1} docs={docs} reload={vi.fn()} />);
+  renderManager();
   fireEvent.click(screen.getAllByRole("button", { name: /删除/ })[0]);
   expect(spy).not.toHaveBeenCalled();
   spy.mockRestore();

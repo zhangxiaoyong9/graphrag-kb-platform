@@ -5,6 +5,8 @@ import KbListPage from "./pages/KbListPage";
 import KbLayout from "./pages/KbLayout";
 import KbOverviewPage from "./pages/KbOverviewPage";
 import DocumentPage from "./pages/DocumentPage";
+import DocumentDetailPage from "./pages/DocumentDetailPage";
+import EntityRelationPage from "./pages/EntityRelationPage";
 import GraphPage from "./pages/GraphPage";
 import KbJobsPage from "./pages/KbJobsPage";
 import JobDetailPage from "./pages/JobDetailPage";
@@ -33,6 +35,8 @@ export default function App() {
         <Route path="/kbs/:id" element={<KbLayout />}>
           <Route index element={<KbOverviewPage />} />
           <Route path="documents" element={<DocumentPage />} />
+          <Route path="documents/:docId" element={<DocumentDetailPage />} />
+          <Route path="documents/:docId/entities" element={<EntityRelationPage />} />
           <Route path="graph" element={<GraphPage />} />
           <Route path="jobs" element={<KbJobsPage />} />
           <Route path="jobs/:jobId" element={<JobDetailPage />} />
