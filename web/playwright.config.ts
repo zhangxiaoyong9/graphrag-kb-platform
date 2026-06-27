@@ -1,6 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = 18000;
 const baseURL = `http://127.0.0.1:${PORT}`;
 
