@@ -15,6 +15,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from kb_platform.api.routes_conversations import router as conversations_router
 from kb_platform.api.routes_cost import router as cost_router
 from kb_platform.api.routes_export import router as export_router
 from kb_platform.api.routes_graph import router as graph_router
@@ -35,7 +36,10 @@ WEB_DIST = os.environ.get(
 
 
 def create_app(
-    repo: Repository, data_root: str = ".", query_engine: QueryEngine | None = None
+    repo: Repository,
+    data_root: str = ".",
+    query_engine: QueryEngine | None = None,
+    rewriter=None,
 ) -> FastAPI:
     """Build a FastAPI app with repo and data_root injected via app.state.
 
@@ -66,10 +70,12 @@ def create_app(
     app.state.query_engine = (
         query_engine  # None = build real per-KB (production); non-None = injected (tests)
     )
+    app.state.rewriter = rewriter  # None = build real per-KB (production); injected in tests
 
     # API routers registered first -> matched before the catch-all below.
     app.include_router(router)
     app.include_router(jobs_router)
+    app.include_router(conversations_router)
     app.include_router(query_router)
     app.include_router(cost_router)
     app.include_router(health_router)

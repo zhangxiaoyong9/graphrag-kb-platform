@@ -262,3 +262,45 @@ class ProfileOut(BaseModel):
     api_version: str | None = None
     structured_output: bool
     api_keys_count: int
+
+
+# --- Conversations -------------------------------------------------------
+
+
+class ConversationCreate(BaseModel):
+    title: str | None = None
+
+
+class ConversationRename(BaseModel):
+    title: str
+
+
+class ConversationOut(BaseModel):
+    id: int
+    kb_id: int
+    title: str
+    updated_at: str | None = None
+    snippet: str = ""
+
+
+class MessageOut(BaseModel):
+    id: int
+    role: str
+    content: str
+    method: str | None = None
+    rewritten_query: str | None = None
+    rewrite_fell_back: bool = False
+    sources: list[SourceOut] | None = None
+    prompt_tokens: int | None = None
+    output_tokens: int | None = None
+    elapsed_ms: float | None = None
+    error: str | None = None
+
+
+class MessageSend(BaseModel):
+    content: str
+    method: str | None = None
+
+
+class ConversationDetailOut(ConversationOut):
+    messages: list[MessageOut] = []
