@@ -24,6 +24,13 @@ uv run python -m kb_platform.server [db_path] [data_root] [host] [port]   # defa
 uv run python -m kb_platform.worker [db_path]                             # polls SQLite → runs indexing jobs
 ```
 
+MCP query server (optional, opt-in extra; exposes search to external agents):
+
+```bash
+uv sync --extra mcp                                                        # install the `mcp` SDK
+uv run python -m kb_platform.mcp [--api-url URL]                           # stdio MCP server, thin HTTP proxy to the API server
+```
+
 Frontend (React + TS + Vite + Tailwind, in `web/`):
 
 ```bash
@@ -47,6 +54,8 @@ npm run e2e:server     # standalone fake server (scripts/e2e_server.py) for debu
 
 ### Two processes, SQLite as the queue
 The **API server** (`server.py` → `api/app.py`) only serves HTTP + hosts the built SPA; it never runs indexing. The **worker** (`worker.py`) only runs indexing; it never serves HTTP. They communicate exclusively through the SQLite control plane (`claim_one_pending_job`, unit status rows). `run_worker` installs SIGTERM/SIGINT handlers, finishes the in-flight job, then exits; hard kills are recovered on next start (`recover_stale_jobs` / `recover_stale_units` reset RUNNING→PENDING, and the orchestrator skips already-SUCCEEDED steps on resume so non-idempotent work like `chunk_documents` isn't re-run).
+
+The **MCP query server** (`kb_platform/mcp/`, opt-in via the `[mcp]` extra) is an optional third process: a **stdio** server that is a **thin HTTP proxy** to the running API server (`KbApiClient` → `GET /kbs`, `POST /kbs/{id}/query`). It never imports graphrag and reimplements no query logic. The testable seam is `KbApiClient` (inject an `httpx` transport); tool logic is plain `async` functions (`list_knowledge_bases` / `query_knowledge_base`) and `build_mcp_server` registers them on a `FastMCP`. Keep it a proxy — do not reach into SQLite or graphrag from the MCP layer.
 
 ### Two graphrag isolation "seams" — keep them clean
 - `kb_platform/graph/adapter.py` defines the `GraphAdapter` Protocol (chunk / extract / summarize / report / cluster / finalize / embed). **`graphrag_adapter.py` is the ONLY module that imports graphrag internals** — do not add graphrag imports elsewhere in the engine/api layers. `FakeGraphAdapter` (same file) is a deterministic, no-LLM implementation used by every engine test.

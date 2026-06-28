@@ -245,6 +245,49 @@ create_communities → community_reports → generate_text_embeddings
 
 查询端点从 KB 的 **LLM provider profile** 解析 LLM、从其 **embedding provider profile** 解析嵌入器（所以 Ollama 能支撑向量方法）。响应携带真实的服务端 `elapsed_ms`、token 用量，以及抽取出的来源实体 / 文本片段。
 
+## MCP 查询服务（供外部 Agent 调用）
+
+平台内置一个 **[MCP](https://modelcontextprotocol.io)（Model Context Protocol）服务**，把知识库检索暴露成标准 MCP tool，供 Claude Code / Claude Desktop / Cursor 等 AI agent 直接调用，无需自己拼 HTTP。
+
+它是一个**第三个（可选）进程**：`python -m kb_platform.mcp`，以 **stdio** 方式运行，作为**瘦 HTTP 代理**转发到正在运行的 API 服务——不重新实现查询逻辑，复用同一套 provider profile 解析 / 引擎构建。
+
+**安装（可选 extra）：**
+
+```bash
+uv sync --extra mcp
+```
+
+**启动（API 服务需已在运行）：**
+
+```bash
+uv run python -m kb_platform.mcp --api-url http://127.0.0.1:8000
+# 或用环境变量：KB_API_URL=http://127.0.0.1:8000 uv run python -m kb_platform.mcp
+```
+
+**暴露的 tool：**
+
+| tool | 作用 |
+|------|------|
+| `list_knowledge_bases` | 列出所有知识库（`{id, name, method}`），agent 先用它发现可查的 KB |
+| `query_knowledge_base(kb_id, query, method?)` | 检索一个知识库，返回 `{answer, method, sources}`；`method` 默认 `local`，可选 `global` / `drift` / `basic` |
+
+**接入 Claude Desktop / Claude Code**（编辑 MCP 客户端配置）：
+
+```json
+{
+  "mcpServers": {
+    "kb-platform": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/graphrag-kb-platform",
+               "python", "-m", "kb_platform.mcp"],
+      "env": { "KB_API_URL": "http://127.0.0.1:8000" }
+    }
+  }
+}
+```
+
+> MCP 服务与 API 服务同级、本身无鉴权；部署时由网络层隔离（与本地 Ollama 等服务一致）。远程 agent 场景后续可增量加 HTTP transport。实现细节见 `kb_platform/mcp/`。
+
 ## 开发
 
 ```bash

@@ -245,6 +245,49 @@ Every LLM step is tracked at the chunk/entity/community level (unit): `pending â
 
 The query endpoint resolves the LLM from the KB's **LLM provider profile** and the embedder from its **embedding provider profile** (so Ollama works for the vector methods). The response carries real server-side `elapsed_ms`, token usage, and extracted source entities / text snippets.
 
+## MCP query server (for external agents)
+
+The platform ships a **[MCP](https://modelcontextprotocol.io) (Model Context Protocol) server** that exposes knowledge-base search as standard MCP tools, so AI agents like Claude Code / Claude Desktop / Cursor can query directly without crafting HTTP.
+
+It is a **third (optional) process**: `python -m kb_platform.mcp`, running over **stdio** as a **thin HTTP proxy** to the running API server â€” it reimplements no query logic, reusing the same provider-profile resolution / engine building.
+
+**Install (optional extra):**
+
+```bash
+uv sync --extra mcp
+```
+
+**Start (the API server must already be running):**
+
+```bash
+uv run python -m kb_platform.mcp --api-url http://127.0.0.1:8000
+# or via env: KB_API_URL=http://127.0.0.1:8000 uv run python -m kb_platform.mcp
+```
+
+**Exposed tools:**
+
+| tool | purpose |
+|------|---------|
+| `list_knowledge_bases` | Lists every KB (`{id, name, method}`); call this first to discover queryable KBs |
+| `query_knowledge_base(kb_id, query, method?)` | Searches one KB, returns `{answer, method, sources}`; `method` defaults to `local`, can be `global` / `drift` / `basic` |
+
+**Wire into Claude Desktop / Claude Code** (edit your MCP client config):
+
+```json
+{
+  "mcpServers": {
+    "kb-platform": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/graphrag-kb-platform",
+               "python", "-m", "kb_platform.mcp"],
+      "env": { "KB_API_URL": "http://127.0.0.1:8000" }
+    }
+  }
+}
+```
+
+> The MCP server is a peer of the API server and carries no auth of its own; isolate it at the network layer (same as a local Ollama). HTTP transport for remote agents can be added later. Implementation: `kb_platform/mcp/`.
+
 ## Development
 
 ```bash
