@@ -6,7 +6,7 @@ export default defineConfig({
   server: {
     proxy: {
       "/kbs": "http://localhost:8000",
-      "/jobs": "http://localhost:8000",
+      "/jobs": { target: "http://localhost:8000", ws: true },
       "/steps": "http://localhost:8000",
       "/units": "http://localhost:8000",
       "/health": "http://localhost:8000",

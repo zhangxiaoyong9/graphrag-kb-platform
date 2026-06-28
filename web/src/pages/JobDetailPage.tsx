@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useJobPolling } from "../hooks/useJobPolling";
+import { useJobEvents } from "../hooks/useJobEvents";
 import StepTimeline from "../components/StepTimeline";
 import UnitTable from "../components/UnitTable";
 import StatusBadge from "../components/StatusBadge";
@@ -16,7 +17,9 @@ export default function JobDetailPage() {
   const { id, jobId } = useParams();
   const kbId = Number(id);
   const jobIdNum = Number(jobId);
-  const job = useJobPolling(jobIdNum);
+  const polled = useJobPolling(jobIdNum);
+  const live = useJobEvents(jobIdNum);
+  const job = live.connected && live.data ? live.data : polled;
   const [selected, setSelected] = useState<number | null>(null);
   const [cost, setCost] = useState<JobCost | null>(null);
   const status = job?.status;
@@ -75,7 +78,12 @@ export default function JobDetailPage() {
             </span>
             <div>
               <h1 className="flex items-center gap-2 text-lg font-semibold">
-                任务 #{job.id} <StatusBadge status={job.status} />
+                任务 #{job.id} <StatusBadge status={job.status} />{" "}
+                {live.connected ? (
+                  <span className="rounded-full bg-brand-grad-soft px-2 py-0.5 text-[11px] text-brand">
+                    实时
+                  </span>
+                ) : null}
               </h1>
               <p className="text-[12px] text-muted nums">共 {job.steps.length} 个步骤</p>
             </div>

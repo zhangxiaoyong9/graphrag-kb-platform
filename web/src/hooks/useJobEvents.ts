@@ -1,15 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import type { JobOut, StepOut } from "../api/types";
+import type { JobOut, JobStatus, StepOut } from "../api/types";
 
 /** WS events share StepOut's shape so a snapshot/delta maps straight to JobOut. */
 interface SnapshotEvent {
   type: "snapshot";
-  job: { id: number; status: string };
+  job: { id: number; status: JobStatus };
   steps: StepOut[];
 }
 interface DeltaEvent {
   type: "delta";
-  job?: { id: number; status: string };
+  job?: { id: number; status: JobStatus };
   steps: StepOut[];
 }
 type JobEvent = SnapshotEvent | DeltaEvent;
@@ -44,6 +44,7 @@ export function useJobEvents(jobId: number | null): JobEventsState {
     let closed = false;
 
     const connect = () => {
+      if (typeof WebSocket === "undefined") return; // no WS support -> stay on REST fallback
       const ws = new WebSocket(wsUrl(jobId));
       ws.onopen = () => {
         if (!closed) setState((s) => ({ ...s, connected: true }));
