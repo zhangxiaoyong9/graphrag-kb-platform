@@ -107,3 +107,29 @@ export interface KbStats {
   community_report_count?: number;
   text_unit_count?: number;
 }
+
+export interface ChatMessage {
+  id: number;
+  role: "user" | "assistant";
+  content: string;
+  method?: string | null;
+  rewritten_query?: string | null;
+  rewrite_fell_back?: boolean;
+  sources?: SourceRef[];
+  prompt_tokens?: number | null;
+  output_tokens?: number | null;
+  elapsed_ms?: number | null;
+  error?: string | null;
+}
+
+export interface Conversation {
+  id: number;
+  kb_id: number;
+  title: string;
+  updated_at?: string | null;
+  snippet?: string;
+}
+
+export interface ConversationDetail extends Conversation {
+  messages: ChatMessage[];
+}

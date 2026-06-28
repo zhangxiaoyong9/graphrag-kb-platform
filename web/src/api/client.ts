@@ -1,4 +1,4 @@
-import type { KbOut, KbDetail, DocumentOut, DocumentDetail, EvidenceDetail, JobOut, StepOut, UnitOut, KbCreate, DocumentCreate, QueryResult, JobCost, KbCost, GraphData, Health, ProviderProfile, ProfileCreate, KbStats } from "./types";
+import type { KbOut, KbDetail, DocumentOut, DocumentDetail, EvidenceDetail, JobOut, StepOut, UnitOut, KbCreate, DocumentCreate, QueryResult, JobCost, KbCost, GraphData, Health, ProviderProfile, ProfileCreate, KbStats, Conversation, ConversationDetail, ChatMessage } from "./types";
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(path, { headers: { "Content-Type": "application/json" }, ...init });
@@ -62,6 +62,15 @@ export const retryUnit = (id: number) => req<{ ok: boolean }>(`/units/${id}/retr
 export const retryStep = (id: number) => req<{ reset: number }>(`/steps/${id}/retry`, { method: "POST" });
 export const query = (kbId: number, method: string, q: string) =>
   req<QueryResult>(`/kbs/${kbId}/query`, { method: "POST", body: JSON.stringify({ method, query: q }) });
+export const listConversations = (kbId: number) => req<Conversation[]>(`/kbs/${kbId}/conversations`);
+export const createConversation = (kbId: number, title?: string) =>
+  req<Conversation>(`/kbs/${kbId}/conversations`, { method: "POST", body: JSON.stringify({ title: title ?? null }) });
+export const getConversation = (id: number) => req<ConversationDetail>(`/conversations/${id}`);
+export const renameConversation = (id: number, title: string) =>
+  req<Conversation>(`/conversations/${id}`, { method: "PATCH", body: JSON.stringify({ title }) });
+export const deleteConversation = (id: number) => req<void>(`/conversations/${id}`, { method: "DELETE" });
+export const sendMessage = (convId: number, content: string, method?: string) =>
+  req<ChatMessage>(`/conversations/${convId}/messages`, { method: "POST", body: JSON.stringify({ content, method: method ?? null }) });
 export const getJobCost = (kbId: number, jobId: number) => req<JobCost>(`/kbs/${kbId}/jobs/${jobId}/cost`);
 export const getKbCost = (kbId: number) => req<KbCost>(`/kbs/${kbId}/cost`);
 export const getGraph = (kbId: number, params?: { limit?: number; q?: string; hop?: number }) => {

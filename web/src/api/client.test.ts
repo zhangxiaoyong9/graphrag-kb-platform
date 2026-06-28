@@ -1,6 +1,6 @@
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
-import { createKb, deleteDocument, getDocumentDetail, getDocumentEvidence, listKbs, retryUnit } from "./client";
+import { createKb, deleteDocument, getDocumentDetail, getDocumentEvidence, listKbs, retryUnit, createConversation, sendMessage } from "./client";
 
 const server = setupServer(
   http.get("/kbs", () => HttpResponse.json([{ id: 1, name: "kb1", method: "standard" }])),
@@ -26,6 +26,21 @@ const server = setupServer(
       source: { document_id: 7, document_title: "alpha.md", chunk_id: "c1", ordinal: 0 },
     }),
   ),
+  http.post("/kbs/1/conversations", () =>
+    HttpResponse.json({ id: 9, kb_id: 1, title: "", updated_at: null, snippet: "" }),
+  ),
+  http.post("/conversations/9/messages", async ({ request }) => {
+    const b = (await request.json()) as { content: string; method: string };
+    return HttpResponse.json({
+      id: 10,
+      role: "assistant",
+      content: `A:${b.content}`,
+      method: b.method,
+      rewritten_query: null,
+      rewrite_fell_back: false,
+      sources: [],
+    });
+  }),
 );
 beforeAll(() => server.listen());
 afterEach(() => server.resetHandlers());
@@ -67,4 +82,13 @@ test("deleteDocument returns shrinkJobCreated false on 204", async () => {
     http.delete("/kbs/1/documents/9", () => new HttpResponse(null, { status: 204 })),
   );
   expect(await deleteDocument(1, 9)).toEqual({ shrinkJobCreated: false });
+});
+
+test("conversation client posts to the right paths", async () => {
+  const c = await createConversation(1);
+  expect(c.id).toBe(9);
+  const m = await sendMessage(9, "hi", "local");
+  expect(m.role).toBe("assistant");
+  expect(m.content).toBe("A:hi");
+  expect(m.method).toBe("local");
 });
