@@ -10,9 +10,11 @@ from sqlalchemy import func, or_, select, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import selectinload
 
+from kb_platform.db.crypto import decrypt_values, encrypt_values
 from kb_platform.db.engine import session_scope
 from kb_platform.db.enums import JobStatus, StepStatus, UnitStatus
 from kb_platform.db.models import Chunk, Document, Job, KnowledgeBase, Step, Unit
+from kb_platform.db.models_profile import ProviderProfile
 from kb_platform.engine.spec import StepSpec
 
 
@@ -577,3 +579,61 @@ class Repository:
         out = self._sum_cost(overall_rows)
         out["by_job"] = by_job
         return out
+
+    # --- provider profiles -------------------------------------------------
+
+    def create_profile(self, *, name, kind, provider, model, api_base=None,
+                       api_version=None, api_keys=None, structured_output=True) -> ProviderProfile:
+        with session_scope(self.engine) as s:
+            p = ProviderProfile(name=name, kind=kind, provider=provider, model=model,
+                                api_base=api_base, api_version=api_version,
+                                api_keys_enc=encrypt_values(api_keys or []),
+                                structured_output=structured_output)
+            s.add(p)
+            s.flush()
+            return p
+
+    def get_profile(self, profile_id: int) -> ProviderProfile | None:
+        with session_scope(self.engine) as s:
+            return s.get(ProviderProfile, profile_id)
+
+    def list_profiles(self, kind: str | None = None) -> list[ProviderProfile]:
+        with session_scope(self.engine) as s:
+            q = select(ProviderProfile)
+            if kind:
+                q = q.where(ProviderProfile.kind == kind)
+            return list(s.scalars(q))
+
+    def update_profile(self, profile_id: int, **fields) -> ProviderProfile | None:
+        api_keys = fields.pop("api_keys", None)  # None = unchanged; [] = clear
+        with session_scope(self.engine) as s:
+            p = s.get(ProviderProfile, profile_id)
+            if p is None:
+                return None
+            for k, v in fields.items():
+                if hasattr(p, k) and v is not None:
+                    setattr(p, k, v)
+            if api_keys is not None:
+                p.api_keys_enc = encrypt_values(api_keys)
+            s.flush()
+            return p
+
+    def delete_profile(self, profile_id: int) -> bool:
+        with session_scope(self.engine) as s:
+            p = s.get(ProviderProfile, profile_id)
+            if p is None:
+                return False
+            s.delete(p)
+            return True
+
+    def referencing_kbs(self, profile_id: int) -> list[int]:
+        with session_scope(self.engine) as s:
+            rows = s.scalars(select(KnowledgeBase).where(
+                or_(KnowledgeBase.llm_profile_id == profile_id,
+                    KnowledgeBase.embedding_profile_id == profile_id)
+            ))
+            return [k.id for k in rows]
+
+    def profile_key_count(self, profile_id: int) -> int:
+        p = self.get_profile(profile_id)
+        return len(decrypt_values(p.api_keys_enc)) if p else 0

@@ -20,6 +20,7 @@ from kb_platform.api.routes_graph import router as graph_router
 from kb_platform.api.routes_health import router as health_router
 from kb_platform.api.routes_jobs import router as jobs_router
 from kb_platform.api.routes_kbs import router
+from kb_platform.api.routes_profiles import router as profiles_router
 from kb_platform.api.routes_query import router as query_router
 from kb_platform.db.repository import Repository
 from kb_platform.query.engine import QueryEngine
@@ -54,6 +55,7 @@ def create_app(
     app.include_router(health_router)
     app.include_router(export_router)
     app.include_router(graph_router)
+    app.include_router(profiles_router)
 
     dist = Path(WEB_DIST)
     if dist.exists():

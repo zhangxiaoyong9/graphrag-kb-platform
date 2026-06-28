@@ -198,3 +198,37 @@ class JobCostOut(BaseModel):
 
 class KbCostOut(JobCostOut):
     by_job: dict[int, float]
+
+
+# --- provider profiles --------------------------------------------------
+class ProfileCreate(BaseModel):
+    name: str
+    kind: Literal["llm", "embedding"]
+    provider: str
+    model: str
+    api_base: str | None = None
+    api_version: str | None = None
+    api_keys: list[str] = []
+    structured_output: bool = True
+
+
+class ProfileUpdate(BaseModel):
+    name: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    api_base: str | None = None
+    api_version: str | None = None
+    api_keys: list[str] | None = None  # None=unchanged, []=clear
+    structured_output: bool | None = None
+
+
+class ProfileOut(BaseModel):
+    id: int
+    name: str
+    kind: str
+    provider: str
+    model: str
+    api_base: str | None = None
+    api_version: str | None = None
+    structured_output: bool
+    api_keys_count: int

@@ -21,6 +21,8 @@ class KnowledgeBase(Base):
     method: Mapped[str] = mapped_column(String, default="standard")
     settings_json: Mapped[str] = mapped_column(Text, default="{}")
     data_root: Mapped[str] = mapped_column(String)
+    llm_profile_id: Mapped[int | None] = mapped_column(ForeignKey("provider_profile.id"), nullable=True)
+    embedding_profile_id: Mapped[int | None] = mapped_column(ForeignKey("provider_profile.id"), nullable=True)
     documents: Mapped[list["Document"]] = relationship(back_populates="kb")
 
 
@@ -92,3 +94,8 @@ class Unit(Base):
     worker_id: Mapped[str | None] = mapped_column(String, nullable=True)
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     step: Mapped["Step"] = relationship(back_populates="units")
+
+
+# Register ProviderProfile on Base.metadata (imported after Base is defined to
+# avoid a circular import; the FK columns above reference provider_profile.id).
+from kb_platform.db.models_profile import ProviderProfile  # noqa: E402,F401
