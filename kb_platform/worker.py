@@ -29,12 +29,18 @@ class _SettingsKb:
 
     Closing the session_scope that loaded a real ORM ``KnowledgeBase`` would detach
     it; passing that object to ``adapter_factory`` risks lazy-load errors. This
-    dataclass carries only ``settings_json`` / ``data_root`` so production's
-    ``build_adapter_from_settings`` reads plain attributes with no DB access.
+    dataclass carries the plain-column fields production needs so the adapter
+    factory reads attributes with no DB access: ``settings_json`` / ``data_root``
+    for chunking + output paths, plus ``llm_profile_id`` / ``embedding_profile_id``
+    which ``build_adapter_for_kb`` -> ``assemble_kb_settings`` resolves into provider
+    profiles + decrypted keys (profile ids are Integer columns, so reading them
+    inside the load session is safe — no lazy load).
     """
 
     settings_json: str
     data_root: str
+    llm_profile_id: int | None = None
+    embedding_profile_id: int | None = None
 
 
 async def run_worker_once(
@@ -70,8 +76,17 @@ async def run_worker_once(
                 raise ValueError(f"job {job.id} references missing kb {job.kb_id}")
             data_root = kb.data_root
             settings_json = kb.settings_json
+            llm_profile_id = kb.llm_profile_id
+            embedding_profile_id = kb.embedding_profile_id
 
-        adapter = adapter_factory(_SettingsKb(settings_json=settings_json, data_root=data_root))
+        adapter = adapter_factory(
+            _SettingsKb(
+                settings_json=settings_json,
+                data_root=data_root,
+                llm_profile_id=llm_profile_id,
+                embedding_profile_id=embedding_profile_id,
+            )
+        )
         orch = Orchestrator(
             repo=repo,
             adapter=adapter,

@@ -198,3 +198,55 @@ def test_run_worker_stops_on_event(tmp_path):
     )
     # If graceful shutdown is broken, run_worker loops forever and this test hangs.
     assert repo.claim_one_pending_job() is None
+
+
+@pytest.mark.asyncio
+async def test_worker_carrier_carries_profile_ids(tmp_path, monkeypatch):
+    """Regression: the worker's _SettingsKb carrier must carry llm/embedding
+    profile ids, because build_adapter_for_kb -> assemble_kb_settings reads them
+    off the kb object. The carrier is ORM-detached (the session that loaded the
+    KB is closed before the adapter is built), so the profile ids must be copied
+    onto it eagerly — otherwise assemble_kb_settings hits AttributeError and the
+    whole production real-LLM indexing path fails before chunk_documents.
+
+    All other worker tests pass a FakeGraphAdapter that ignores the carrier, so
+    this is the one place that pins the _SettingsKb <-> assemble_kb_settings
+    contract used by the production adapter factory build_adapter_for_kb.
+    """
+    from cryptography.fernet import Fernet
+
+    from kb_platform.graph.graphrag_adapter import assemble_kb_settings
+    from kb_platform.worker import _SettingsKb
+
+    monkeypatch.setenv("KB_SECRET_KEY", Fernet.generate_key().decode())
+    engine = create_engine(f"sqlite:///{tmp_path}/kb.db")
+    Base.metadata.create_all(engine)
+    repo = Repository(engine)
+    llm = repo.create_profile(
+        name="DS", kind="llm", provider="deepseek", model="deepseek-chat",
+        api_keys=["sk-a"], structured_output=False,
+    )
+    emb = repo.create_profile(
+        name="Ollama", kind="embedding", provider="ollama", model="nomic-embed-text",
+        api_base="http://localhost:11434", api_keys=["ollama"],
+    )
+    with session_scope(engine) as s:
+        s.add(KnowledgeBase(
+            name="k", method="standard", settings_json="{}", data_root=str(tmp_path),
+            llm_profile_id=llm.id, embedding_profile_id=emb.id,
+        ))
+
+    # Reproduce EXACTLY what run_worker_once does: load the KB in a session,
+    # close it, then hand a detached _SettingsKb to the adapter factory.
+    with session_scope(engine) as s:
+        kb = s.get(KnowledgeBase, 1)
+        carrier = _SettingsKb(
+            settings_json=kb.settings_json,
+            data_root=kb.data_root,
+            llm_profile_id=kb.llm_profile_id,
+            embedding_profile_id=kb.embedding_profile_id,
+        )
+
+    assembled = assemble_kb_settings(carrier, repo)
+    assert assembled["llm"]["model"] == "deepseek-chat"
+    assert assembled["embedding"]["model"] == "nomic-embed-text"
