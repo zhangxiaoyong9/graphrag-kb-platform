@@ -132,3 +132,15 @@ env -u all_proxy -u http_proxy -u https_proxy uv run python -m kb_platform.worke
 
 `uv run pytest -q` → **254 passed**; `uv run ruff check .` → clean. Two regression
 tests added (one per bug).
+
+## Screenshots
+
+`docs/screenshots/real-llm-ollama-smoke-2026-06-28/`:
+
+- `job-green-7of7.png` — job #2 detail, 7/7 steps green (extract_graph 1 unit,
+  community_reports 1 unit).
+- `llm-raw-output.png` — extract_graph unit's "LLM 输出" expanded: the real
+  graphrag-format entity tuples `("entity"<|>宁德时代<|>ORGANIZATION<|>…)` the
+  Ollama chat model returned.
+- `graph.png` — graph tab: 5 manufacturer nodes (宁德时代/比亚迪/LG新能源/松下/三星SDI)
+  + 10 relationships.
