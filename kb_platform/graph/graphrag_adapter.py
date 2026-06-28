@@ -406,28 +406,29 @@ def build_adapter_from_settings(
 
     Lenient: defaults to litellm/openai/gpt-4o-mini when keys are absent.
 
-    Credential resolution (graphrag-llm's ModelConfig requires api_key at construction
-    when auth_method=api_key, the default — it does not defer to litellm's env lookup):
-      1. explicit ``api_key`` arg;
-      2. ``llm.api_key`` literal in settings (not recommended — stored in DB);
-      3. env var named by ``llm.api_key_env`` (e.g. "DEEPSEEK_API_KEY");
-      4. env var ``{MODEL_PROVIDER}_API_KEY`` uppercased.
-    The key is never persisted; prefer option 3/4 (env) so secrets stay out of the DB.
+    API keys come from ``llm.api_keys`` (a list of literals, decrypted from the
+    KB's LLM provider profile by ``assemble_kb_settings``). The first key is the
+    primary ModelConfig key; the rest round-robin via LoadBalancingCompletion.
+    Raises ValueError when no key is configured.
     """
     import json
-    import os
 
     from graphrag_llm.config import ModelConfig
 
     settings = json.loads(settings_json or "{}")
     llm = settings.get("llm", {}) or settings.get("completion", {})
     provider = llm.get("model_provider", "openai")
-    resolved_key = (
-        api_key
-        or llm.get("api_key")
-        or (os.getenv(llm["api_key_env"]) if llm.get("api_key_env") else None)
-        or os.getenv(f"{provider.upper()}_API_KEY")
-    )
+    # API keys come from the KB's LLM provider profile (frontend-entered,
+    # Fernet-encrypted, decrypted by assemble_kb_settings). The first key is
+    # the primary ModelConfig key; the rest round-robin via LoadBalancingCompletion.
+    api_keys = list(api_key and [api_key] or llm.get("api_keys") or [])
+    if not api_keys:
+        raise ValueError(
+            f"KB has no API keys for provider '{provider}'. "
+            "Add keys to its LLM provider profile."
+        )
+    resolved_key = api_keys[0]
+    extra_keys = api_keys[1:]
     model_config = ModelConfig(
         type=llm.get("type", "litellm"),
         model_provider=provider,
@@ -448,11 +449,6 @@ def build_adapter_from_settings(
 
     embed_model_config = _build_embed_model_config(settings)
 
-    # multi-key load balancing: resolve extra keys from llm.api_key_envs
-    api_key_envs = llm.get("api_key_envs") or []
-    extra_keys = [os.getenv(env) for env in (api_key_envs if isinstance(api_key_envs, list) else [])]
-    extra_keys = [k for k in extra_keys if k]
-
     return build_default_adapter(
         data_root=data_root,
         model_config=model_config,
@@ -471,3 +467,66 @@ def build_adapter_from_settings(
         community_report_prompt=reports.get("prompt"),
         extra_api_keys=extra_keys or None,
     )
+
+
+def assemble_kb_settings(kb, repo) -> dict:
+    """Resolve a KB's provider profiles + content settings -> full settings dict.
+
+    This is the seam above graphrag: it merges the KB's referenced LLM/embedding
+    provider profiles (connection + decrypted keys + structured_output) with the
+    KB's own content params (chunking/extraction/prompts/lengths), producing the
+    settings dict that ``build_adapter_from_settings`` consumes.
+    """
+    import json
+
+    from kb_platform.db.crypto import decrypt_values
+
+    if kb.llm_profile_id is None:
+        raise ValueError("KB has no LLM provider profile.")
+    lp = repo.get_profile(kb.llm_profile_id)
+    api_keys = decrypt_values(lp.api_keys_enc)
+    if not api_keys:
+        raise ValueError(f"LLM profile '{lp.name}' has no API keys.")
+    content = json.loads(kb.settings_json or "{}")
+    reports = content.get("community_reports") or {}
+    assembled = {
+        "llm": {
+            "type": "litellm",
+            "model_provider": lp.provider,
+            "model": lp.model,
+            "api_base": lp.api_base,
+            "api_version": lp.api_version,
+            "api_keys": api_keys,
+        },
+        "chunking": content.get("chunking", {}),
+        "extract_graph": content.get("extract_graph", {}),
+        "summarize_descriptions": content.get("summarize_descriptions", {}),
+        "cluster_graph": content.get("cluster_graph", {}),
+        "community_reports": {
+            "structured_output": lp.structured_output,
+            "max_length": reports.get("max_length", 2000),
+        },
+    }
+    if content.get("prompts"):
+        assembled["prompts"] = content["prompts"]
+    if content.get("query_prompts"):
+        assembled["query_prompts"] = content["query_prompts"]
+    if kb.embedding_profile_id is not None:
+        ep = repo.get_profile(kb.embedding_profile_id)
+        emb_keys = decrypt_values(ep.api_keys_enc)
+        assembled["embedding"] = {
+            "type": "litellm",
+            "model_provider": ep.provider,
+            "model": ep.model,
+            "api_base": ep.api_base,
+            "api_version": ep.api_version,
+            "api_key": emb_keys[0] if emb_keys else None,
+        }
+    return assembled
+
+
+def build_adapter_for_kb(kb, repo):
+    """Build a real GraphRagAdapter for a KB by resolving its profiles first."""
+    import json
+
+    return build_adapter_from_settings(json.dumps(assemble_kb_settings(kb, repo)), kb.data_root)

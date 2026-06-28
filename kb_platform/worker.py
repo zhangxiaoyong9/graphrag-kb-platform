@@ -143,12 +143,12 @@ if __name__ == "__main__":
     import sys
 
     from kb_platform.db.engine import create_engine
-    from kb_platform.graph.graphrag_adapter import build_adapter_from_settings
+    from kb_platform.graph.graphrag_adapter import build_adapter_for_kb
 
     db = sys.argv[1] if len(sys.argv) > 1 else "kb.db"
     os.environ.setdefault("KB_DB_URL", f"sqlite:///{db}")
     repo = Repository(create_engine(f"sqlite:///{db}"))
     run_worker(
         repo=repo,
-        adapter_factory=lambda kb: build_adapter_from_settings(kb.settings_json, kb.data_root),
+        adapter_factory=lambda kb: build_adapter_for_kb(kb, repo),
     )
