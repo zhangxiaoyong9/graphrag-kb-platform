@@ -16,6 +16,7 @@ async def query_kb(kb_id: int, payload: QueryRequest, request: Request) -> Query
     # Injected engine (tests) takes priority; otherwise build a real engine per-KB
     engine = request.app.state.query_engine
     if engine is None:
+        from kb_platform.graph.graphrag_adapter import assemble_kb_settings
         from kb_platform.query.graphrag_engine import GraphRagQueryEngine
 
         repo = request.app.state.repo
@@ -24,8 +25,18 @@ async def query_kb(kb_id: int, payload: QueryRequest, request: Request) -> Query
             if kb is None:
                 return QueryResultOut(answer="", method=payload.method, error=f"kb {kb_id} not found")
             data_root = kb.data_root
-            settings = kb.settings_json
-        engine = GraphRagQueryEngine(data_root=data_root, model_config=__import__("json").loads(settings or "{}"))
+            # Resolve provider profiles + decrypted keys into a full settings dict
+            # (the same seam the indexing path uses). Passing raw kb.settings_json
+            # here would omit the llm/embedding blocks, so graphrag would have no
+            # completion model and every query would fail with
+            # "default_completion_model not found".
+            try:
+                model_config = assemble_kb_settings(kb, repo)
+            except Exception as exc:  # noqa: BLE001 - surface as a graceful error, not a 500
+                return QueryResultOut(
+                    answer="", method=payload.method, error=f"settings resolution failed: {exc}"
+                )
+        engine = GraphRagQueryEngine(data_root=data_root, model_config=model_config)
     from kb_platform.api.models import SourceOut
 
     result = await engine.search(payload.method, payload.query, request.app.state.data_root)

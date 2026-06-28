@@ -106,6 +106,33 @@ def test_resolve_config_injects_default_completion_model(monkeypatch):
     assert cfg.vector_store.db_uri.endswith("/vectors")
 
 
+def test_resolve_config_reads_assembled_api_keys_list():
+    """Regression: assemble_kb_settings produces ``llm.api_keys`` (a LIST), and
+    the query route passes assembled settings (not raw content-only
+    settings_json, which has no llm block at all). _resolve_config must read
+    api_keys[0] — otherwise no completion_model is configured and every real-LLM
+    query fails with 'default_completion_model not found in completion_models'.
+    """
+    from kb_platform.query.graphrag_engine import GraphRagQueryEngine
+
+    eng = GraphRagQueryEngine(
+        data_root=".",
+        model_config={
+            "llm": {
+                "type": "litellm",
+                "model_provider": "ollama",
+                "model": "llama3",
+                "api_base": "http://localhost:11434",
+                "api_keys": ["ollama"],  # list form emitted by assemble_kb_settings
+            },
+        },
+    )
+    cfg = eng._resolve_config(root=".")
+    entry = cfg.completion_models["default_completion_model"]
+    assert entry.model == "llama3"
+    assert entry.api_key == "ollama"
+
+
 def test_resolve_config_keeps_explicit_completion_models():
     from kb_platform.query.graphrag_engine import GraphRagQueryEngine
 

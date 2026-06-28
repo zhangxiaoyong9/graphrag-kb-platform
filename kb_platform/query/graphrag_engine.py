@@ -415,6 +415,7 @@ class GraphRagQueryEngine:
                 provider = llm.get("model_provider", "openai")
                 resolved_key = (
                     llm.get("api_key")
+                    or (llm.get("api_keys") or [None])[0]
                     or (os.getenv(llm["api_key_env"]) if llm.get("api_key_env") else None)
                     or os.getenv(f"{provider.upper()}_API_KEY")
                 )
@@ -445,6 +446,7 @@ class GraphRagQueryEngine:
                 provider = emb.get("model_provider", "openai")
                 resolved_key = (
                     emb.get("api_key")
+                    or (emb.get("api_keys") or [None])[0]
                     or (os.getenv(emb["api_key_env"]) if emb.get("api_key_env") else None)
                     or os.getenv(f"{provider.upper()}_API_KEY")
                 )
