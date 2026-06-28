@@ -216,6 +216,12 @@ curl -X POST http://127.0.0.1:8000/kbs/1/jobs -H 'Content-Type: application/json
 | `POST` | `/steps/{id}/retry` | 重试某步骤中所有失败的 unit |
 | `POST` | `/units/{id}/retry` | 重试单个失败的 unit |
 | `POST` | `/kbs/{id}/query` | 检索 → `{answer, method, error, elapsed_ms, prompt_tokens, output_tokens, llm_calls, sources}` |
+| `POST` | `/kbs/{kb_id}/conversations` | 创建绑定到某个 KB 的对话 |
+| `GET` | `/kbs/{kb_id}/conversations` | 列出对话（id、标题、片段） |
+| `GET` | `/conversations/{id}` | 对话 + 按序排列的消息 |
+| `PATCH` | `/conversations/{id}` | 重命名 |
+| `DELETE` | `/conversations/{id}` | 删除并级联删除消息 |
+| `POST` | `/conversations/{id}/messages` | 多轮发送：改写后续问题 → 检索 → 持久化；返回助手消息 |
 
 上传默认限制 25 MiB（环境变量 `KB_MAX_UPLOAD_BYTES`）。成本通过 graphrag-llm 的 model-cost 注册表按每次 LLM 调用采集；未知模型只记录 token、不计美元（绝不会让 unit 失败）。
 
@@ -244,6 +250,10 @@ create_communities → community_reports → generate_text_embeddings
 | `basic` | 否 | 是（文本单元） | 仅文本单元向量搜索（最简单、最快） |
 
 查询端点从 KB 的 **LLM provider profile** 解析 LLM、从其 **embedding provider profile** 解析嵌入器（所以 Ollama 能支撑向量方法）。响应携带真实的服务端 `elapsed_ms`、token 用量，以及抽取出的来源实体 / 文本片段。
+
+### 多轮对话
+
+对话（`/kbs/{kb_id}/conversations` + `/conversations/{id}/messages`）是单发 `POST /kbs/{id}/query` **之上**的一层：每条后续问题由一个注入的 `complete` 可调用对象（与索引共用同一套 provider-profile 解析）参考最近 ~6 条消息改写成独立查询，再交给未改动的 `QueryEngine.search` 回答，并将用户 + 助手消息（合并后的 token 与 sources）持久化到 SQLite。第一轮原样直通，不做改写。`POST /kbs/{id}/query`、MCP 的 `query_knowledge_base` 工具、查询测试流程均保持不变。
 
 ## MCP 查询服务（供外部 Agent 调用）
 

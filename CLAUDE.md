@@ -60,6 +60,7 @@ The **MCP query server** (`kb_platform/mcp/`, opt-in via the `[mcp]` extra) is a
 ### Two graphrag isolation "seams" — keep them clean
 - `kb_platform/graph/adapter.py` defines the `GraphAdapter` Protocol (chunk / extract / summarize / report / cluster / finalize / embed). **`graphrag_adapter.py` is the ONLY module that imports graphrag internals** — do not add graphrag imports elsewhere in the engine/api layers. `FakeGraphAdapter` (same file) is a deterministic, no-LLM implementation used by every engine test.
 - `kb_platform/query/engine.py` defines the `QueryEngine` Protocol; `FakeQueryEngine` is the test/double impl, `graphrag_engine.py` is the real one.
+- Multi-turn chat (`kb_platform/conversation/`) is a layer **above** the `QueryEngine` Protocol: `ConversationService` rewrites follow-ups (injected `complete` callable, graphrag stays in `graph/`) → calls the unchanged single-shot engine → persists `conversation`/`message` rows. The single-shot `POST /kbs/{id}/query` (MCP, query-test) is unchanged.
 
 When adding an indexing capability, extend the `GraphAdapter` Protocol and both impls; do not call graphrag directly from a step or strategy.
 
