@@ -37,7 +37,7 @@ export function DocumentManager({
 
   const onDelete = async (doc: DocumentOut) => {
     const ok = window.confirm(
-      `确定删除文档「${doc.title}」吗？\n\n删除后图谱不会自动回缩——需要重新运行增量任务来刷新索引。`,
+      `确定删除文档「${doc.title}」吗？\n\n删除后将自动重建图谱（增量任务）。`,
     );
     if (!ok) return;
     await deleteDocument(kbId, doc.id);

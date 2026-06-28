@@ -37,13 +37,13 @@ test("shows a file input for multipart upload", () => {
   expect(screen.getByLabelText(/上传文件/)).toBeInTheDocument();
 });
 
-test("delete button confirms with graph-not-shrunk copy and calls deleteDocument", async () => {
-  const spy = vi.spyOn(client, "deleteDocument").mockResolvedValue(undefined);
+test("delete button confirms with auto-rebuild copy and calls deleteDocument", async () => {
+  const spy = vi.spyOn(client, "deleteDocument").mockResolvedValue({ shrinkJobCreated: false });
   const reload = vi.fn();
   const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
   renderManager(reload);
   fireEvent.click(screen.getAllByRole("button", { name: /删除/ })[0]);
-  expect(confirmSpy).toHaveBeenCalledWith(expect.stringMatching(/图谱不会自动回缩/));
+  expect(confirmSpy).toHaveBeenCalledWith(expect.stringMatching(/自动重建图谱/));
   await waitFor(() => expect(spy).toHaveBeenCalledWith(1, 1));
   await waitFor(() => expect(reload).toHaveBeenCalled());
   spy.mockRestore();
@@ -51,7 +51,7 @@ test("delete button confirms with graph-not-shrunk copy and calls deleteDocument
 });
 
 test("delete is cancelled when confirm returns false", async () => {
-  const spy = vi.spyOn(client, "deleteDocument").mockResolvedValue(undefined);
+  const spy = vi.spyOn(client, "deleteDocument").mockResolvedValue({ shrinkJobCreated: false });
   vi.spyOn(window, "confirm").mockReturnValue(false);
   renderManager();
   fireEvent.click(screen.getAllByRole("button", { name: /删除/ })[0]);

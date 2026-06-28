@@ -30,9 +30,20 @@ export const uploadFile = async (kbId: number, file: File): Promise<DocumentOut>
   if (!r.ok) throw new Error(`${r.status} /kbs/${kbId}/documents`);
   return r.json() as Promise<DocumentOut>;
 };
-export const deleteDocument = async (kbId: number, docId: number): Promise<void> => {
+export interface DeleteResult {
+  /** true when the server auto-created an incremental shrink job (HTTP 202). */
+  shrinkJobCreated: boolean;
+  jobId?: number;
+}
+
+export const deleteDocument = async (kbId: number, docId: number): Promise<DeleteResult> => {
   const r = await fetch(`/kbs/${kbId}/documents/${docId}`, { method: "DELETE" });
   if (!r.ok && r.status !== 204) throw new Error(`${r.status} /kbs/${kbId}/documents/${docId}`);
+  if (r.status === 202) {
+    const body = (await r.json()) as { id: number; status: string };
+    return { shrinkJobCreated: true, jobId: body.id };
+  }
+  return { shrinkJobCreated: false };
 };
 export const listJobsByKb = (kbId: number) => req<{ id: number; status: string }[]>(`/kbs/${kbId}/jobs`);
 export const triggerJob = (kbId: number, method = "standard", type = "full") => req<{ id: number; status: string }>(`/kbs/${kbId}/jobs`, { method: "POST", body: JSON.stringify({ method, type }) });

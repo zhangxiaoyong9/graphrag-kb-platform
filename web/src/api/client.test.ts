@@ -1,6 +1,6 @@
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
-import { createKb, getDocumentDetail, getDocumentEvidence, listKbs, retryUnit } from "./client";
+import { createKb, deleteDocument, getDocumentDetail, getDocumentEvidence, listKbs, retryUnit } from "./client";
 
 const server = setupServer(
   http.get("/kbs", () => HttpResponse.json([{ id: 1, name: "kb1", method: "standard" }])),
@@ -51,4 +51,20 @@ test("document evidence client encodes citation ids", async () => {
   expect(evidence.matched).toBe("Alpha body");
   expect(evidence.after).toBe("Beta context");
   expect(evidence.source.chunk_id).toBe("c1");
+});
+
+test("deleteDocument returns shrinkJobCreated + jobId on 202", async () => {
+  server.use(
+    http.delete("/kbs/1/documents/9", () =>
+      HttpResponse.json({ id: 42, status: "pending" }, { status: 202 }),
+    ),
+  );
+  expect(await deleteDocument(1, 9)).toEqual({ shrinkJobCreated: true, jobId: 42 });
+});
+
+test("deleteDocument returns shrinkJobCreated false on 204", async () => {
+  server.use(
+    http.delete("/kbs/1/documents/9", () => new HttpResponse(null, { status: 204 })),
+  );
+  expect(await deleteDocument(1, 9)).toEqual({ shrinkJobCreated: false });
 });
