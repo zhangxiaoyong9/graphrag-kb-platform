@@ -81,10 +81,10 @@ def write_text_units_parquet(data_root: Path, chunks) -> None:
     Shared by the full path (``_chunk_documents``) and the incremental wrap-up
     (``update_clean_state``) so both produce identical parquet. Columns mirror
     graphrag's text_units layout: id (=chunk_id), text, document_ids, n_tokens.
-    No-op when there are no chunks (leaves any existing file untouched).
+    Writes a zero-row parquet when there are no chunks so a delete-to-empty KB
+    still overwrites stale text-unit vectors in the embeddings step instead of
+    leaving the previous file untouched.
     """
-    if not chunks:
-        return
     pd.DataFrame(
         [
             {
@@ -94,7 +94,8 @@ def write_text_units_parquet(data_root: Path, chunks) -> None:
                 "n_tokens": 0,
             }
             for c in chunks
-        ]
+        ],
+        columns=["id", "text", "document_ids", "n_tokens"],
     ).to_parquet(data_root / "text_units.parquet")
 
 

@@ -5,7 +5,11 @@ from kb_platform.db.engine import create_engine, session_scope
 from kb_platform.db.enums import StepKind
 from kb_platform.db.models import Base, KnowledgeBase
 from kb_platform.db.repository import Repository
-from kb_platform.engine.atomic_steps import create_communities, finalize_graph
+from kb_platform.engine.atomic_steps import (
+    create_communities,
+    finalize_graph,
+    write_text_units_parquet,
+)
 from kb_platform.engine.spec import StepSpec
 from kb_platform.graph.adapter import FakeGraphAdapter
 
@@ -44,3 +48,12 @@ def test_create_communities_writes_parquet(setup):
     comms = pd.read_parquet(f"{data_root}/communities.parquet")
     assert {"level", "community_id", "parent", "entity_ids"} <= set(comms.columns)
     assert len(comms) >= 1
+
+
+def test_write_text_units_parquet_empty_writes_zero_rows_with_columns(tmp_path):
+    out = tmp_path / "text_units.parquet"
+    write_text_units_parquet(tmp_path, [])
+    assert out.exists()  # 不再 no-op
+    df = pd.read_parquet(out)
+    assert list(df.columns) == ["id", "text", "document_ids", "n_tokens"]
+    assert len(df) == 0
