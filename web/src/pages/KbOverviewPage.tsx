@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useKb } from "./kb-context";
 import { useAsync } from "../hooks/useAsync";
-import { listDocuments, listJobsByKb, getKbCost } from "../api/client";
+import { listDocuments, listJobsByKb, getKbCost, getKbStats } from "../api/client";
 import { Badge, Button, Card, CardHeader, Stat } from "../components/ui";
 import { CostPanel } from "../components/CostPanel";
 import { JobList } from "../components/JobList";
@@ -16,6 +16,9 @@ export default function KbOverviewPage() {
   const docs = useAsync(() => listDocuments(kbId), [kbId]);
   const jobs = useAsync(() => listJobsByKb(kbId), [kbId]);
   const cost = useAsync(() => getKbCost(kbId).catch(() => null), [kbId]);
+  const stats = useAsync(() => getKbStats(kbId).catch(() => null), [kbId]);
+  const s = stats.data;
+  const dash = "—";
   const [editOpen, setEditOpen] = useState(false);
 
   const docCount = docs.data?.length ?? 0;
@@ -30,6 +33,17 @@ export default function KbOverviewPage() {
         <Stat label="累计成本" value={moneyCompact(cost.data?.total_usd ?? null)} icon={<IconCost width={18} height={18} />} accent />
         <Stat label="索引方法" value={kb?.method ?? "—"} icon={<IconLayers width={18} height={18} />} />
       </div>
+
+      <Card>
+        <CardHeader title="图谱规模" subtitle="最近一次索引后的实体 / 关系 / 社区计数" icon={<IconLayers width={18} height={18} />} />
+        <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+          <Stat label="实体" value={s?.entity_count ?? dash} icon={<IconLayers width={16} height={16} />} />
+          <Stat label="关系" value={s?.relationship_count ?? dash} icon={<IconLayers width={16} height={16} />} />
+          <Stat label="社区" value={s?.community_count ?? dash} icon={<IconLayers width={16} height={16} />} />
+          <Stat label="社区报告" value={s?.community_report_count ?? dash} icon={<IconLayers width={16} height={16} />} />
+          <Stat label="分块" value={s?.chunk_count ?? dash} icon={<IconDoc width={16} height={16} />} />
+        </div>
+      </Card>
 
       <Card>
         <CardHeader title="快捷操作" subtitle="触发索引任务或导出已构建的知识图谱" icon={<IconPlay width={18} height={18} />} />

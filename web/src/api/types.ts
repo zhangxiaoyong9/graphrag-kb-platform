@@ -96,3 +96,14 @@ export interface Health {
   db: "ok" | "down";
   worker: HealthWorker;
 }
+
+export interface KbStats {
+  updated_at?: string;
+  document_count?: number;
+  chunk_count?: number;
+  entity_count?: number;
+  relationship_count?: number;
+  community_count?: number;
+  community_report_count?: number;
+  text_unit_count?: number;
+}

@@ -1,4 +1,4 @@
-import type { KbOut, KbDetail, DocumentOut, DocumentDetail, EvidenceDetail, JobOut, StepOut, UnitOut, KbCreate, DocumentCreate, QueryResult, JobCost, KbCost, GraphData, Health, ProviderProfile, ProfileCreate } from "./types";
+import type { KbOut, KbDetail, DocumentOut, DocumentDetail, EvidenceDetail, JobOut, StepOut, UnitOut, KbCreate, DocumentCreate, QueryResult, JobCost, KbCost, GraphData, Health, ProviderProfile, ProfileCreate, KbStats } from "./types";
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(path, { headers: { "Content-Type": "application/json" }, ...init });
@@ -63,6 +63,7 @@ export const getGraph = (kbId: number, params?: { limit?: number; q?: string; ho
 };
 
 export const getHealth = () => req<Health>("/health");
+export const getKbStats = (kbId: number) => req<KbStats>(`/kbs/${kbId}/stats`);
 
 export interface PromptDefaults {
   extract_graph: string;
