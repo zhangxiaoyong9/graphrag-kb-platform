@@ -23,6 +23,7 @@ from kb_platform.api.models import (
     KbCreate,
     KbDetailOut,
     KbOut,
+    KbStatsOut,
     KbUpdate,
     ProfileRef,
 )
@@ -156,6 +157,22 @@ def get_kb(kb_id: int, request: Request) -> KbDetailOut:
             llm_profile=_profileref(repo, kb.llm_profile_id),
             embedding_profile=_profileref(repo, kb.embedding_profile_id),
         )
+
+
+@router.get("/kbs/{kb_id}/stats", response_model=KbStatsOut)
+def get_kb_stats(kb_id: int, request: Request) -> KbStatsOut:
+    """Graph-scale snapshot (entities/relationships/communities/... counts).
+
+    Returns an all-None body (200) when no snapshot exists yet — never 404 for
+    an existing KB — so the overview page can degrade gracefully.
+    """
+    from kb_platform.api.routes_export import _data_root
+
+    root = _data_root(request, kb_id)  # 404 only if the KB row is absent
+    path = root / "stats.json"
+    if not path.exists():
+        return KbStatsOut()
+    return KbStatsOut(**json.loads(path.read_text()))
 
 
 @router.patch("/kbs/{kb_id}", response_model=KbDetailOut)

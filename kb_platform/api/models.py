@@ -213,6 +213,23 @@ class KbCostOut(JobCostOut):
     by_job: dict[int, float]
 
 
+class KbStatsOut(BaseModel):
+    """Graph-scale snapshot read from <data_root>/stats.json.
+
+    All fields None when no snapshot exists yet (unindexed KB) so the UI can
+    degrade to '—' without a 404.
+    """
+
+    updated_at: str | None = None
+    document_count: int | None = None
+    chunk_count: int | None = None
+    entity_count: int | None = None
+    relationship_count: int | None = None
+    community_count: int | None = None
+    community_report_count: int | None = None
+    text_unit_count: int | None = None
+
+
 # --- provider profiles --------------------------------------------------
 class ProfileCreate(BaseModel):
     name: str

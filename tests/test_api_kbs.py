@@ -78,3 +78,58 @@ def test_create_kb_response_shape(client):
     r = client.post("/kbs", json={"name": "kb1", "method": "standard", "settings_yaml": "{}", "llm_profile_id": 1})
     body = r.json()
     assert set(body.keys()) == {"id", "name", "method"}  # response_model restricts fields
+
+
+def test_get_kb_stats_returns_snapshot(tmp_path):
+    """GET /kbs/{id}/stats returns the written stats.json content."""
+    import json
+
+    from fastapi.testclient import TestClient
+
+    from kb_platform.api.app import create_app
+    from kb_platform.db.engine import create_engine, session_scope
+    from kb_platform.db.models import Base, KnowledgeBase
+    from kb_platform.db.repository import Repository
+
+    engine = create_engine(f"sqlite:///{tmp_path}/t.db")
+    Base.metadata.create_all(engine)
+    with session_scope(engine) as s:
+        s.add(KnowledgeBase(name="k", method="standard", settings_json="{}", data_root=str(tmp_path)))
+    repo = Repository(engine)
+    (tmp_path / "stats.json").write_text(json.dumps({
+        "updated_at": "2026-06-28T00:00:00+00:00",
+        "document_count": 2, "chunk_count": 5,
+        "entity_count": 9, "relationship_count": 7,
+        "community_count": 3, "community_report_count": 3, "text_unit_count": 5,
+    }))
+    client = TestClient(create_app(repo, data_root=str(tmp_path)))
+    r = client.get("/kbs/1/stats")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["entity_count"] == 9
+    assert body["community_count"] == 3
+    assert body["document_count"] == 2
+
+
+def test_get_kb_stats_empty_when_no_snapshot(tmp_path):
+    """No stats.json yet -> 200 with all-None body (UI shows '—'), not 404."""
+    from fastapi.testclient import TestClient
+
+    from kb_platform.api.app import create_app
+    from kb_platform.db.engine import create_engine, session_scope
+    from kb_platform.db.models import Base, KnowledgeBase
+    from kb_platform.db.repository import Repository
+
+    engine = create_engine(f"sqlite:///{tmp_path}/t.db")
+    Base.metadata.create_all(engine)
+    with session_scope(engine) as s:
+        s.add(KnowledgeBase(name="k", method="standard", settings_json="{}", data_root=str(tmp_path)))
+    repo = Repository(engine)
+    client = TestClient(create_app(repo, data_root=str(tmp_path)))
+    r = client.get("/kbs/1/stats")
+    assert r.status_code == 200
+    assert r.json() == {
+        "updated_at": None, "document_count": None, "chunk_count": None,
+        "entity_count": None, "relationship_count": None,
+        "community_count": None, "community_report_count": None, "text_unit_count": None,
+    }
