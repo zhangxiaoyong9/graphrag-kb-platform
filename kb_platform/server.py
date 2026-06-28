@@ -16,6 +16,7 @@ Run ``alembic upgrade head`` (once) to create the schema before starting.
 The background worker is a separate process: ``python -m kb_platform.worker``.
 """
 
+import os
 import sys
 
 
@@ -27,6 +28,7 @@ def main() -> None:
     from kb_platform.db.repository import Repository
 
     db = sys.argv[1] if len(sys.argv) > 1 else "kb.db"
+    os.environ.setdefault("KB_DB_URL", f"sqlite:///{db}")
     data_root = sys.argv[2] if len(sys.argv) > 2 else "."
     host = sys.argv[3] if len(sys.argv) > 3 else "127.0.0.1"
     port = int(sys.argv[4]) if len(sys.argv) > 4 else 8000

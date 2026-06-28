@@ -139,12 +139,14 @@ def run_worker(
 
 
 if __name__ == "__main__":
+    import os
     import sys
 
     from kb_platform.db.engine import create_engine
     from kb_platform.graph.graphrag_adapter import build_adapter_from_settings
 
     db = sys.argv[1] if len(sys.argv) > 1 else "kb.db"
+    os.environ.setdefault("KB_DB_URL", f"sqlite:///{db}")
     repo = Repository(create_engine(f"sqlite:///{db}"))
     run_worker(
         repo=repo,
