@@ -32,6 +32,7 @@ export default function ChatPage() {
   const [busy, setBusy] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const convIdRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (kbId == null && list.length > 0) setKbId(list[0].id);
@@ -75,10 +76,12 @@ export default function ChatPage() {
 
   const selectConv = async (id: number) => {
     setConvId(id);
+    convIdRef.current = id;
     try {
-      setMessages((await getConversation(id)).messages);
+      const msgs = (await getConversation(id)).messages;
+      if (convIdRef.current === id) setMessages(msgs);
     } catch {
-      setMessages([]);
+      if (convIdRef.current === id) setMessages([]);
     }
   };
 
