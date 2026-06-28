@@ -51,7 +51,7 @@ const SECTIONS: ConfigSection[] = [
     rows: [
       { k: "单文件上限", v: "25 MiB（环境变量 KB_MAX_UPLOAD_BYTES 可调）" },
       { k: "支持格式", v: ".txt / .md / .pdf / .docx / .html 等（经 markitdown 解析）" },
-      { k: "删除", v: "删除文档不会回缩图谱——需重跑增量任务刷新索引" },
+      { k: "删除", v: "删除文档将自动重建图谱（增量）" },
     ],
   },
   {
