@@ -1,10 +1,10 @@
 import { createContext, useContext } from "react";
-import type { KbOut } from "../api/types";
+import type { KbDetail } from "../api/types";
 
 /** KB workspace context: the loaded KB + a reload trigger, shared across tabs. */
 export interface KbCtx {
   kbId: number;
-  kb: KbOut | null;
+  kb: KbDetail | null;
   reload: () => void;
 }
 

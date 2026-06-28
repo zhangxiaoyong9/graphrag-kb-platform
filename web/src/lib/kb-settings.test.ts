@@ -3,14 +3,13 @@ import { buildSettings, parseSettings, DEFAULTS, type KbFormState } from "./kb-s
 
 const base: KbFormState = {
   ...DEFAULTS,
-  llm: { ...DEFAULTS.llm },
-  embedding: { ...DEFAULTS.embedding },
   chunking: { ...DEFAULTS.chunking },
   extractGraph: { ...DEFAULTS.extractGraph },
   summarize: { ...DEFAULTS.summarize },
   communityReports: { ...DEFAULTS.communityReports },
   cluster: { ...DEFAULTS.cluster },
   prompts: { ...DEFAULTS.prompts },
+  queryPrompts: { ...DEFAULTS.queryPrompts },
   advancedOverride: "",
 };
 
@@ -24,33 +23,27 @@ describe("buildSettings", () => {
     expect(buildSettings(s)).toEqual({ chunking: { size: 300 } });
   });
 
-  it("emits llm non-empty fields only", () => {
-    const s = { ...base, llm: { ...DEFAULTS.llm, provider: "deepseek", model: "deepseek-chat", apiKeyEnv: "DEEPSEEK_API_KEY" } };
-    expect(buildSettings(s)).toEqual({
-      llm: { model_provider: "deepseek", model: "deepseek-chat", api_key_env: "DEEPSEEK_API_KEY" },
-    });
+  it("never emits llm/embedding (providers live in profiles, not KB content)", () => {
+    const out = buildSettings(base);
+    expect(out.llm).toBeUndefined();
+    expect(out.embedding).toBeUndefined();
+    // community_reports holds only max_length; at default it is omitted entirely
+    expect(out.community_reports).toBeUndefined();
   });
 
-  it("omits embedding when disabled", () => {
-    const s = { ...base, embedding: { ...DEFAULTS.embedding, enabled: false, provider: "ollama" } };
-    expect(buildSettings(s)).toEqual({});
+  it("emits community_reports.max_length when non-default", () => {
+    const s = { ...base, communityReports: { maxLength: 1500 } };
+    expect(buildSettings(s)).toEqual({ community_reports: { max_length: 1500 } });
   });
 
-  it("emits embedding when enabled + filled", () => {
-    const s = { ...base, embedding: { enabled: true, provider: "ollama", model: "nomic-embed-text", apiBase: "http://localhost:11434", apiKey: "ollama", apiKeyEnv: "", apiKeyEnvs: "", apiVersion: "" } };
-    expect(buildSettings(s)).toEqual({
-      embedding: { model_provider: "ollama", model: "nomic-embed-text", api_base: "http://localhost:11434", api_key: "ollama" },
-    });
-  });
-
-  it("emits community_reports.structured_output when false (default true)", () => {
-    const s = { ...base, communityReports: { ...DEFAULTS.communityReports, structuredOutput: false } };
-    expect(buildSettings(s)).toEqual({ community_reports: { structured_output: false } });
+  it("emits concurrency when non-default", () => {
+    const s = { ...base, concurrency: 8 };
+    expect(buildSettings(s)).toEqual({ concurrency: 8 });
   });
 
   it("advanced override replaces everything", () => {
-    const s = { ...base, advancedOverride: '{"llm":{"model":"x"}}' };
-    expect(buildSettings(s)).toEqual({ llm: { model: "x" } });
+    const s = { ...base, advancedOverride: '{"chunking":{"size":200}}' };
+    expect(buildSettings(s)).toEqual({ chunking: { size: 200 } });
   });
 
   it("advanced override invalid JSON throws", () => {
@@ -80,10 +73,9 @@ describe("buildSettings", () => {
 });
 
 describe("parseSettings", () => {
-  it("parseSettings round-trips llm + chunking + prompt", () => {
+  it("round-trips chunking + prompt", () => {
     const s = parseSettings(
       {
-        llm: { model_provider: "deepseek", model: "deepseek-chat", api_key_env: "DEEPSEEK_API_KEY" },
         chunking: { size: 300 },
         extract_graph: { prompt: "MY-PROMPT" },
       },
@@ -92,22 +84,27 @@ describe("parseSettings", () => {
     );
     expect(s.method).toBe("fast");
     expect(s.minRatio).toBe("0.8");
-    expect(s.llm).toMatchObject({ provider: "deepseek", model: "deepseek-chat", apiKeyEnv: "DEEPSEEK_API_KEY" });
     expect(s.chunking.size).toBe(300);
     expect(s.prompts.extract).toBe("MY-PROMPT");
     // defaults for absent
     expect(s.cluster.maxClusterSize).toBe(10);
-    expect(s.embedding.enabled).toBe(false);
   });
 
-  it("parseSettings entity_types list -> csv + embedding enabled", () => {
+  it("entity_types list -> csv", () => {
     const s = parseSettings(
-      { extract_graph: { entity_types: ["ORG", "PERSON"] }, embedding: { model_provider: "ollama", model: "nomic-embed-text" } },
+      { extract_graph: { entity_types: ["ORG", "PERSON"] } },
       "standard",
       "1.0",
     );
     expect(s.extractGraph.entityTypes).toBe("ORG, PERSON");
-    expect(s.embedding.enabled).toBe(true);
-    expect(s.embedding.model).toBe("nomic-embed-text");
+  });
+
+  it("ignores llm/embedding/structured_output (not KB content)", () => {
+    const s = parseSettings(
+      { llm: { model: "x" }, embedding: { model: "y" }, community_reports: { structured_output: false } },
+      "standard",
+      "1.0",
+    );
+    expect(s.communityReports.maxLength).toBe(DEFAULTS.communityReports.maxLength);
   });
 });

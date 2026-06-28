@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { NavLink, Outlet, useParams } from "react-router-dom";
 import { getKb } from "../api/client";
-import type { KbOut } from "../api/types";
+import type { KbDetail } from "../api/types";
 import { KbContext } from "./kb-context";
 import { cn } from "../lib/cn";
 import { Badge, Button } from "../components/ui";
@@ -21,7 +21,7 @@ const TABS = [
 export default function KbLayout() {
   const { id } = useParams();
   const kbId = Number(id);
-  const [kb, setKb] = useState<KbOut | null>(null);
+  const [kb, setKb] = useState<KbDetail | null>(null);
   const [notFound, setNotFound] = useState(false);
 
   const reload = useCallback(() => {

@@ -34,7 +34,7 @@ afterAll(() => server.close());
 test("listKbs + createKb + retryUnit", async () => {
   const kbs = await listKbs();
   expect(kbs[0].name).toBe("kb1");
-  const kb = await createKb({ name: "kb2" });
+  const kb = await createKb({ name: "kb2", llm_profile_id: 1 });
   expect(kb.id).toBe(2);
   expect((await retryUnit(5)).ok).toBe(true);
 });

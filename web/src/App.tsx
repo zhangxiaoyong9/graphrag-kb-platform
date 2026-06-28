@@ -22,6 +22,7 @@ import QueryTestPage from "./pages/QueryTestPage";
 import ChatPage from "./pages/ChatPage";
 import AnalyticsPage from "./pages/AnalyticsPage";
 import SettingsPage from "./pages/SettingsPage";
+import ProviderProfilesPage from "./pages/ProviderProfilesPage";
 import ApiKeysPage from "./pages/ApiKeysPage";
 
 export default function App() {
@@ -56,6 +57,7 @@ export default function App() {
         <Route path="/chat" element={<ChatPage />} />
         <Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/provider-profiles" element={<ProviderProfilesPage />} />
         <Route path="/api-keys" element={<ApiKeysPage />} />
 
         <Route path="/demo" element={<DemoPage />} />

@@ -32,7 +32,41 @@ export interface UnitProgress { pending: number; running: number; succeeded: num
 export interface StepOut { id: number; name: string; ordinal: number; kind: string; status: StepStatus; progress: UnitProgress | null }
 export interface JobOut { id: number; status: JobStatus; steps: StepOut[] }
 export interface UnitOut { id: number; subject_id: string; status: UnitStatus; error: string | null; llm_raw_output: string | null; needs_reconsolidation: boolean; input_text: string | null }
-export interface KbCreate { name: string; method?: string; settings_yaml?: string; min_unit_success_ratio?: number }
+export interface ProviderProfile {
+  id: number;
+  name: string;
+  kind: "llm" | "embedding";
+  provider: string;
+  model: string;
+  api_base: string | null;
+  api_version: string | null;
+  structured_output: boolean;
+  api_keys_count: number;
+}
+export interface ProfileCreate {
+  name: string;
+  kind: "llm" | "embedding";
+  provider: string;
+  model: string;
+  api_base?: string | null;
+  api_version?: string | null;
+  api_keys: string[];
+  structured_output: boolean;
+}
+export interface ProfileRef { id: number; name: string; provider: string; model: string }
+export interface KbCreate {
+  name: string;
+  method?: string;
+  settings_yaml?: string;
+  llm_profile_id: number;
+  embedding_profile_id?: number | null;
+  min_unit_success_ratio?: number;
+}
+export interface KbDetail extends KbOut {
+  settings: Record<string, unknown>;
+  llm_profile: ProfileRef | null;
+  embedding_profile: ProfileRef | null;
+}
 export interface DocumentCreate { title: string; text: string }
 
 export interface SourceRef { kind: string; name: string; text: string }

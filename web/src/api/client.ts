@@ -1,4 +1,4 @@
-import type { KbOut, DocumentOut, DocumentDetail, EvidenceDetail, JobOut, StepOut, UnitOut, KbCreate, DocumentCreate, QueryResult, JobCost, KbCost, GraphData, Health } from "./types";
+import type { KbOut, KbDetail, DocumentOut, DocumentDetail, EvidenceDetail, JobOut, StepOut, UnitOut, KbCreate, DocumentCreate, QueryResult, JobCost, KbCost, GraphData, Health, ProviderProfile, ProfileCreate } from "./types";
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(path, { headers: { "Content-Type": "application/json" }, ...init });
@@ -8,9 +8,16 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const listKbs = () => req<KbOut[]>("/kbs");
 export const createKb = (b: KbCreate) => req<KbOut>("/kbs", { method: "POST", body: JSON.stringify(b) });
-export const getKb = (id: number) => req<KbOut>(`/kbs/${id}`);
-export const updateKb = (id: number, body: { name: string; method: string; settings_yaml: string }) =>
+export const getKb = (id: number) => req<KbDetail>(`/kbs/${id}`);
+export const updateKb = (id: number, body: { name: string; method: string; settings_yaml: string; llm_profile_id: number; embedding_profile_id?: number | null }) =>
   req<KbOut>(`/kbs/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+export const listProfiles = (kind?: "llm" | "embedding") =>
+  req<ProviderProfile[]>(`/provider-profiles${kind ? `?kind=${kind}` : ""}`);
+export const createProfile = (b: ProfileCreate) =>
+  req<ProviderProfile>("/provider-profiles", { method: "POST", body: JSON.stringify(b) });
+export const updateProfile = (id: number, b: Partial<ProfileCreate>) =>
+  req<ProviderProfile>(`/provider-profiles/${id}`, { method: "PATCH", body: JSON.stringify(b) });
+export const deleteProfile = (id: number) => req<void>(`/provider-profiles/${id}`, { method: "DELETE" });
 export const listDocuments = (kbId: number) => req<DocumentOut[]>(`/kbs/${kbId}/documents`);
 export const getDocumentDetail = (kbId: number, docId: number) => req<DocumentDetail>(`/kbs/${kbId}/documents/${docId}`);
 export const getDocumentEvidence = (kbId: number, docId: number, citationId: string) =>

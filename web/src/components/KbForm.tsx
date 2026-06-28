@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
-import { createKb, getPromptDefaults, updateKb, type PromptDefaults } from "../api/client";
-import type { KbOut } from "../api/types";
+import {
+  createKb,
+  getPromptDefaults,
+  listProfiles,
+  updateKb,
+  type PromptDefaults,
+} from "../api/client";
+import type { KbDetail, KbOut, ProviderProfile } from "../api/types";
 import { Button, Field } from "./ui";
 import { IconPlus } from "./icons";
 import {
@@ -10,16 +16,20 @@ import {
   type KbFormState,
 } from "../lib/kb-settings";
 
-/** Sectioned, structured KB config form. Builds settings_yaml from fields so
- * users never hand-write JSON. The 高级 panel exposes a read-only preview and
- * an optional raw-settings override textarea (non-empty replaces form output). */
+/** Sectioned KB config form. Provider connection + keys are picked from
+ * reusable provider profiles (managed on the Provider 配置 page); this form
+ * captures only the KB's name, method, and content/quality params, building
+ * settings_yaml from structured fields so users never hand-write JSON.
+ *
+ * The 高级 panel exposes a read-only preview and an optional raw-settings
+ * override textarea (non-empty replaces form output). */
 export default function KbForm({
   onCreated,
   kb,
   onSaved,
 }: {
   onCreated?: (kb: KbOut) => void;
-  kb?: KbOut;
+  kb?: KbDetail;
   onSaved?: () => void;
 }) {
   const isEdit = !!kb;
@@ -32,25 +42,37 @@ export default function KbForm({
         )
       : {
           ...DEFAULTS,
-          llm: { ...DEFAULTS.llm },
-          embedding: { ...DEFAULTS.embedding },
           chunking: { ...DEFAULTS.chunking },
           extractGraph: { ...DEFAULTS.extractGraph },
           summarize: { ...DEFAULTS.summarize },
           communityReports: { ...DEFAULTS.communityReports },
           cluster: { ...DEFAULTS.cluster },
-          advancedOverride: "",
+          prompts: { ...DEFAULTS.prompts },
+          queryPrompts: { ...DEFAULTS.queryPrompts },
         },
   );
   const [name, setName] = useState(kb?.name ?? "");
+  const [llmProfileId, setLlmProfileId] = useState<number | null>(
+    kb?.llm_profile?.id ?? null,
+  );
+  const [embeddingProfileId, setEmbeddingProfileId] = useState<number | null>(
+    kb?.embedding_profile?.id ?? null,
+  );
+  const [llmProfiles, setLlmProfiles] = useState<ProviderProfile[]>([]);
+  const [embProfiles, setEmbProfiles] = useState<ProviderProfile[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [defaults, setDefaults] = useState<PromptDefaults | null>(null);
   const [defaultsError, setDefaultsError] = useState(false);
   const [showDef, setShowDef] = useState<Record<string, boolean>>({
-    extract: false, summarize: false, report: false,
-    q_localSystem: false, q_globalMap: false, q_globalReduce: false, q_basicSystem: false,
+    extract: false,
+    summarize: false,
+    report: false,
+    q_localSystem: false,
+    q_globalMap: false,
+    q_globalReduce: false,
+    q_basicSystem: false,
   });
 
   useEffect(() => {
@@ -63,6 +85,12 @@ export default function KbForm({
       .catch(() => {
         if (!cancelled) setDefaultsError(true);
       });
+    listProfiles("llm")
+      .then(setLlmProfiles)
+      .catch(() => {});
+    listProfiles("embedding")
+      .then(setEmbProfiles)
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -73,19 +101,28 @@ export default function KbForm({
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (llmProfileId === null) return;
     setBusy(true);
     setError(null);
     try {
       const settingsObj = buildSettings(s); // throws on bad advancedOverride
       const settings_yaml = JSON.stringify(settingsObj);
       if (isEdit && kb) {
-        await updateKb(kb.id, { name, method: s.method, settings_yaml });
+        await updateKb(kb.id, {
+          name,
+          method: s.method,
+          settings_yaml,
+          llm_profile_id: llmProfileId,
+          embedding_profile_id: embeddingProfileId,
+        });
         onSaved?.();
       } else {
         const created = await createKb({
           name,
           method: s.method,
           settings_yaml,
+          llm_profile_id: llmProfileId,
+          embedding_profile_id: embeddingProfileId,
           min_unit_success_ratio: parseFloat(s.minRatio),
         });
         onCreated?.(created);
@@ -144,146 +181,44 @@ export default function KbForm({
         </Field>
       </div>
 
-      {/* LLM 模型 */}
+      {/* Provider 配置 */}
       <details open>
         <summary className="text-[13px] font-medium text-body cursor-pointer select-none">
-          LLM 模型
+          Provider 配置
         </summary>
         <div className="mt-3 grid grid-cols-2 gap-3">
-          <Field label="provider" hint="deepseek / openai / ollama">
-            <input
-              className="input"
-              value={s.llm.provider}
-              placeholder="deepseek"
-              onChange={(e) => set("llm", { ...s.llm, provider: e.target.value })}
-            />
-          </Field>
-          <Field label="model">
-            <input
-              className="input"
-              value={s.llm.model}
-              placeholder="deepseek-chat"
-              onChange={(e) => set("llm", { ...s.llm, model: e.target.value })}
-            />
-          </Field>
-          <Field label="api_base" hint="自定义端点（可选）">
-            <input
-              className="input"
-              value={s.llm.apiBase}
-              placeholder="https://api.deepseek.com"
-              onChange={(e) => set("llm", { ...s.llm, apiBase: e.target.value })}
-            />
-          </Field>
-          <Field label="api_key_env" hint="密钥环境变量名（推荐）">
-            <input
-              className="input"
-              value={s.llm.apiKeyEnv}
-              placeholder="DEEPSEEK_API_KEY"
-              onChange={(e) => set("llm", { ...s.llm, apiKeyEnv: e.target.value })}
-            />
-          </Field>
-          <Field label="api_key" hint="明文（不推荐，会入库）">
-            <input
-              className="input"
-              value={s.llm.apiKey}
-              onChange={(e) => set("llm", { ...s.llm, apiKey: e.target.value })}
-            />
-          </Field>
-          <Field label="api_version" hint="仅 Azure">
-            <input
-              className="input"
-              value={s.llm.apiVersion}
-              onChange={(e) => set("llm", { ...s.llm, apiVersion: e.target.value })}
-            />
-          </Field>
-          <Field label="api_key_envs" hint="多 key 负载均衡（逗号分隔环境变量名）">
-            <input
-              className="input"
-              value={s.llm.apiKeyEnvs}
-              placeholder="DEEPSEEK_API_KEY_1, DEEPSEEK_API_KEY_2"
-              onChange={(e) => set("llm", { ...s.llm, apiKeyEnvs: e.target.value })}
-            />
-          </Field>
-        </div>
-      </details>
-
-      {/* Embedding 模型 */}
-      <details>
-        <summary className="text-[13px] font-medium text-body cursor-pointer select-none">
-          Embedding 模型
-        </summary>
-        <div className="mt-3 space-y-3">
-          <label className="flex items-center gap-2 text-[13px]">
-            <input
-              type="checkbox"
-              checked={s.embedding.enabled}
+          <Field label="LLM 配置" hint="在 Provider 配置页新建">
+            <select
+              className="select"
+              value={llmProfileId ?? ""}
               onChange={(e) =>
-                set("embedding", { ...s.embedding, enabled: e.target.checked })
+                setLlmProfileId(e.target.value ? Number(e.target.value) : null)
               }
-            />{" "}
-            启用嵌入（local/basic/drift 需要）
-          </label>
-          {s.embedding.enabled && (
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="provider">
-                <input
-                  className="input"
-                  value={s.embedding.provider}
-                  placeholder="ollama"
-                  onChange={(e) =>
-                    set("embedding", { ...s.embedding, provider: e.target.value })
-                  }
-                />
-              </Field>
-              <Field label="model">
-                <input
-                  className="input"
-                  value={s.embedding.model}
-                  placeholder="nomic-embed-text"
-                  onChange={(e) =>
-                    set("embedding", { ...s.embedding, model: e.target.value })
-                  }
-                />
-              </Field>
-              <Field label="api_base">
-                <input
-                  className="input"
-                  value={s.embedding.apiBase}
-                  placeholder="http://localhost:11434"
-                  onChange={(e) =>
-                    set("embedding", { ...s.embedding, apiBase: e.target.value })
-                  }
-                />
-              </Field>
-              <Field label="api_key_env">
-                <input
-                  className="input"
-                  value={s.embedding.apiKeyEnv}
-                  onChange={(e) =>
-                    set("embedding", { ...s.embedding, apiKeyEnv: e.target.value })
-                  }
-                />
-              </Field>
-              <Field label="api_key">
-                <input
-                  className="input"
-                  value={s.embedding.apiKey}
-                  onChange={(e) =>
-                    set("embedding", { ...s.embedding, apiKey: e.target.value })
-                  }
-                />
-              </Field>
-              <Field label="api_version">
-                <input
-                  className="input"
-                  value={s.embedding.apiVersion}
-                  onChange={(e) =>
-                    set("embedding", { ...s.embedding, apiVersion: e.target.value })
-                  }
-                />
-              </Field>
-            </div>
-          )}
+            >
+              <option value="">请选择 LLM profile…</option>
+              {llmProfiles.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} · {p.model}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Embedding 配置" hint="local/basic/drift 需要；可留空">
+            <select
+              className="select"
+              value={embeddingProfileId ?? ""}
+              onChange={(e) =>
+                setEmbeddingProfileId(e.target.value ? Number(e.target.value) : null)
+              }
+            >
+              <option value="">无</option>
+              {embProfiles.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} · {p.model}
+                </option>
+              ))}
+            </select>
+          </Field>
         </div>
       </details>
 
@@ -404,21 +339,6 @@ export default function KbForm({
           社区报告 Community Reports
         </summary>
         <div className="mt-3 grid grid-cols-2 gap-3">
-          <Field label="structured_output" hint="DeepSeek 关闭">
-            <label className="flex items-center gap-2 text-[13px]">
-              <input
-                type="checkbox"
-                checked={s.communityReports.structuredOutput}
-                onChange={(e) =>
-                  set("communityReports", {
-                    ...s.communityReports,
-                    structuredOutput: e.target.checked,
-                  })
-                }
-              />{" "}
-              结构化输出（json_schema）
-            </label>
-          </Field>
           <Field label="max_length">
             <input
               className="input"
@@ -432,6 +352,9 @@ export default function KbForm({
               }
             />
           </Field>
+          <p className="self-end text-[12px] text-muted">
+            structured_output 由所选 LLM profile 决定（在 Provider 配置页设置）。
+          </p>
         </div>
       </details>
 
@@ -630,7 +553,7 @@ export default function KbForm({
                 className="textarea h-24 font-mono text-[12px]"
                 value={s.advancedOverride}
                 onChange={(e) => set("advancedOverride", e.target.value)}
-                placeholder='{"llm":{"model_provider":"..."}}'
+                placeholder='{"chunking":{"size":1200}}'
               />
             </Field>
           </div>
@@ -640,9 +563,20 @@ export default function KbForm({
       {error && (
         <p className="text-[13px] text-danger">{isEdit ? "保存失败" : "创建失败"}：{error}</p>
       )}
-      <Button type="submit" variant="primary" disabled={busy} className="w-full">
+      <Button
+        type="submit"
+        variant="primary"
+        disabled={busy || llmProfileId === null}
+        className="w-full"
+      >
         <IconPlus width={16} height={16} />
-        {busy ? (isEdit ? "保存中…" : "创建中…") : isEdit ? "保存修改" : "创建知识库"}
+        {busy
+          ? isEdit
+            ? "保存中…"
+            : "创建中…"
+          : isEdit
+            ? "保存修改"
+            : "创建知识库"}
       </Button>
     </form>
   );

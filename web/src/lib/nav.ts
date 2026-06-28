@@ -59,6 +59,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: "/system", label: "系统状态", icon: IconPulse },
       { to: "/settings", label: "系统设置", icon: IconGear },
+      { to: "/provider-profiles", label: "Provider 配置", icon: IconKey },
       { to: "/api-keys", label: "API Keys", icon: IconKey },
     ],
   },
