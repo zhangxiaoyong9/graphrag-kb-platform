@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from dataclasses import dataclass
 
 import pandas as pd
 
@@ -530,3 +531,54 @@ def build_adapter_for_kb(kb, repo):
     import json
 
     return build_adapter_from_settings(json.dumps(assemble_kb_settings(kb, repo)), kb.data_root)
+
+
+@dataclass
+class ChatTurn:
+    """Result of a one-shot chat completion (text + token usage)."""
+
+    text: str
+    prompt_tokens: int
+    output_tokens: int
+
+
+def build_chat_complete(settings: dict):
+    """Build an ``async (system, user) -> ChatTurn`` callable from resolved KB settings.
+
+    This is the ONE place the conversation layer's rewriter needs graphrag-llm:
+    it constructs a completion from the KB's resolved ``llm`` block (the same
+    credential path as the indexing/query engines) and returns a thin callable.
+    Callers (the conversation package) never import graphrag. Raises ValueError
+    when the settings carry no ``llm.api_keys``.
+    """
+    from graphrag_llm.completion import create_completion
+    from graphrag_llm.config import ModelConfig
+
+    llm = (settings or {}).get("llm") or {}
+    api_keys = list(llm.get("api_keys") or [])
+    if not api_keys:
+        raise ValueError("KB has no LLM API keys for the query rewriter.")
+    model_config = ModelConfig(
+        type=llm.get("type", "litellm"),
+        model_provider=llm.get("model_provider", "openai"),
+        model=llm.get("model", "gpt-4o-mini"),
+        api_base=llm.get("api_base"),
+        api_version=llm.get("api_version"),
+        api_key=api_keys[0],
+    )
+    completion = create_completion(model_config)
+
+    async def complete(system: str, user: str) -> ChatTurn:
+        resp = await completion.completion_async(
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        )
+        text = getattr(resp, "content", "") or ""
+        usage = getattr(resp, "usage", None)
+        pt = int(getattr(usage, "prompt_tokens", 0) or 0)
+        ct = int(getattr(usage, "completion_tokens", 0) or 0)
+        return ChatTurn(text=text, prompt_tokens=pt, output_tokens=ct)
+
+    return complete
