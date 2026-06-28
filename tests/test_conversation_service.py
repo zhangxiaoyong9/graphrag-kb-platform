@@ -1,0 +1,99 @@
+"""ConversationService: rewrite + retrieve + persist, above the QueryEngine."""
+from kb_platform.conversation.rewriter import FakeRewriter, RewriteResult
+from kb_platform.conversation.service import ConversationService
+from kb_platform.db.engine import create_engine, session_scope
+from kb_platform.db.models import Base, KnowledgeBase
+from kb_platform.db.repository import Repository
+from kb_platform.query.engine import FakeQueryEngine
+
+
+def _setup(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path}/s.db")
+    Base.metadata.create_all(engine)
+    repo = Repository(engine)
+    with session_scope(engine) as s:
+        s.add(KnowledgeBase(name="kb1", method="standard", settings_json="{}", data_root=str(tmp_path)))
+    return repo
+
+
+class _RecordingRewriter:
+    """Records calls; returns a deterministic standalone so we can assert the
+    engine received the rewritten query (FakeQueryEngine echoes the query)."""
+
+    def __init__(self):
+        self.calls = []
+
+    async def rewrite(self, message, history):
+        self.calls.append((message, [h.content for h in history]))
+        return RewriteResult(standalone=f"REWRITTEN::{message}", prompt_tokens=5, output_tokens=2)
+
+
+async def test_first_turn_passes_through_no_rewrite(tmp_path):
+    repo = _setup(tmp_path)
+    cid = repo.create_conversation(1).id
+
+    class Boom:
+        async def rewrite(self, m, h):
+            raise AssertionError("rewriter must not run on the first turn")
+
+    svc = ConversationService(repo, FakeQueryEngine(), Boom(), data_root=".")
+    msg = await svc.send(cid, "What does Acme do?", None)
+    assert msg is not None and msg.role == "assistant"
+    assert "What does Acme do?" in msg.content  # FakeQueryEngine echoes the query
+    assert msg.rewritten_query is None and msg.rewrite_fell_back is False
+    rows = repo.get_messages(cid)
+    assert [r.role for r in rows] == ["user", "assistant"]
+
+
+async def test_follow_up_rewrites_and_carries_method_default(tmp_path):
+    repo = _setup(tmp_path)
+    cid = repo.create_conversation(1).id
+    rw = _RecordingRewriter()
+    svc = ConversationService(repo, FakeQueryEngine(), rw, data_root=".")
+    await svc.send(cid, "What does Acme do?", "global")
+    msg2 = await svc.send(cid, "who is the CEO?", None)
+    assert len(rw.calls) == 1 and rw.calls[0][0] == "who is the CEO?"
+    assert msg2.rewritten_query == "REWRITTEN::who is the CEO?"
+    assert "REWRITTEN::who is the CEO?" in msg2.content  # reached the engine
+    assert msg2.method == "global"  # defaulted from the prior assistant turn
+    assert msg2.prompt_tokens is not None and msg2.prompt_tokens >= 5  # rewrite tokens merged
+
+
+async def test_rewrite_failure_falls_back(tmp_path):
+    repo = _setup(tmp_path)
+    cid = repo.create_conversation(1).id
+
+    class Fail:
+        async def rewrite(self, m, h):
+            raise RuntimeError("boom")
+
+    svc = ConversationService(repo, FakeQueryEngine(), Fail(), data_root=".")
+    await svc.send(cid, "first", "local")
+    msg2 = await svc.send(cid, "next", None)
+    assert msg2.rewrite_fell_back is True
+    assert msg2.rewritten_query is None
+    assert "next" in msg2.content  # engine answered using the raw message
+
+
+async def test_skips_rewrite_when_rewriter_is_none(tmp_path):
+    repo = _setup(tmp_path)
+    cid = repo.create_conversation(1).id
+    svc = ConversationService(repo, FakeQueryEngine(), None, data_root=".")
+    await svc.send(cid, "first", "local")
+    msg2 = await svc.send(cid, "followup", None)
+    assert msg2.rewritten_query is None and msg2.rewrite_fell_back is False
+    assert "followup" in msg2.content
+
+
+async def test_missing_conversation_returns_none(tmp_path):
+    repo = _setup(tmp_path)
+    svc = ConversationService(repo, FakeQueryEngine(), FakeRewriter(), data_root=".")
+    assert await svc.send(999, "x", None) is None
+
+
+async def test_auto_title_from_first_message(tmp_path):
+    repo = _setup(tmp_path)
+    cid = repo.create_conversation(1).id
+    svc = ConversationService(repo, FakeQueryEngine(), FakeRewriter(), data_root=".")
+    await svc.send(cid, "Tell me everything about the Acme corporation", None)
+    assert repo.get_conversation(cid).title.startswith("Tell me everything about the Acme")
