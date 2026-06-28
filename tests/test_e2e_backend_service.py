@@ -11,6 +11,7 @@ from kb_platform.db.models import Base
 from kb_platform.db.repository import Repository
 from kb_platform.graph.adapter import FakeGraphAdapter
 from kb_platform.worker import run_worker_once
+from conftest import seed_profile
 
 
 @pytest.mark.asyncio
@@ -19,8 +20,9 @@ async def test_full_backend_service_with_fake_adapter(tmp_path):
     Base.metadata.create_all(engine)
     repo = Repository(engine)
     client = TestClient(create_app(repo, data_root=str(tmp_path)))
+    _pid = seed_profile(client)
 
-    r = client.post("/kbs", json={"name": "kb1", "method": "standard", "settings_yaml": "{}"})
+    r = client.post("/kbs", json={"name": "kb1", "method": "standard", "settings_yaml": "{}", "llm_profile_id": _pid})
     assert r.status_code == 201
     r = client.post(
         "/kbs/1/documents",

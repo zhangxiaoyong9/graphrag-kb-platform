@@ -5,6 +5,7 @@ from kb_platform.api.app import create_app
 from kb_platform.db.engine import create_engine
 from kb_platform.db.models import Base
 from kb_platform.db.repository import Repository
+from conftest import seed_profile
 
 
 @pytest.fixture()
@@ -12,7 +13,8 @@ def client(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path}/t.db")
     Base.metadata.create_all(engine)
     c = TestClient(create_app(Repository(engine), data_root=str(tmp_path)))
-    c.post("/kbs", json={"name": "kb1", "method": "standard", "settings_yaml": "{}"})
+    seed_profile(c)
+    c.post("/kbs", json={"name": "kb1", "method": "standard", "settings_yaml": "{}", "llm_profile_id": 1})
     c.post(
         "/kbs/1/documents",
         json={"title": "d", "text": "ACME Org Bob Foo Bar Baz " * 200},

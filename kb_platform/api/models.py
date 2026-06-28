@@ -20,11 +20,13 @@ class KbCreate(BaseModel):
     name: str
     method: str = "standard"
     settings_yaml: str | None = None
+    llm_profile_id: int
+    embedding_profile_id: int | None = None
     min_unit_success_ratio: float | None = None
 
 
 class KbUpdate(BaseModel):
-    """PATCH /kbs/{id} body — full replace of name/method/settings.
+    """PATCH /kbs/{id} body — full replace of name/method/settings/profiles.
 
     Note: min_unit_success_ratio is NOT here — it's a per-job trigger param,
     not persisted on the KB (KnowledgeBase has no such column).
@@ -33,6 +35,8 @@ class KbUpdate(BaseModel):
     name: str
     method: str = "standard"
     settings_yaml: str | None = None
+    llm_profile_id: int
+    embedding_profile_id: int | None = None
 
 
 class KbOut(BaseModel):
@@ -41,10 +45,19 @@ class KbOut(BaseModel):
     method: str
 
 
+class ProfileRef(BaseModel):
+    id: int
+    name: str
+    provider: str
+    model: str
+
+
 class KbDetailOut(KbOut):
-    """GET /kbs/{id}: adds the (redacted) parsed settings."""
+    """GET /kbs/{id}: adds the (redacted) parsed settings + resolved profiles."""
 
     settings: dict
+    llm_profile: ProfileRef | None = None
+    embedding_profile: ProfileRef | None = None
 
 
 # --- Document ------------------------------------------------------------

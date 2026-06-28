@@ -12,20 +12,23 @@ from kb_platform.api.app import create_app
 from kb_platform.db.engine import create_engine
 from kb_platform.db.models import Base
 from kb_platform.db.repository import Repository
+from conftest import seed_profile
 
 
 @pytest.fixture()
 def client(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path}/t.db")
     Base.metadata.create_all(engine)
-    return TestClient(create_app(Repository(engine), data_root=str(tmp_path)))
+    c = TestClient(create_app(Repository(engine), data_root=str(tmp_path)))
+    seed_profile(c)
+    return c
 
 
 def _seed(client, tmp_path):
     """Seed a KB with entities (varying degree), relationships, communities."""
     r = client.post(
         "/kbs",
-        json={"name": "kb1", "method": "standard", "settings_yaml": "{}"},
+        json={"name": "kb1", "method": "standard", "settings_yaml": "{}", "llm_profile_id": 1},
     )
     assert r.status_code == 201, r.text
     kb_id = r.json()["id"]
@@ -131,7 +134,7 @@ def test_empty_graph_when_no_parquet(client, tmp_path):
     """A KB with no entities.parquet returns an empty graph, not a crash."""
     r = client.post(
         "/kbs",
-        json={"name": "empty", "method": "standard", "settings_yaml": "{}"},
+        json={"name": "empty", "method": "standard", "settings_yaml": "{}", "llm_profile_id": 1},
     )
     kb_id = r.json()["id"]
     out = client.get(f"/kbs/{kb_id}/graph").json()

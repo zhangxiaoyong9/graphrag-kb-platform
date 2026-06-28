@@ -24,6 +24,7 @@ from kb_platform.api.models import (
     KbDetailOut,
     KbOut,
     KbUpdate,
+    ProfileRef,
 )
 from kb_platform.db.engine import session_scope
 from kb_platform.db.models import KnowledgeBase
@@ -35,6 +36,20 @@ router = APIRouter()
 def _parse_settings(settings_yaml: str | None) -> str:
     """Validate the incoming YAML-as-string settings; return canonical JSON string."""
     return json.dumps(json.loads(settings_yaml or "{}"))
+
+
+def _require_profile(repo, pid: int, kind: str):
+    p = repo.get_profile(pid)
+    if p is None:
+        raise HTTPException(400, f"unknown {kind} profile id {pid}")
+    return p
+
+
+def _profileref(repo, pid: int | None) -> ProfileRef | None:
+    if pid is None:
+        return None
+    p = repo.get_profile(pid)
+    return ProfileRef(id=p.id, name=p.name, provider=p.provider, model=p.model) if p else None
 
 
 def _snippet(text: str, limit: int = 220) -> str:
@@ -101,6 +116,9 @@ def _redact(settings_json: str | None) -> dict:
 @router.post("/kbs", response_model=KbOut, status_code=201)
 def create_kb(payload: KbCreate, request: Request) -> KbOut:
     repo = request.app.state.repo
+    _require_profile(repo, payload.llm_profile_id, "llm")
+    if payload.embedding_profile_id is not None:
+        _require_profile(repo, payload.embedding_profile_id, "embedding")
     settings = _parse_settings(payload.settings_yaml)
     with session_scope(repo.engine) as s:
         kb = KnowledgeBase(
@@ -108,6 +126,8 @@ def create_kb(payload: KbCreate, request: Request) -> KbOut:
             method=payload.method,
             settings_json=settings,
             data_root=request.app.state.data_root,
+            llm_profile_id=payload.llm_profile_id,
+            embedding_profile_id=payload.embedding_profile_id,
         )
         s.add(kb)
         s.flush()
@@ -131,20 +151,33 @@ def get_kb(kb_id: int, request: Request) -> KbDetailOut:
         if not kb:
             raise HTTPException(404)
         return KbDetailOut(
-            id=kb.id, name=kb.name, method=kb.method, settings=_redact(kb.settings_json)
+            id=kb.id, name=kb.name, method=kb.method,
+            settings=_redact(kb.settings_json),
+            llm_profile=_profileref(repo, kb.llm_profile_id),
+            embedding_profile=_profileref(repo, kb.embedding_profile_id),
         )
 
 
 @router.patch("/kbs/{kb_id}", response_model=KbDetailOut)
 def update_kb(kb_id: int, payload: KbUpdate, request: Request) -> KbDetailOut:
-    """Update a KB's name/method/settings (full replace)."""
+    """Update a KB's name/method/settings/profiles (full replace)."""
     repo = request.app.state.repo
+    _require_profile(repo, payload.llm_profile_id, "llm")
+    if payload.embedding_profile_id is not None:
+        _require_profile(repo, payload.embedding_profile_id, "embedding")
     settings = _parse_settings(payload.settings_yaml)
-    kb = repo.update_kb(kb_id, name=payload.name, method=payload.method, settings_json=settings)
+    kb = repo.update_kb(
+        kb_id, name=payload.name, method=payload.method, settings_json=settings,
+        llm_profile_id=payload.llm_profile_id,
+        embedding_profile_id=payload.embedding_profile_id,
+    )
     if kb is None:
         raise HTTPException(404)
     return KbDetailOut(
-        id=kb.id, name=kb.name, method=kb.method, settings=_redact(kb.settings_json)
+        id=kb.id, name=kb.name, method=kb.method,
+        settings=_redact(kb.settings_json),
+        llm_profile=_profileref(repo, kb.llm_profile_id),
+        embedding_profile=_profileref(repo, kb.embedding_profile_id),
     )
 
 
