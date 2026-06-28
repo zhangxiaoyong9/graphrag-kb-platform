@@ -166,7 +166,7 @@ class Orchestrator:
 
             incremental.load_update_documents(self.repo, self.adapter, step)
         elif step.name == "update_clean_state":
-            pass  # MVP:空操作(state 合并留后续)
+            atomic_steps.update_clean_state(self.repo, self.adapter, step)
         elif step.name == "create_base_text_units":
             pass  # MVP:chunks already created by load_update_documents
         elif step.name == "generate_text_embeddings":
@@ -181,8 +181,6 @@ class Orchestrator:
         self.repo.set_step_status(step.id, StepStatus.SUCCEEDED)
 
     async def _chunk_documents(self, step) -> None:
-        import pandas as pd
-
         from kb_platform.db.engine import session_scope
         from kb_platform.db.models import KnowledgeBase
 
@@ -207,14 +205,8 @@ class Orchestrator:
             kb = s.scalar(select(KnowledgeBase).where(KnowledgeBase.id == job.kb_id))
             data_root = kb.data_root
         if chunks:
-            pd.DataFrame(
-                [
-                    {
-                        "id": c.chunk_id,
-                        "text": c.text,
-                        "document_ids": [str(c.document_id)],
-                        "n_tokens": 0,
-                    }
-                    for c in chunks
-                ]
-            ).to_parquet(f"{data_root}/text_units.parquet")
+            from pathlib import Path
+
+            from kb_platform.engine.atomic_steps import write_text_units_parquet
+
+            write_text_units_parquet(Path(data_root), chunks)

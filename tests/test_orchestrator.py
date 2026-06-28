@@ -1,7 +1,7 @@
 import pytest
 
 from kb_platform.db.engine import create_engine, session_scope
-from kb_platform.db.models import Base, KnowledgeBase
+from kb_platform.db.models import Base, KnowledgeBase, Chunk
 from kb_platform.db.repository import Repository
 from kb_platform.engine.orchestrator import Orchestrator
 
@@ -106,3 +106,43 @@ def test_default_strategies_and_injection_independence():
     strat = {**base, "extract_graph": Spy()}
     assert isinstance(strat["extract_graph"], Spy)
     assert isinstance(base["extract_graph"], ExtractGraphStrategy)  # base untouched by the override
+
+
+def test_update_clean_state_rebuilds_text_units_from_chunk_table(tmp_path):
+    """update_clean_state rebuilds text_units.parquet from ALL DB chunks (old+new).
+
+    Mirrors the incremental gap: load_update_documents writes new chunk rows to
+    the DB but never touches text_units.parquet. update_clean_state must rebuild
+    it from the chunk table so the embeddings step covers the new chunks.
+    """
+    import pandas as pd
+
+    from kb_platform.db.engine import create_engine, session_scope
+    from kb_platform.db.enums import StepKind
+    from kb_platform.db.models import Base, KnowledgeBase
+    from kb_platform.db.repository import Repository
+    from kb_platform.engine import atomic_steps
+    from kb_platform.engine.spec import StepSpec
+
+    engine = create_engine(f"sqlite:///{tmp_path}/t.db")
+    Base.metadata.create_all(engine)
+    with session_scope(engine) as s:
+        s.add(KnowledgeBase(name="k", method="standard", settings_json="{}", data_root=str(tmp_path)))
+    repo = Repository(engine)
+    # Seed two documents + their chunks in the DB (as if old + new), but NO
+    # text_units.parquet yet. Documents are required because foreign_keys=ON.
+    d1 = repo.add_document(kb_id=1, title="old", text="old")
+    d2 = repo.add_document(kb_id=1, title="new", text="new")
+    repo.add_chunks([
+        Chunk(chunk_id="c-old", kb_id=1, document_id=d1.id, ordinal=0, text="old"),
+        Chunk(chunk_id="c-new", kb_id=1, document_id=d2.id, ordinal=0, text="new"),
+    ])
+    step = repo.create_job(
+        kb_id=1, type="incremental", specs=[StepSpec("update_clean_state", StepKind.ATOMIC)]
+    ).steps[0]
+
+    atomic_steps.update_clean_state(repo, adapter=object(), step=step)
+
+    tu = pd.read_parquet(tmp_path / "text_units.parquet")
+    assert len(tu) == 2
+    assert set(tu["id"]) == {"c-old", "c-new"}

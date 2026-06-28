@@ -58,6 +58,42 @@ def merge_delta(repo: Repository, adapter, step) -> None:
     relationships.to_parquet(root / "relationships.parquet")
 
 
+def write_text_units_parquet(data_root: Path, chunks) -> None:
+    """Write text_units.parquet from a list of Chunk rows.
+
+    Shared by the full path (``_chunk_documents``) and the incremental wrap-up
+    (``update_clean_state``) so both produce identical parquet. Columns mirror
+    graphrag's text_units layout: id (=chunk_id), text, document_ids, n_tokens.
+    No-op when there are no chunks (leaves any existing file untouched).
+    """
+    if not chunks:
+        return
+    pd.DataFrame(
+        [
+            {
+                "id": c.chunk_id,
+                "text": c.text,
+                "document_ids": [str(c.document_id)],
+                "n_tokens": 0,
+            }
+            for c in chunks
+        ]
+    ).to_parquet(data_root / "text_units.parquet")
+
+
+def update_clean_state(repo: Repository, adapter, step) -> None:  # noqa: ARG001
+    """Rebuild text_units.parquet from the chunk table (incremental wrap-up).
+
+    ``load_update_documents`` writes new chunk rows to the DB but never updates
+    text_units.parquet, so without this step the embeddings step would miss the
+    new chunks' text (local search over text units would silently skip new
+    documents). Rebuild from ALL chunks (old + new) right before embeddings.
+    """
+    root = _data_root(repo, step)
+    job = repo.get_job(step.job_id)
+    write_text_units_parquet(root, repo.get_chunks(job.kb_id))
+
+
 def _as_text(value) -> str:
     """Flatten a cell that may be a str, list, or numpy array of str (e.g. the
     merged ``description`` column, which ``merge_extractions`` aggregates as a
