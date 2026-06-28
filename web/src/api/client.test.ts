@@ -1,6 +1,6 @@
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
-import { createKb, deleteDocument, getDocumentDetail, getDocumentEvidence, listKbs, retryUnit, createConversation, sendMessage } from "./client";
+import { createKb, deleteConversation, deleteDocument, getDocumentDetail, getDocumentEvidence, listKbs, retryUnit, createConversation, sendMessage } from "./client";
 
 const server = setupServer(
   http.get("/kbs", () => HttpResponse.json([{ id: 1, name: "kb1", method: "standard" }])),
@@ -82,6 +82,13 @@ test("deleteDocument returns shrinkJobCreated false on 204", async () => {
     http.delete("/kbs/1/documents/9", () => new HttpResponse(null, { status: 204 })),
   );
   expect(await deleteDocument(1, 9)).toEqual({ shrinkJobCreated: false });
+});
+
+test("deleteConversation resolves on a 204 empty body", async () => {
+  server.use(
+    http.delete("/conversations/3", () => new HttpResponse(null, { status: 204 })),
+  );
+  await expect(deleteConversation(3)).resolves.toBeUndefined();
 });
 
 test("conversation client posts to the right paths", async () => {

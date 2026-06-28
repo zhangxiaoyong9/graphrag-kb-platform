@@ -3,6 +3,7 @@ import type { KbOut, KbDetail, DocumentOut, DocumentDetail, EvidenceDetail, JobO
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(path, { headers: { "Content-Type": "application/json" }, ...init });
   if (!r.ok) throw new Error(`${r.status} ${path}`);
+  if (r.status === 204 || r.headers.get("content-length") === "0") return undefined as T;
   return r.json() as Promise<T>;
 }
 
