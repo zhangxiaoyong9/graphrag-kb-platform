@@ -12,7 +12,7 @@
 
 - Python 3.11–3.13 + [`uv`](https://docs.astral.sh/uv/) 依赖管理
 - Node 18+（仅用于构建前端；若用预构建的 `web/dist/` 则运行时不需要）
-- 环境变量里的 LLM provider key（如 `DEEPSEEK_API_KEY` / `OPENAI_API_KEY`）。**密钥绝不入库**——按 `llm.api_key_env` → `{PROVIDER}_API_KEY` 环境变量 → 显式 `api_key` 顺序解析。
+- LLM provider 密钥，在管理后台（**Provider 配置** 页）录入，**Fernet 加密后存入数据库**。无需环境变量密钥。加密主密钥自动生成于数据库旁（`.kb_secret_key`，权限 600），也可用环境变量 `KB_SECRET_KEY` 指定。
 - _（可选）_ [Ollama](https://ollama.com) 做本地嵌入——若你的 LLM provider 没有嵌入模型（如 DeepSeek），向量检索方法需要它。
 
 ---
@@ -35,13 +35,13 @@ uv run alembic upgrade head
 
 ```bash
 # 终端 1 — API 服务：REST 接口 + 托管构建好的 SPA
-export DEEPSEEK_API_KEY=sk-...       # 你的 LLM 密钥
 uv run python -m kb_platform.server kb.db . 127.0.0.1 8000
 
 # 终端 2 — 后台 worker：轮询 SQLite → 执行索引任务
-export DEEPSEEK_API_KEY=sk-...       # 同一个密钥（LLM 调用在 worker 侧）
 uv run python -m kb_platform.worker kb.db
 ```
+
+Provider 密钥在管理后台（Provider 配置页）录入，运行时从数据库读取——server / worker 均无需密钥环境变量。
 
 服务 CLI：`python -m kb_platform.server [db_path] [data_root] [host] [port]`（默认 `kb.db . 127.0.0.1 8000`）。`data_root` 存放 parquet 索引产物 + `<data_root>/vectors/` LanceDB 向量表。
 
@@ -74,74 +74,95 @@ ollama pull nomic-embed-text
 ollama serve                                # http://localhost:11434
 ```
 
-建 KB 时在 `settings_yaml` 里加 `embedding` 段（占位 `api_key` 用于满足 graphrag-llm 的校验；litellm 对 Ollama 忽略它）：
+在 Provider 配置页新建一个 **embedding provider profile**（provider `ollama`、model `nomic-embed-text`、api_base `http://localhost:11434`，密钥任意占位——litellm 对 Ollama 忽略它），建 KB 时选用。API 示例：
 
 ```json
+POST /provider-profiles   →  { "id": 2, ... }
+{
+  "name": "Ollama", "kind": "embedding", "provider": "ollama",
+  "model": "nomic-embed-text", "api_base": "http://localhost:11434",
+  "api_keys": ["ollama"]
+}
+
 POST /kbs
 {
   "name": "my-kb",
-  "settings_yaml": "{
-    \"llm\": {\"model_provider\":\"deepseek\",\"model\":\"deepseek-chat\",\"api_key_env\":\"DEEPSEEK_API_KEY\"},
-    \"embedding\": {\"model_provider\":\"ollama\",\"model\":\"nomic-embed-text\",\"api_base\":\"http://localhost:11434\",\"api_key\":\"ollama\"},
-    \"community_reports\": {\"structured_output\": false}
-  }"
+  "llm_profile_id": 1,
+  "embedding_profile_id": 2
 }
 ```
 
 ---
 
-## 配置（model / api_base / key）
+## 配置（provider profiles + KB 内容参数）
 
-所有 LLM / 嵌入设置都放在 KB 的 `settings_yaml`（建库时传入）。**密钥**是特例：调用时从环境变量解析、**绝不入库**，所以改密钥只需改环境变量（重启 worker/server 即可）——不用动 KB。但 `model` 和 `api_base` 会持久化进 KB 设置，目前**没有设置更新接口**，所以改一个已有 KB 的模型/api_base 意味着新建一个 KB（重新加文档 + 重新索引）。
+连接 + 密钥信息放在**命名的 provider profile**（全局复用）；KB 引用一个 LLM profile（+ 可选 embedding profile），只保留内容/质量参数。这样不必每个 KB 都重填 provider/model/api_base/key。
 
-### `llm` 字段
+- **Provider profile**（Provider 配置页，或 `POST /provider-profiles`）：`kind`（`llm` \| `embedding`）、`provider`、`model`、`api_base`、`api_version`（Azure）、`structured_output`（仅 llm——决定 `community_reports` 是否用 json_schema），以及只写的 `api_keys` 列表（Fernet 加密入库；列表接口只回显 `api_keys_count`，绝不返回明文）。多 key 自动轮询负载均衡。
+- **KB**（`POST /kbs` / `PATCH /kbs/{id}`）：`llm_profile_id`（必填）、`embedding_profile_id`（可选——仅 `global` 的 KB 可不填），以及只含内容的 `settings_yaml`（chunking / extract_graph / summarize_descriptions / cluster_graph / `community_reports.max_length` / prompts / query_prompts / concurrency）。`structured_output` 跟随所选 LLM profile，不在 KB 上。
+
+### Provider profile 字段
 
 | 字段 | 含义 | 示例 |
 |------|------|------|
-| `model_provider` | provider | `deepseek`、`openai`、`azure`、`ollama` |
-| `model` | 模型 id | `deepseek-chat`、`gpt-4o-mini` |
+| `kind` | `llm` 或 `embedding` | `llm` |
+| `provider` | provider | `deepseek`、`openai`、`azure`、`ollama` |
+| `model` | 模型 id | `deepseek-chat`、`gpt-4o-mini`、`nomic-embed-text` |
 | `api_base` | 自定义端点（中转 / Azure / 自建） | `https://api.deepseek.com`、`http://localhost:11434` |
-| `api_key_env` | 持有密钥的环境变量名（**推荐**） | `DEEPSEEK_API_KEY` |
-| `api_key` | 明文密钥（**不推荐**——会入库） | `sk-...` |
 | `api_version` | Azure API 版本（仅 Azure） | `2024-06-01` |
+| `structured_output` | 社区报告是否用 json_schema（仅 llm） | `true`（DeepSeek 用 `false`） |
+| `api_keys` | 一个或多个密钥（只写；轮询） | `["sk-..."]` |
 
-调用时凭证解析顺序：`llm.api_key` → `llm.api_key_env` 指定的环境变量 → `{PROVIDER}_API_KEY` 环境变量。优先用 `api_key_env`，让密钥留在环境里、不进数据库。
+### 密钥处理与安全
 
-### 各项怎么改
+- 密钥**始终在数据库**中，Fernet 加密。环境变量密钥路径（`api_key_env` / `{PROVIDER}_API_KEY`）已移除。
+- 主密钥：设了环境变量 `KB_SECRET_KEY` 则用它，否则自动生成于 `<数据库所在目录>/.kb_secret_key`（权限 600）。可用存于盘外的 `KB_SECRET_KEY` 加固。
+- `GET /provider-profiles` 只返回 `api_keys_count`——明文绝不离开写入路径。
 
-- **密钥** —— `export DEEPSEEK_API_KEY=sk-new`（或对应的 `{PROVIDER}_API_KEY`），再重启 worker + server。下一个任务即生效，无需改 KB。
-- **模型 / api_base** —— 建 KB 时在 `settings_yaml` 里传新值。改已有 KB 需新建（重新加文档 + 重新索引）。`embedding.model` / `embedding.api_base` 同理，写在 `embedding` 段下。
-- 按 KB 指定密钥 —— 若某个 KB 想用与默认不同的密钥，把 `llm.api_key_env` 指到另一个环境变量名即可。
+### 示例
 
-### 示例（对象以字符串形式塞进 `settings_yaml`）
-
-DeepSeek，官方端点：
+新建 LLM profile（DeepSeek；因 DeepSeek 不支持 json_schema，用纯文本报告）：
 ```json
-{"llm":{"model_provider":"deepseek","model":"deepseek-chat","api_key_env":"DEEPSEEK_API_KEY"}}
-```
-
-OpenAI 走中转 / 自定义 base：
-```json
-{"llm":{"model_provider":"openai","model":"gpt-4o-mini","api_base":"https://your-relay.example.com/v1","api_key_env":"OPENAI_API_KEY"}}
+POST /provider-profiles   →  { "id": 1, ... }
+{
+  "name": "DeepSeek", "kind": "llm", "provider": "deepseek",
+  "model": "deepseek-chat", "api_base": "https://api.deepseek.com",
+  "api_keys": ["sk-..."], "structured_output": false
+}
 ```
 
 Azure OpenAI（需 `api_base` + `api_version`）：
 ```json
-{"llm":{"model_provider":"azure","model":"my-deployment","api_base":"https://my-resource.openai.azure.com","api_version":"2024-06-01","api_key_env":"AZURE_OPENAI_API_KEY"}}
+POST /provider-profiles
+{
+  "name": "Azure", "kind": "llm", "provider": "azure",
+  "model": "my-deployment", "api_base": "https://my-resource.openai.azure.com",
+  "api_version": "2024-06-01", "api_keys": ["..."], "structured_output": true
+}
 ```
 
-DeepSeek LLM + Ollama 嵌入 + 纯文本报告（完整组合）：
+再建一个 KB 引用它（内容参数可选，缺省用默认值）：
 ```json
-{"llm":{"model_provider":"deepseek","model":"deepseek-chat","api_key_env":"DEEPSEEK_API_KEY"},"embedding":{"model_provider":"ollama","model":"nomic-embed-text","api_base":"http://localhost:11434","api_key":"ollama"},"community_reports":{"structured_output":false}}
+POST /kbs
+{ "name": "my-kb", "method": "standard", "llm_profile_id": 1,
+  "settings_yaml": "{\"chunking\":{\"size\":1200},\"community_reports\":{\"max_length\":2000}}" }
 ```
+
+### 已有 KB 的迁移
+
+Alembic `0005` 自动迁移历史 KB：每个 KB 旧的 `llm`/`embedding` 段会变成（去重后的）provider profile，KB 重新指向它，连接信息与 `structured_output` 从 `settings_json` 中剥离。**迁移后的 profile 密钥为空**——需先在 Provider 配置页补录密钥，该 KB 才能索引或检索。
 
 ---
 
 ## 创建 KB 并索引
 
 ```bash
+# 1. 新建 LLM provider profile（密钥加密入库）——每个 provider 一次
+curl -X POST http://127.0.0.1:8000/provider-profiles -H 'Content-Type: application/json' \
+  -d '{"name":"DeepSeek","kind":"llm","provider":"deepseek","model":"deepseek-chat","api_keys":["sk-..."],"structured_output":false}'
+# 2. 建一个引用该 profile 的 KB（+ 可选 embedding_profile_id）
 curl -X POST http://127.0.0.1:8000/kbs -H 'Content-Type: application/json' \
-  -d '{"name":"my-kb","method":"standard","settings_yaml":"{...见上...}"}'
+  -d '{"name":"my-kb","method":"standard","llm_profile_id":1,"settings_yaml":"{...仅内容...}"}'
 curl -X POST http://127.0.0.1:8000/kbs/1/documents -H 'Content-Type: application/json' \
   -d '{"title":"简介","text":"..."}'           # 也可 multipart 文件上传
 curl -X POST http://127.0.0.1:8000/kbs/1/jobs -H 'Content-Type: application/json' \
@@ -162,7 +183,7 @@ curl -X POST http://127.0.0.1:8000/kbs/1/jobs -H 'Content-Type: application/json
 | 分析报表 / 任务管理 / 成本统计 | 聚合指标；跨 KB 全部任务；按 step/model/job 的成本 |
 | KB 详情 | 文档管理（上传/粘贴/列表/删除）、文档详情浏览与来源证据抽屉、触发全量/增量、累计**成本**、**导出**（zip/GraphML）、可交互**图谱**、实体/关系浏览、任务、检索；**模型配置卡**展示 LLM/嵌入设置 |
 | 任务详情 | 步骤时间线 + 每步进度 + unit 列表 + 单 unit/整步**重试** + 每步成本 |
-| 系统状态 / 系统设置 / API Keys | 健康 + API 参考；只读配置说明；API Key 预留页 |
+| 系统状态 / 系统设置 / API Keys / Provider 配置 | 健康 + API 参考；只读配置说明；API Key 预留页；**provider profiles**（新建/编辑/删除 LLM + embedding 配置，密钥加密） |
 
 图谱可视化基于 [react-force-graph-2d](https://github.com/vasturiano/react-force-graph-2d)；成本条为纯 CSS。
 
@@ -171,9 +192,13 @@ curl -X POST http://127.0.0.1:8000/kbs/1/jobs -H 'Content-Type: application/json
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | `GET` | `/health` | 存活探针：数据库探活 + worker 心跳是否过期 |
-| `POST` | `/kbs` | 创建知识库 |
+| `GET` | `/provider-profiles?kind=llm\|embedding` | profile 列表（只回显 `api_keys_count`，绝不返回明文） |
+| `POST` | `/provider-profiles` | 新建 profile（加密 `api_keys`） |
+| `PATCH` | `/provider-profiles/{id}` | 更新 profile（`api_keys` 只写：不传=保留，`[]`=清空） |
+| `DELETE` | `/provider-profiles/{id}` | 删除 profile——被引用时返回 **409** 及引用 KB 列表 |
+| `POST` | `/kbs` | 创建知识库，引用 `llm_profile_id`（+ 可选 `embedding_profile_id`） |
 | `GET` | `/kbs` | 获取所有知识库 |
-| `GET` | `/kbs/{id}` | KB 详情（含脱敏后的 `settings`） |
+| `GET` | `/kbs/{id}` | KB 详情（内容 `settings` + 解析出的 `llm_profile` / `embedding_profile`） |
 | `POST` | `/kbs/{id}/documents` | 添加文档——JSON `{title,text}` **或** multipart 文件（经 [markitdown](https://github.com/microsoft/markitdown)：`.txt/.md/.pdf/.docx/.html` 等） |
 | `GET` | `/kbs/{id}/documents` | 文档列表（含 `bytes` + `chunk_count`） |
 | `GET` | `/kbs/{id}/documents/{doc_id}` | 文档详情：返回存储正文和基于分块的引用列表 |
@@ -207,7 +232,7 @@ create_communities → community_reports → generate_text_embeddings
 
 每个 LLM 步骤按 chunk/entity/community 粒度追踪（unit），状态流转 `pending → running → succeeded/failed`；失败的 unit 可单独重试或整步批量重试。
 
-**DeepSeek 社区报告：**在 KB 设置中设 `community_reports.structured_output: false`，即可走纯文本 completion + 宽松 JSON 解析生成报告（DeepSeek 拒 `response_format: json_schema`，纯文本路径绕过该限制）。默认 `true`（graphrag 的 structured output，适用于 OpenAI/GPT-4o）。
+**DeepSeek 社区报告：**在 KB 所引用的 **LLM provider profile** 上设 `structured_output: false`，即可走纯文本 completion + 宽松 JSON 解析生成报告（DeepSeek 拒 `response_format: json_schema`，纯文本路径绕过该限制）。默认 `true`（graphrag 的 structured output，适用于 OpenAI/GPT-4o）。`structured_output` 跟随 LLM profile，不在 KB 上。
 
 ## 查询
 
@@ -218,7 +243,7 @@ create_communities → community_reports → generate_text_embeddings
 | `drift` | 是 | 是 | 密集检索优先搜索 |
 | `basic` | 否 | 是（文本单元） | 仅文本单元向量搜索（最简单、最快） |
 
-查询端点从 KB 的 `llm` 设置解析 LLM、从 `embedding` 解析嵌入器（所以 Ollama 能支撑向量方法）。响应携带真实的服务端 `elapsed_ms`、token 用量，以及抽取出的来源实体 / 文本片段。
+查询端点从 KB 的 **LLM provider profile** 解析 LLM、从其 **embedding provider profile** 解析嵌入器（所以 Ollama 能支撑向量方法）。响应携带真实的服务端 `elapsed_ms`、token 用量，以及抽取出的来源实体 / 文本片段。
 
 ## 开发
 
@@ -232,7 +257,7 @@ cd web && npm install && npm run build && npm test   # 前端构建 + vitest
 
 **E2E（Playwright，可选）：** 先装一次 Chromium —— `cd web && npm run e2e:install`，再 `npm run e2e`（构建 SPA 后对一个无 LLM 的假服务器跑用例：`FakeGraphAdapter` worker + 注入 `FakeQueryEngine`，无需 provider key）。也可单独起假服务器调试：`npm run e2e:server`（监听 `http://127.0.0.1:18000`）。
 
-测试使用 `FakeGraphAdapter`（确定性，无需 LLM）、`FakeVectorStore`（内存）和 `FakeQueryEngine`。真实 LLM 集成测试需要环境变量中配置 provider key。
+测试使用 `FakeGraphAdapter`（确定性，无需 LLM）、`FakeVectorStore`（内存）和 `FakeQueryEngine`。真实 LLM 集成测试需要在 Provider 配置页录入带真实密钥的 provider profile。
 
 ## 项目结构
 

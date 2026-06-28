@@ -7,9 +7,40 @@ export function uniqueKbName(label = "kb"): string {
   return `${PREFIX}-${label}-${Date.now()}`;
 }
 
-/** Create a KB via the REST API and return its id. */
+/** Create an LLM provider profile via the REST API and return its id. */
+export async function createProfileViaApi(
+  page: Page,
+  body: {
+    name: string;
+    kind: "llm" | "embedding";
+    provider: string;
+    model: string;
+    api_keys: string[];
+    structured_output: boolean;
+  },
+): Promise<number> {
+  const r = await page.request.post("/provider-profiles", { data: body });
+  return (await r.json()).id as number;
+}
+
+/**
+ * Create a KB via the REST API and return its id.
+ *
+ * POST /kbs requires an llm_profile_id, so this creates a throwaway LLM
+ * profile first (the e2e worker uses FakeGraphAdapter — no real key needed).
+ */
 export async function createKbViaApi(page: Page, name: string): Promise<number> {
-  const r = await page.request.post("/kbs", { data: { name, method: "standard" } });
+  const pid = await createProfileViaApi(page, {
+    name: `prof-${name}`,
+    kind: "llm",
+    provider: "openai",
+    model: "gpt-4o-mini",
+    api_keys: ["fake-key"],
+    structured_output: true,
+  });
+  const r = await page.request.post("/kbs", {
+    data: { name, method: "standard", llm_profile_id: pid },
+  });
   const body = await r.json();
   return body.id as number;
 }

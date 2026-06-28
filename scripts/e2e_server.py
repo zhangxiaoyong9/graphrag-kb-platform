@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 import uvicorn
+from cryptography.fernet import Fernet
 
 from kb_platform.api.app import create_app
 from kb_platform.db.engine import create_engine, session_scope
@@ -51,10 +52,30 @@ def main() -> None:
     Base.metadata.create_all(engine)
     repo = Repository(engine)
 
+    # Fixed master key for the fake server so encrypted profile keys work
+    # without writing a key file into the repo working directory.
+    os.environ.setdefault("KB_SECRET_KEY", Fernet.generate_key().decode())
+
+    # Seed an LLM provider profile. The worker uses FakeGraphAdapter (no real
+    # key needed), but the API now requires a profile to create a KB and the
+    # create-KB spec picks one from the LLM 配置 dropdown.
+    llm_profile = repo.create_profile(
+        name="E2E LLM",
+        kind="llm",
+        provider="openai",
+        model="gpt-4o-mini",
+        api_keys=["fake-key"],
+        structured_output=True,
+    )
+
     # Seed the baseline KB + document + a pending full job.
     with session_scope(engine) as s:
         kb = KnowledgeBase(
-            name=BASELINE_NAME, method="standard", settings_json="{}", data_root=data_root
+            name=BASELINE_NAME,
+            method="standard",
+            settings_json="{}",
+            data_root=data_root,
+            llm_profile_id=llm_profile.id,
         )
         s.add(kb)
         s.flush()

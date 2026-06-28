@@ -12,7 +12,7 @@ Knowledge base management platform built on top of Microsoft [GraphRAG](https://
 
 - Python 3.11–3.13 + [`uv`](https://docs.astral.sh/uv/)
 - Node 18+ (only to build the dashboard; not needed at runtime if you use a prebuilt `web/dist/`)
-- An LLM provider key in the environment (e.g. `DEEPSEEK_API_KEY` or `OPENAI_API_KEY`). Keys are **never stored** — resolved from `llm.api_key_env` → `{PROVIDER}_API_KEY` env → explicit `api_key`.
+- An LLM provider key, entered in the dashboard (**Provider 配置** page) and stored **Fernet-encrypted in the DB**. No env-var keys. The encryption master key is auto-generated next to the DB (`.kb_secret_key`, chmod 600), or set via `KB_SECRET_KEY`.
 - _(Optional)_ [Ollama](https://ollama.com) for local embeddings — needed if your LLM provider has no embedding model (e.g. DeepSeek).
 
 ---
@@ -35,13 +35,13 @@ Run **two** processes (separate terminals):
 
 ```bash
 # Terminal 1 — API server: REST endpoints + hosts the built SPA
-export DEEPSEEK_API_KEY=sk-...       # your LLM provider key
 uv run python -m kb_platform.server kb.db . 127.0.0.1 8000
 
 # Terminal 2 — background worker: polls SQLite → runs indexing jobs
-export DEEPSEEK_API_KEY=sk-...       # same key (worker makes the LLM calls)
 uv run python -m kb_platform.worker kb.db
 ```
+
+Provider keys are entered in the dashboard (Provider 配置 page) and read from the DB at run time — no key env vars are needed for the server or worker.
 
 Server CLI: `python -m kb_platform.server [db_path] [data_root] [host] [port]` (defaults `kb.db . 127.0.0.1 8000`). The `data_root` holds the parquet index output + `<data_root>/vectors/` LanceDB tables.
 
@@ -74,74 +74,95 @@ ollama pull nomic-embed-text
 ollama serve                                # http://localhost:11434
 ```
 
-Then include an `embedding` block when creating the KB (the placeholder `api_key` satisfies graphrag-llm's validator; litellm ignores it for Ollama):
+Then create an **embedding provider profile** on the Provider 配置 page (provider `ollama`, model `nomic-embed-text`, api_base `http://localhost:11434`, any placeholder key — litellm ignores it for Ollama) and select it when creating the KB. Example via API:
 
 ```json
+POST /provider-profiles   →  { "id": 2, ... }
+{
+  "name": "Ollama", "kind": "embedding", "provider": "ollama",
+  "model": "nomic-embed-text", "api_base": "http://localhost:11434",
+  "api_keys": ["ollama"]
+}
+
 POST /kbs
 {
   "name": "my-kb",
-  "settings_yaml": "{
-    \"llm\": {\"model_provider\":\"deepseek\",\"model\":\"deepseek-chat\",\"api_key_env\":\"DEEPSEEK_API_KEY\"},
-    \"embedding\": {\"model_provider\":\"ollama\",\"model\":\"nomic-embed-text\",\"api_base\":\"http://localhost:11434\",\"api_key\":\"ollama\"},
-    \"community_reports\": {\"structured_output\": false}
-  }"
+  "llm_profile_id": 1,
+  "embedding_profile_id": 2
 }
 ```
 
 ---
 
-## Configuration (model / api_base / key)
+## Configuration (provider profiles + KB content)
 
-All LLM/embedding settings live in the KB's `settings_yaml` (passed at creation). The **key** is special: it's resolved from the environment at call time and **never stored**, so you change it by changing the env var (restart the worker/server) — no KB change needed. `model` and `api_base`, however, are persisted in the KB's settings, and there is **no settings-update endpoint yet**, so changing them for an existing KB means creating a new KB (re-add docs + re-index).
+Connection + key info lives in **named provider profiles** (global, reusable); a KB references one LLM profile (+ optional embedding profile) and keeps only content/quality knobs. This stops re-typing provider/model/api_base/key on every KB.
 
-### `llm` fields
+- **Provider profile** (Provider 配置 page, or `POST /provider-profiles`): `kind` (`llm` \| `embedding`), `provider`, `model`, `api_base`, `api_version` (Azure), `structured_output` (llm only — whether `community_reports` use json_schema), and a write-only `api_keys` list (Fernet-encrypted at rest; the list endpoint returns only `api_keys_count`, never plaintext). Multiple keys are round-robin load-balanced.
+- **KB** (`POST /kbs` / `PATCH /kbs/{id}`): `llm_profile_id` (required), `embedding_profile_id` (optional — omit for `global`-only KBs), and a content-only `settings_yaml` (chunking / extract_graph / summarize_descriptions / cluster_graph / `community_reports.max_length` / prompts / query_prompts / concurrency). `structured_output` follows the selected LLM profile, not the KB.
+
+### Provider profile fields
 
 | Field | Meaning | Example |
 |-------|---------|---------|
-| `model_provider` | Provider id | `deepseek`, `openai`, `azure`, `ollama` |
-| `model` | Model id | `deepseek-chat`, `gpt-4o-mini` |
+| `kind` | `llm` or `embedding` | `llm` |
+| `provider` | Provider id | `deepseek`, `openai`, `azure`, `ollama` |
+| `model` | Model id | `deepseek-chat`, `gpt-4o-mini`, `nomic-embed-text` |
 | `api_base` | Custom endpoint (relay / Azure / self-host) | `https://api.deepseek.com`, `http://localhost:11434` |
-| `api_key_env` | Name of the env var holding the key (**recommended**) | `DEEPSEEK_API_KEY` |
-| `api_key` | Literal key (**not recommended** — stored in DB) | `sk-...` |
 | `api_version` | Azure API version (Azure only) | `2024-06-01` |
+| `structured_output` | Use json_schema for community reports (llm only) | `true` (`false` for DeepSeek) |
+| `api_keys` | One or more keys (write-only; round-robin) | `["sk-..."]` |
 
-Credential resolution at call time: `llm.api_key` → env var named by `llm.api_key_env` → `{PROVIDER}_API_KEY` env. Prefer `api_key_env` so secrets stay out of the DB.
+### Key handling & security
 
-### How to change each
+- Keys are **always in the DB**, Fernet-encrypted. The env-var key path (`api_key_env` / `{PROVIDER}_API_KEY`) is removed.
+- Master key: env `KB_SECRET_KEY` if set, else auto-generated at `<dirname(db)>/.kb_secret_key` (chmod 600). Harden by pointing `KB_SECRET_KEY` at a value stored off-disk.
+- `GET /provider-profiles` returns `api_keys_count` only — plaintext never leaves the write path.
 
-- **Key** — `export DEEPSEEK_API_KEY=sk-new` (or the matching `{PROVIDER}_API_KEY`), then restart worker + server. Takes effect on the next job; no KB change.
-- **Model / api_base** — pass new values in `settings_yaml` when creating a KB. Changing an existing KB requires creating a new one (re-add documents + re-index). `embedding.model` / `embedding.api_base` work the same way under the `embedding` block.
-- Per-KB key override — point `llm.api_key_env` at a different env var name if a KB should use a different key than the provider default.
+### Examples
 
-### Examples (the object goes stringified into `settings_yaml`)
-
-DeepSeek, official endpoint:
+Create an LLM profile (DeepSeek; plain-text reports because DeepSeek lacks json_schema):
 ```json
-{"llm":{"model_provider":"deepseek","model":"deepseek-chat","api_key_env":"DEEPSEEK_API_KEY"}}
-```
-
-OpenAI via a relay / custom base:
-```json
-{"llm":{"model_provider":"openai","model":"gpt-4o-mini","api_base":"https://your-relay.example.com/v1","api_key_env":"OPENAI_API_KEY"}}
+POST /provider-profiles   →  { "id": 1, ... }
+{
+  "name": "DeepSeek", "kind": "llm", "provider": "deepseek",
+  "model": "deepseek-chat", "api_base": "https://api.deepseek.com",
+  "api_keys": ["sk-..."], "structured_output": false
+}
 ```
 
 Azure OpenAI (needs `api_base` + `api_version`):
 ```json
-{"llm":{"model_provider":"azure","model":"my-deployment","api_base":"https://my-resource.openai.azure.com","api_version":"2024-06-01","api_key_env":"AZURE_OPENAI_API_KEY"}}
+POST /provider-profiles
+{
+  "name": "Azure", "kind": "llm", "provider": "azure",
+  "model": "my-deployment", "api_base": "https://my-resource.openai.azure.com",
+  "api_version": "2024-06-01", "api_keys": ["..."], "structured_output": true
+}
 ```
 
-DeepSeek LLM + Ollama embeddings + plain-text reports (full combo):
+Then create a KB referencing it (content knobs are optional; defaults apply):
 ```json
-{"llm":{"model_provider":"deepseek","model":"deepseek-chat","api_key_env":"DEEPSEEK_API_KEY"},"embedding":{"model_provider":"ollama","model":"nomic-embed-text","api_base":"http://localhost:11434","api_key":"ollama"},"community_reports":{"structured_output":false}}
+POST /kbs
+{ "name": "my-kb", "method": "standard", "llm_profile_id": 1,
+  "settings_yaml": "{\"chunking\":{\"size\":1200},\"community_reports\":{\"max_length\":2000}}" }
 ```
+
+### Migration of existing KBs
+
+Alembic `0005` auto-migrates legacy KBs: each KB's old `llm`/`embedding` block becomes a (deduped) provider profile, the KB is repointed at it, and connection/`structured_output` is stripped from `settings_json`. **Migrated profiles start with empty keys** — re-enter keys on the Provider 配置 page before that KB can index or query.
 
 ---
 
 ## Creating a KB + indexing
 
 ```bash
+# 1. create an LLM provider profile (keys encrypted in DB) — once per provider
+curl -X POST http://127.0.0.1:8000/provider-profiles -H 'Content-Type: application/json' \
+  -d '{"name":"DeepSeek","kind":"llm","provider":"deepseek","model":"deepseek-chat","api_keys":["sk-..."],"structured_output":false}'
+# 2. create a KB referencing that profile (+ optional embedding_profile_id)
 curl -X POST http://127.0.0.1:8000/kbs -H 'Content-Type: application/json' \
-  -d '{"name":"my-kb","method":"standard","settings_yaml":"{...see above...}"}'
+  -d '{"name":"my-kb","method":"standard","llm_profile_id":1,"settings_yaml":"{...content only...}"}'
 curl -X POST http://127.0.0.1:8000/kbs/1/documents -H 'Content-Type: application/json' \
   -d '{"title":"intro","text":"..."}'           # or multipart file upload
 curl -X POST http://127.0.0.1:8000/kbs/1/jobs -H 'Content-Type: application/json' \
@@ -162,7 +183,7 @@ Grouped SaaS-style sidebar (工作台 / 知识库 / 检索与问答 / 分析与�
 | Analytics / Jobs / Cost | Aggregated stats; every job across KBs; cost by step/model/job |
 | KB detail | Document manager (upload/paste/list/delete), document detail browsing with source evidence drawer, trigger full/incremental, cumulative **cost**, **export** (zip/GraphML), interactive **graph**, entity/relation browser, jobs, query; **model-config card** shows the KB's LLM/embedding settings |
 | Job detail | Step timeline + per-step progress + unit table + per-unit/step **retry** + per-step cost |
-| System status / Settings / API Keys | Health + API reference; read-only config guidance; API-key placeholder |
+| System status / Settings / API Keys / Provider 配置 | Health + API reference; read-only config guidance; API-key placeholder; **provider profiles** (create/edit/delete LLM + embedding profiles, encrypted API keys) |
 
 Graph viz uses [react-force-graph-2d](https://github.com/vasturiano/react-force-graph-2d); cost bars are pure CSS.
 
@@ -171,9 +192,13 @@ Graph viz uses [react-force-graph-2d](https://github.com/vasturiano/react-force-
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | Liveness: DB ping + worker heartbeat staleness |
-| `POST` | `/kbs` | Create a KB |
+| `GET` | `/provider-profiles?kind=llm\|embedding` | List profiles (`api_keys_count` only — never plaintext) |
+| `POST` | `/provider-profiles` | Create profile (encrypts `api_keys`) |
+| `PATCH` | `/provider-profiles/{id}` | Update profile (`api_keys` write-only: omit=keep, `[]`=clear) |
+| `DELETE` | `/provider-profiles/{id}` | Delete profile — **409** with referencing-KB list if in use |
+| `POST` | `/kbs` | Create a KB referencing `llm_profile_id` (+ optional `embedding_profile_id`) |
 | `GET` | `/kbs` | List KBs |
-| `GET` | `/kbs/{id}` | KB detail (incl. redacted `settings`) |
+| `GET` | `/kbs/{id}` | KB detail (content `settings` + resolved `llm_profile` / `embedding_profile`) |
 | `POST` | `/kbs/{id}/documents` | Add doc — JSON `{title,text}` **or** multipart file (via [markitdown](https://github.com/microsoft/markitdown): `.txt/.md/.pdf/.docx/.html`…) |
 | `GET` | `/kbs/{id}/documents` | List docs (`bytes` + `chunk_count`) |
 | `GET` | `/kbs/{id}/documents/{doc_id}` | Document detail with stored text and chunk-backed citations |
@@ -207,7 +232,7 @@ Incremental (`type: "incremental"`) re-runs only what changed: delta-filtered ex
 
 Every LLM step is tracked at the chunk/entity/community level (unit): `pending → running → succeeded/failed`; failed units can be retried individually or per-step.
 
-**DeepSeek community reports:** set `community_reports.structured_output: false` in KB settings → plain-text completion + lenient JSON parse (DeepSeek rejects `response_format: json_schema`). Default `true` (graphrag structured output, for OpenAI/GPT-4o).
+**DeepSeek community reports:** set `structured_output: false` on the KB's **LLM provider profile** → plain-text completion + lenient JSON parse (DeepSeek rejects `response_format: json_schema`). Default `true` (graphrag structured output, for OpenAI/GPT-4o). `structured_output` follows the LLM profile, not the KB.
 
 ## Query
 
@@ -218,7 +243,7 @@ Every LLM step is tracked at the chunk/entity/community level (unit): `pending �
 | `drift` | yes | yes | Dense retrieval focused search |
 | `basic` | no | yes (text-unit) | Text-unit vector search (simplest, fastest) |
 
-The query endpoint resolves the LLM from the KB `llm` settings and the embedder from `embedding` (so Ollama works for the vector methods). The response carries real server-side `elapsed_ms`, token usage, and extracted source entities / text snippets.
+The query endpoint resolves the LLM from the KB's **LLM provider profile** and the embedder from its **embedding provider profile** (so Ollama works for the vector methods). The response carries real server-side `elapsed_ms`, token usage, and extracted source entities / text snippets.
 
 ## Development
 
@@ -232,7 +257,7 @@ cd web && npm install && npm run build && npm test   # frontend build + vitest
 
 **E2E (Playwright, optional):** first install Chromium once — `cd web && npm run e2e:install`. Then `npm run e2e` builds the SPA and runs the suite against a no-LLM fake server (`FakeGraphAdapter` worker + injected `FakeQueryEngine`); no provider key required. The fake server can also be run standalone for debugging: `npm run e2e:server` (serves `http://127.0.0.1:18000`).
 
-Tests use `FakeGraphAdapter` (deterministic, no LLM), `FakeVectorStore` (in-memory), `FakeQueryEngine`. Real-LLM integration tests need a provider key in the environment.
+Tests use `FakeGraphAdapter` (deterministic, no LLM), `FakeVectorStore` (in-memory), `FakeQueryEngine`. Real-LLM integration tests need a provider profile with a real key entered on the Provider 配置 page.
 
 ## Project structure
 
