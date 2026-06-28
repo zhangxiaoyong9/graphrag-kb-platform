@@ -7,7 +7,7 @@
 import json
 import os
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import ValidationError
 from sqlalchemy import select
 from starlette.formparsers import UploadFile
@@ -19,6 +19,7 @@ from kb_platform.api.models import (
     DocumentOut,
     EvidenceOut,
     EvidenceSourceOut,
+    JobCreated,
     JobListItem,
     KbCreate,
     KbDetailOut,
@@ -308,17 +309,47 @@ def get_document_evidence(
     )
 
 
-@router.delete("/kbs/{kb_id}/documents/{doc_id}", status_code=204)
-def delete_document(kb_id: int, doc_id: int, request: Request):
-    """Delete a document and its chunks (application-level cascade).
+@router.delete("/kbs/{kb_id}/documents/{doc_id}")
+def delete_document(kb_id: int, doc_id: int, request: Request, response: Response):
+    """Delete a document and its chunks; auto-trigger an incremental shrink job.
 
-    The graph/index is NOT shrunk. Returns 204 on success, 404 if the
-    document does not exist or belongs to a different KB.
+    The shrink job rebuilds entities/relationships/text_units/vectors from the
+    remaining chunks (merge_delta prunes orphan extractions). Returns 202 + the
+    new job when one is created; 204 when no job is needed (KB never indexed, or
+    an incremental job is already pending/running and will absorb the deletion).
+    404 if the document does not exist or belongs to a different KB.
     """
     repo = request.app.state.repo
     if not repo.delete_document(kb_id, doc_id):
         raise HTTPException(404)
+    job = _maybe_create_shrink_job(repo, kb_id)
+    if job is not None:
+        response.status_code = 202
+        return JobCreated(id=job.id, status=job.status)
+    response.status_code = 204
     return None
+
+
+def _maybe_create_shrink_job(repo, kb_id: int):
+    """Create an incremental shrink job after a deletion, or None if unnecessary.
+
+    - Coalesce: an incremental job already pending/running will reconcile via
+      merge_delta, so don't start another.
+    - Never-indexed guard: a KB with no prior SUCCEEDED job has nothing to shrink.
+    A pending/running *full* job is NOT a coalesce trigger — the new incremental
+    job queues behind it and its merge_delta picks up the deletion.
+    """
+    from kb_platform.db.enums import JobStatus
+
+    jobs = repo.list_jobs_by_kb(kb_id)
+    if any(
+        j.type == "incremental" and j.status in (JobStatus.PENDING, JobStatus.RUNNING)
+        for j in jobs
+    ):
+        return None
+    if not any(j.status == JobStatus.SUCCEEDED for j in jobs):
+        return None
+    return repo.create_job_pending(kb_id=kb_id, method="standard", type="incremental")
 
 
 @router.get("/kbs/{kb_id}/jobs", response_model=list[JobListItem])

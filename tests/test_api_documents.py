@@ -6,6 +6,7 @@ from sqlalchemy import select
 
 from kb_platform.api.app import create_app
 from kb_platform.db.engine import create_engine, session_scope
+from kb_platform.db.enums import JobStatus
 from kb_platform.db.models import Base, Chunk, Document, KnowledgeBase
 from kb_platform.db.repository import Repository
 
@@ -123,3 +124,51 @@ def test_document_out_has_bytes_and_chunk_count(repo_and_client):
     d = docs[0]
     assert d["bytes"] == 42
     assert d["chunk_count"] == 2
+
+
+def _seed_doc(repo, doc_id=10):
+    with session_scope(repo.engine) as s:
+        s.add(Document(id=doc_id, kb_id=1, title="d", source_uri="", content_hash="h", status="parsed", bytes=1, text="x"))
+
+
+def test_delete_auto_creates_shrink_job_when_indexed(repo_and_client):
+    repo, client = repo_and_client
+    j = repo.create_job_pending(kb_id=1, method="standard", type="full")
+    repo.set_job_status(j.id, JobStatus.SUCCEEDED)  # 标记已索引
+    _seed_doc(repo, 10)
+    r = client.delete("/kbs/1/documents/10")
+    assert r.status_code == 202
+    assert r.json()["status"] == "pending"
+    assert any(x.type == "incremental" for x in repo.list_jobs_by_kb(1))
+
+
+def test_delete_no_job_when_never_indexed(repo_and_client):
+    repo, client = repo_and_client
+    _seed_doc(repo, 10)  # 无任何 SUCCEEDED job
+    r = client.delete("/kbs/1/documents/10")
+    assert r.status_code == 204
+    assert repo.list_jobs_by_kb(1) == []
+
+
+def test_delete_coalesces_when_incremental_job_active(repo_and_client):
+    repo, client = repo_and_client
+    repo.create_job_pending(kb_id=1, method="standard", type="full")
+    repo.set_job_status(repo.list_jobs_by_kb(1)[0].id, JobStatus.SUCCEEDED)
+    repo.create_job_pending(kb_id=1, method="standard", type="incremental")  # 已有 pending 增量
+    _seed_doc(repo, 10)
+    r = client.delete("/kbs/1/documents/10")
+    assert r.status_code == 204  # 合并：不另起
+    # 仍只有一个 incremental job
+    assert sum(1 for x in repo.list_jobs_by_kb(1) if x.type == "incremental") == 1
+
+
+def test_delete_creates_job_when_only_full_job_active(repo_and_client):
+    repo, client = repo_and_client
+    repo.create_job_pending(kb_id=1, method="standard", type="full")
+    repo.set_job_status(repo.list_jobs_by_kb(1)[0].id, JobStatus.SUCCEEDED)
+    pending_full = repo.create_job_pending(kb_id=1, method="standard", type="full")  # 在跑 full
+    _seed_doc(repo, 10)
+    r = client.delete("/kbs/1/documents/10")
+    assert r.status_code == 202  # full 在跑 → 仍另起增量
+    incr = [x for x in repo.list_jobs_by_kb(1) if x.type == "incremental"]
+    assert len(incr) == 1 and incr[0].id != pending_full.id
