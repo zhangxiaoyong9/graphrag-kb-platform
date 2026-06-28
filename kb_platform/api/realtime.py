@@ -10,6 +10,7 @@ snapshot/delta as a ``JobOut`` directly.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 
@@ -88,3 +89,55 @@ class JobBroadcaster:
         for ws in dead:
             logger.debug("dropping dead subscriber on job %s", self.job_id)
             self.subscribers.discard(ws)
+
+
+class RealtimeHub:
+    """Owns one poll loop that fans DB changes out to all jobs with subscribers."""
+
+    def __init__(self, repo: Repository, interval: float = 0.5) -> None:
+        self.repo = repo
+        self.interval = interval
+        self.broadcasters: dict[int, JobBroadcaster] = {}
+        self._task: asyncio.Task | None = None
+
+    def start(self) -> None:
+        if self._task is None:
+            self._task = asyncio.create_task(self._poll_loop())
+
+    async def stop(self) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            self._task = None
+
+    def subscribe(self, job_id: int, ws) -> dict:
+        bc = self.broadcasters.get(job_id)
+        if bc is None:
+            bc = JobBroadcaster(job_id=job_id, repo=self.repo)
+            self.broadcasters[job_id] = bc
+        bc.subscribers.add(ws)
+        return bc.snapshot()
+
+    def unsubscribe(self, job_id: int, ws) -> None:
+        bc = self.broadcasters.get(job_id)
+        if bc is not None:
+            bc.subscribers.discard(ws)
+            if not bc.subscribers:
+                del self.broadcasters[job_id]
+
+    async def _poll_loop(self) -> None:
+        while True:
+            await asyncio.sleep(self.interval)
+            for job_id in list(self.broadcasters):
+                try:
+                    bc = self.broadcasters[job_id]
+                    if not bc.subscribers:
+                        continue
+                    event = bc.diff_and_emit()
+                    if event is not None:
+                        await bc.broadcast(event)
+                except Exception:  # noqa: BLE001 — per-job isolation; never kill the loop
+                    logger.exception("realtime poll failed for job %s; continuing", job_id)

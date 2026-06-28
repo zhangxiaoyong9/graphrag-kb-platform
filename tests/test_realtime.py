@@ -86,3 +86,73 @@ def test_broadcast_sends_to_all_and_drops_dead(repo):
     assert alive.sent == [{"type": "delta", "steps": []}]
     assert dead not in bc.subscribers
     assert alive in bc.subscribers
+
+
+def test_subscribe_returns_snapshot_and_creates_broadcaster(repo):
+    from kb_platform.api.realtime import RealtimeHub
+
+    job_id = _seed_job(repo)
+    hub = RealtimeHub(repo=repo, interval=0.01)
+    snap = hub.subscribe(job_id, _FakeWS())
+    assert snap["type"] == "snapshot"
+    assert job_id in hub.broadcasters
+
+
+def test_unsubscribe_removes_broadcaster_when_empty(repo):
+    from kb_platform.api.realtime import RealtimeHub
+
+    job_id = _seed_job(repo)
+    hub = RealtimeHub(repo=repo, interval=0.01)
+    ws = _FakeWS()
+    hub.subscribe(job_id, ws)
+    hub.unsubscribe(job_id, ws)
+    assert job_id not in hub.broadcasters
+
+
+def test_poll_loop_pushes_delta(repo):
+    from kb_platform.api.realtime import RealtimeHub
+
+    job_id = _seed_job(repo)
+    hub = RealtimeHub(repo=repo, interval=0.01)
+    ws = _FakeWS()
+    hub.subscribe(job_id, ws)  # baseline frame = pending
+    first = repo.get_steps(job_id)[0]
+    repo.set_step_status(first.id, StepStatus.RUNNING)  # change the poller will see
+
+    async def go():
+        hub.start()
+        await asyncio.sleep(0.05)  # let >=1 poll cycle run
+        await hub.stop()
+
+    asyncio.run(go())
+    deltas = [m for m in ws.sent if m.get("type") == "delta"]
+    assert any(any(s["id"] == first.id for s in m["steps"]) for m in deltas)
+
+
+def test_poll_loop_survives_broadcaster_error(repo):
+    """A broadcaster-level exception must NOT kill the loop."""
+    from kb_platform.api.realtime import RealtimeHub
+
+    job_id = _seed_job(repo)
+    hub = RealtimeHub(repo=repo, interval=0.01)
+    ws = _FakeWS()
+    hub.subscribe(job_id, ws)
+    calls = {"n": 0}
+    orig = hub.broadcasters[job_id].diff_and_emit
+
+    def boom():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("boom")
+        return orig()
+
+    hub.broadcasters[job_id].diff_and_emit = boom  # type: ignore
+
+    async def go():
+        hub.start()
+        await asyncio.sleep(0.05)  # first cycle throws; subsequent cycles keep going
+        await hub.stop()
+
+    asyncio.run(go())
+    assert calls["n"] >= 2  # the loop ran again after the first throw -> it survived
+    assert hub._task is None  # stop() cancelled & cleared the task
