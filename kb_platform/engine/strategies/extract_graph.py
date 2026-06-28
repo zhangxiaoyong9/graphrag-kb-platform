@@ -50,7 +50,15 @@ class ExtractGraphStrategy:
     def finalize(self, repo: Repository, adapter, step, data_root: Path, min_success_ratio: float) -> StepStatus:
         units = repo.list_units(step.id)
         if not units:
-            return StepStatus.PARTIALLY_FAILED
+            # No units to process. In a full job this only happens when the KB
+            # has no chunks; in an incremental job this is the *expected* path
+            # when a deletion triggers a shrink and there are no NEW chunks to
+            # extract (all surviving chunks were already extracted previously).
+            # There are no failures, so mark the step succeeded; downstream
+            # ``merge_delta`` rebuilds entities/relationships from the on-disk
+            # extractions of the surviving chunks (writing an empty parquet when
+            # the KB is now empty).
+            return StepStatus.SUCCEEDED
         succeeded = [u for u in units if u.status == UnitStatus.SUCCEEDED]
         ratio = len(succeeded) / len(units)
         if ratio < min_success_ratio:

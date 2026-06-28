@@ -149,3 +149,51 @@ def test_retry_resolves_delta_for_incremental_job(tmp_path):
         repo=repo, adapter=FakeGraphAdapter(), data_root=str(tmp_path), strategies=override
     )
     assert retry2._strategies(step) is override
+
+
+@pytest.mark.asyncio
+async def test_delete_doc_shrinks_unique_entities_keeps_shared(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path}/kb.db")
+    Base.metadata.create_all(engine)
+    with session_scope(engine) as s:
+        s.add(KnowledgeBase(name="kb1", method="standard", settings_json="{}", data_root=str(tmp_path)))
+    repo = Repository(engine)
+    repo.add_document(kb_id=1, title="A", text="SHARED ALPHA " * 200)   # 实体 SHARED, ALPHA
+    repo.add_document(kb_id=1, title="B", text="SHARED BETA " * 200)    # 实体 SHARED, BETA
+    orch = Orchestrator(repo=repo, adapter=FakeGraphAdapter(), data_root=str(tmp_path))
+    full = repo.create_job_pending(kb_id=1, method="standard", type="full")
+    await orch.run(full.id)
+    import pandas as pd
+    assert {"SHARED", "ALPHA", "BETA"} <= set(pd.read_parquet(f"{tmp_path}/entities.parquet")["title"])
+
+    # 删文档 B，跑增量 → BETA（B 独有）消失，SHARED（A 也有）保留
+    repo.delete_document(kb_id=1, doc_id=2)
+    incr = repo.create_job_pending(kb_id=1, method="standard", type="incremental")
+    await orch.run(incr.id)
+    titles = set(pd.read_parquet(f"{tmp_path}/entities.parquet")["title"])
+    assert "BETA" not in titles
+    assert {"SHARED", "ALPHA"} <= titles
+
+
+@pytest.mark.asyncio
+async def test_delete_last_doc_yields_empty_graph(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path}/kb.db")
+    Base.metadata.create_all(engine)
+    with session_scope(engine) as s:
+        s.add(KnowledgeBase(name="kb1", method="standard", settings_json="{}", data_root=str(tmp_path)))
+    repo = Repository(engine)
+    repo.add_document(kb_id=1, title="A", text="SHARED ALPHA " * 200)
+    orch = Orchestrator(repo=repo, adapter=FakeGraphAdapter(), data_root=str(tmp_path))
+    full = repo.create_job_pending(kb_id=1, method="standard", type="full")
+    await orch.run(full.id)
+
+    repo.delete_document(kb_id=1, doc_id=1)  # 删到空
+    incr = repo.create_job_pending(kb_id=1, method="standard", type="incremental")
+    await orch.run(incr.id)
+    assert repo.get_job(incr.id).status == "succeeded"
+    import pandas as pd
+    assert len(pd.read_parquet(f"{tmp_path}/entities.parquet")) == 0
+    assert len(pd.read_parquet(f"{tmp_path}/relationships.parquet")) == 0
+    assert len(pd.read_parquet(f"{tmp_path}/communities.parquet")) == 0
+    tu = pd.read_parquet(f"{tmp_path}/text_units.parquet")
+    assert list(tu.columns) == ["id", "text", "document_ids", "n_tokens"] and len(tu) == 0
