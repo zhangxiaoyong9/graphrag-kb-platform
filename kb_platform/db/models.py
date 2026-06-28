@@ -99,3 +99,4 @@ class Unit(Base):
 # Register ProviderProfile on Base.metadata (imported after Base is defined to
 # avoid a circular import; the FK columns above reference provider_profile.id).
 from kb_platform.db.models_profile import ProviderProfile  # noqa: E402,F401
+from kb_platform.db.models_conversation import Conversation, Message  # noqa: E402,F401

@@ -14,6 +14,7 @@ from kb_platform.db.crypto import decrypt_values, encrypt_values
 from kb_platform.db.engine import session_scope
 from kb_platform.db.enums import JobStatus, StepStatus, UnitStatus
 from kb_platform.db.models import Chunk, Document, Job, KnowledgeBase, Step, Unit
+from kb_platform.db.models_conversation import Conversation, Message
 from kb_platform.db.models_profile import ProviderProfile
 from kb_platform.engine.spec import StepSpec
 
@@ -428,6 +429,11 @@ class Repository:
             kb.embedding_profile_id = embedding_profile_id
             return kb
 
+    # ---- knowledge base (read) ----
+    def get_kb(self, kb_id: int) -> KnowledgeBase | None:
+        with session_scope(self.engine) as s:
+            return s.get(KnowledgeBase, kb_id)
+
     # ---- worker: pending-job creation / claim / crash recovery ----
     def create_job_pending(self, kb_id: int, method: str = "standard", type: str = "full") -> Job:
         from kb_platform.engine.orchestrator import Orchestrator
@@ -640,3 +646,127 @@ class Repository:
     def profile_key_count(self, profile_id: int) -> int:
         p = self.get_profile(profile_id)
         return len(decrypt_values(p.api_keys_enc)) if p else 0
+
+    # --- conversations / messages -----------------------------------------
+
+    def create_conversation(self, kb_id: int, title: str | None = None) -> Conversation:
+        with session_scope(self.engine) as s:
+            c = Conversation(kb_id=kb_id, title=title or "")
+            s.add(c)
+            s.flush()
+            return c
+
+    def get_conversation(self, conversation_id: int) -> Conversation | None:
+        with session_scope(self.engine) as s:
+            return s.get(Conversation, conversation_id)
+
+    def list_conversations(self, kb_id: int) -> list[tuple[Conversation, str]]:
+        """List (conversation, last-assistant snippet) for a KB, newest-updated first."""
+        with session_scope(self.engine) as s:
+            convs = list(
+                s.scalars(
+                    select(Conversation)
+                    .where(Conversation.kb_id == kb_id)
+                    .order_by(Conversation.updated_at.desc())
+                )
+            )
+            out: list[tuple[Conversation, str]] = []
+            for c in convs:
+                snippet = s.scalar(
+                    select(Message.content)
+                    .where(Message.conversation_id == c.id, Message.role == "assistant")
+                    .order_by(Message.ordinal.desc())
+                    .limit(1)
+                ) or ""
+                out.append((c, snippet[:80]))
+            return out
+
+    def update_conversation_title(self, conversation_id: int, title: str) -> bool:
+        with session_scope(self.engine) as s:
+            c = s.get(Conversation, conversation_id)
+            if c is None:
+                return False
+            c.title = title
+            return True
+
+    def touch_conversation(self, conversation_id: int) -> None:
+        from datetime import datetime
+
+        with session_scope(self.engine) as s:
+            c = s.get(Conversation, conversation_id)
+            if c is not None:
+                c.updated_at = datetime.now()
+
+    def delete_conversation(self, conversation_id: int) -> bool:
+        """Delete a conversation and its messages (application-level cascade)."""
+        from sqlalchemy import delete as sa_delete
+
+        with session_scope(self.engine) as s:
+            c = s.get(Conversation, conversation_id)
+            if c is None:
+                return False
+            s.execute(sa_delete(Message).where(Message.conversation_id == conversation_id))
+            s.delete(c)
+            return True
+
+    def add_message(
+        self,
+        conversation_id: int,
+        *,
+        role: str,
+        content: str,
+        method: str | None = None,
+        rewritten_query: str | None = None,
+        rewrite_fell_back: bool = False,
+        sources_json: str | None = None,
+        prompt_tokens: int | None = None,
+        output_tokens: int | None = None,
+        elapsed_ms: float | None = None,
+        error: str | None = None,
+    ) -> Message:
+        with session_scope(self.engine) as s:
+            cur = s.scalar(
+                select(func.max(Message.ordinal)).where(Message.conversation_id == conversation_id)
+            )
+            ordinal = 0 if cur is None else int(cur) + 1
+            m = Message(
+                conversation_id=conversation_id,
+                ordinal=ordinal,
+                role=role,
+                content=content,
+                method=method,
+                rewritten_query=rewritten_query,
+                rewrite_fell_back=rewrite_fell_back,
+                sources_json=sources_json,
+                prompt_tokens=prompt_tokens,
+                output_tokens=output_tokens,
+                elapsed_ms=elapsed_ms,
+                error=error,
+            )
+            s.add(m)
+            s.flush()
+            return m
+
+    def get_messages(self, conversation_id: int) -> list[Message]:
+        with session_scope(self.engine) as s:
+            return list(
+                s.scalars(
+                    select(Message)
+                    .where(Message.conversation_id == conversation_id)
+                    .order_by(Message.ordinal)
+                )
+            )
+
+    def recent_messages(self, conversation_id: int, limit: int = 6) -> list[Message]:
+        """Last ``limit`` messages by ordinal, returned ascending."""
+        with session_scope(self.engine) as s:
+            rows = list(
+                s.scalars(
+                    select(Message)
+                    .where(Message.conversation_id == conversation_id)
+                    .order_by(Message.ordinal.desc())
+                    .limit(limit)
+                )
+            )
+            rows.reverse()
+            return rows
