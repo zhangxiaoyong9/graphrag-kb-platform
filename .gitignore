@@ -16,3 +16,6 @@ web/test-results/
 web/playwright-report/
 
 .worktrees/
+
+# Playwright MCP browser snapshots (local tooling artifacts)
+.playwright-mcp/
