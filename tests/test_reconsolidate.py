@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from kb_platform.db.engine import create_engine, session_scope
 from kb_platform.db.enums import StepKind
-from kb_platform.db.models import Base, Job, KnowledgeBase
+from kb_platform.db.models import Base, Chunk, Document, Job, KnowledgeBase
 from kb_platform.db.repository import Repository
 from kb_platform.engine.spec import StepSpec
 from kb_platform.graph.adapter import FakeGraphAdapter
@@ -24,6 +24,13 @@ async def test_reconsolidate_clears_flag_and_incorporates_late_data(tmp_path):
             )
         )
     repo = Repository(engine)
+    # The late unit's chunk still exists in the control plane (a retried unit's
+    # chunk is never deleted); merge_delta now treats the chunk table as the
+    # source of truth, so seed a live Document + Chunk for "late-chunk".
+    with session_scope(engine) as s:
+        s.add(Document(id=1, kb_id=1, title="d1", source_uri="", content_hash="h1", status="parsed", bytes=1, text="t"))
+        s.flush()
+        s.add(Chunk(chunk_id="late-chunk", kb_id=1, document_id=1, ordinal=0, text="late-chunk"))
     # A needs_reconsolidation extract_graph unit whose extraction is on disk.
     step = repo.create_job(
         kb_id=1,

@@ -1,6 +1,7 @@
 """Atomic (non-unit) indexing steps."""
 
 import json
+import logging
 from pathlib import Path
 
 import pandas as pd
@@ -9,6 +10,8 @@ from sqlalchemy import select
 from kb_platform.db.engine import session_scope
 from kb_platform.db.models import KnowledgeBase
 from kb_platform.db.repository import Repository
+
+logger = logging.getLogger(__name__)
 
 
 def _data_root(repo: Repository, step) -> Path:
@@ -35,17 +38,31 @@ def create_communities(repo: Repository, adapter, step) -> None:
 
 
 def merge_delta(repo: Repository, adapter, step) -> None:
-    """Re-merge ALL on-disk chunk extractions (old cached + new) -> entities/relationships parquet.
+    """Re-merge on-disk chunk extractions whose chunk still exists in the control plane.
 
-    No LLM: all extractions are cached on disk under ``data_root/extractions/*.json``.
+    Extractions are cached per chunk under ``data_root/extractions/<chunk_id>.json``.
+    A document deletion removes the Chunk row but leaves its extraction file behind,
+    so globbing every file would re-merge orphans and keep deleted entities alive.
+    The chunk table is the source of truth: only extractions whose ``chunk_id`` is
+    still present are loaded, and orphan files are best-effort pruned (an unlink
+    failure never blocks the merge — the filter already guarantees correctness).
+    No LLM.
     """
     from kb_platform.graph.adapter import ExtractionResult
 
     root = _data_root(repo, step)
+    job = repo.get_job(step.job_id)
+    live = {c.chunk_id for c in repo.get_chunks(job.kb_id)}
     extraction_dir = root / "extractions"
     results: list[ExtractionResult] = []
     if extraction_dir.exists():
         for p in sorted(extraction_dir.glob("*.json")):
+            if p.stem not in live:
+                try:
+                    p.unlink(missing_ok=True)
+                except OSError:
+                    logger.warning("merge_delta: could not prune orphan extraction %s", p)
+                continue
             raw = json.loads(p.read_text())
             results.append(
                 ExtractionResult(
