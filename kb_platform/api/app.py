@@ -8,6 +8,7 @@ catch-all, so explicit API routes (like `GET /kbs`) always win.
 """
 
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -22,6 +23,7 @@ from kb_platform.api.routes_jobs import router as jobs_router
 from kb_platform.api.routes_kbs import router
 from kb_platform.api.routes_profiles import router as profiles_router
 from kb_platform.api.routes_query import router as query_router
+from kb_platform.api.routes_realtime import router as realtime_router
 from kb_platform.db.repository import Repository
 from kb_platform.query.engine import QueryEngine
 
@@ -39,8 +41,26 @@ def create_app(
 
     If the SPA build directory (`WEB_DIST`) exists, static SPA hosting with
     history fallback is mounted AFTER all API routers, so API routes win.
+
+    A ``lifespan`` starts/stops the realtime hub (WebSocket progress push). The
+    hub lives on ``app.state.realtime`` and is only present when the app runs its
+    lifespan (production uvicorn + ``with TestClient(app)`` in tests).
     """
-    app = FastAPI(title="KB Platform")
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        from kb_platform.api.realtime import RealtimeHub
+
+        interval_ms = float(os.environ.get("KB_POLL_INTERVAL_MS", "500"))
+        hub = RealtimeHub(repo=app.state.repo, interval=interval_ms / 1000.0)
+        app.state.realtime = hub
+        hub.start()
+        try:
+            yield
+        finally:
+            await hub.stop()
+
+    app = FastAPI(title="KB Platform", lifespan=lifespan)
     app.state.repo = repo
     app.state.data_root = data_root
     app.state.query_engine = (
@@ -56,6 +76,7 @@ def create_app(
     app.include_router(export_router)
     app.include_router(graph_router)
     app.include_router(profiles_router)
+    app.include_router(realtime_router)
 
     dist = Path(WEB_DIST)
     if dist.exists():
