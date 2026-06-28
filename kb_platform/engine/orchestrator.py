@@ -119,6 +119,13 @@ class Orchestrator:
                 from kb_platform.reconsolidate import reconsolidate
 
                 await reconsolidate(self.repo, self.adapter, job.kb_id, self.data_root)
+            # Graph-scale stats snapshot (best-effort; never fails the job).
+            try:
+                from kb_platform.engine.kb_stats import write_kb_stats
+
+                write_kb_stats(self.repo, job.kb_id)
+            except Exception:
+                logger.exception("write_kb_stats failed for kb %s; stats may be stale", job.kb_id)
         except Exception:
             logger.exception("job %s failed", job_id)
             self.repo.set_job_status(job_id, JobStatus.FAILED)

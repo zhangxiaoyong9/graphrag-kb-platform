@@ -46,6 +46,35 @@ async def test_orchestrator_runs_pipeline_and_writes_parquet(setup):
     assert not entities.empty
     job2 = repo.get_job(job.id)
     assert job2.status == "succeeded"
+    # stats.json snapshot written at full-job end.
+    import json
+    from pathlib import Path
+
+    stats = json.loads(Path(data_root, "stats.json").read_text())
+    assert stats["entity_count"] >= 1
+    assert stats["document_count"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_job_succeeds_even_if_write_kb_stats_raises(setup, monkeypatch):
+    """write_kb_stats is best-effort: a failure must not fail the job."""
+    from kb_platform.engine import kb_stats
+
+    def boom(repo, kb_id):
+        raise RuntimeError("stats exploded")
+
+    monkeypatch.setattr(kb_stats, "write_kb_stats", boom)
+
+    repo, data_root = setup
+    from kb_platform.graph.adapter import FakeGraphAdapter
+    from kb_platform.graph.vector_store import FakeVectorStore
+
+    orch = Orchestrator(
+        repo=repo, adapter=FakeGraphAdapter(), data_root=data_root, vector_store=FakeVectorStore(dim=8)
+    )
+    job = repo.create_job(kb_id=1, type="full", specs=Orchestrator.plan_full())
+    await orch.run(job.id)
+    assert repo.get_job(job.id).status == "succeeded"
 
 
 def test_plan_has_seven_steps():

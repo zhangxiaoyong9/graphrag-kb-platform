@@ -77,6 +77,17 @@ async def test_full_then_incremental_only_llms_new_chunks(kb):
 
     assert all(u.kind == UnitKind.SUMMARIZE_DESCRIPTIONS for u in incr_summ_units)
 
+    # A2: update_clean_state rebuilt text_units.parquet to include doc B's new
+    # chunks (the incremental gap fix), and stats.json was written at job end.
+    import json
+
+    tu = pd.read_parquet(f"{data_root}/text_units.parquet")
+    assert incr_chunk_ids.issubset(set(tu["id"])), "new chunks missing from text_units.parquet"
+    from pathlib import Path
+
+    stats = json.loads(Path(data_root, "stats.json").read_text())
+    assert stats["entity_count"] >= 1
+
 
 def test_incremental_uses_delta_strategies():
     """Incremental summarize/community_reports resolve to the Delta variants; full does not."""
