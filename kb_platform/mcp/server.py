@@ -42,8 +42,37 @@ class KbApiClient:
         return await self._get_json("/kbs")
 
     async def query(self, kb_id: int, method: str, query: str) -> dict:
-        """POST /kbs/{id}/query → full QueryResultOut dict."""
-        return await self._post_json(f"/kbs/{kb_id}/query", {"method": method, "query": query})
+        """POST /kbs/{id}/query → aggregate the SSE stream into a single result dict.
+
+        The endpoint streams ``meta``/``delta``/``done``/``error`` events; we
+        concatenate the ``delta`` text and lift sources/metadata off ``done`` so
+        MCP tool callers still get one ``{answer, method, sources, ...}`` object.
+        """
+        from kb_platform.api.sse import iter_sse_events
+
+        path = f"/kbs/{kb_id}/query"
+        try:
+            async with self._http.stream(
+                "POST", path, json={"method": method, "query": query}
+            ) as resp:
+                if resp.status_code >= 400:
+                    body = (await resp.aread()).decode(errors="replace")[:200]
+                    raise KbApiError(f"POST {path} -> {resp.status_code}: {body}")
+                answer_parts: list[str] = []
+                result: dict = {"answer": "", "method": method}
+                async for event, data in iter_sse_events(resp.aiter_lines()):
+                    if event == "delta":
+                        answer_parts.append(data.get("text", ""))
+                    elif event == "done":
+                        result = data.get("result") or result
+                    elif event == "error":
+                        result["error"] = data.get("message", "stream error")
+                result["answer"] = result.get("answer") or "".join(answer_parts)
+                if not result.get("method"):
+                    result["method"] = method
+                return result
+        except httpx.HTTPError as exc:
+            raise KbApiError(f"POST {path} failed: {exc}") from exc
 
     async def aclose(self) -> None:
         if self._owns_http:

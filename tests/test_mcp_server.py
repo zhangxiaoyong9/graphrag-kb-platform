@@ -72,6 +72,20 @@ async def test_client_query_round_trips_through_api(app):
         await http.aclose()
 
 
+async def test_client_query_aggregates_sse_stream(app):
+    """POST /kbs/{id}/query now returns SSE; the client must aggregate it into a
+    single result dict (same shape the tool returns)."""
+    client, http = await _client_for(app)
+    try:
+        res = await client.query(kb_id=1, method="local", query="what is ACME?")
+        assert res["method"] == "local"
+        assert "ACME" in res["answer"]  # deltas were concatenated
+        # graceful when the (fake) stream carries no error
+        assert "error" not in res or res["error"] is None
+    finally:
+        await http.aclose()
+
+
 async def test_client_raises_on_unreachable_api():
     from kb_platform.mcp.server import KbApiError, KbApiClient
 
