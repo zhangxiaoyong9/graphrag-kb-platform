@@ -97,7 +97,7 @@ class QueryEngine(Protocol):
 ### 3.3 GraphRagQueryEngine.stream_search 实现
 
 1. **抽公用构造器:** 把 `_run_graphrag_search` 内"读 parquet → norm → `read_indexer_*` → 按 method 选 factory + 参数"那段抽成 `_build_engine(method, root) -> engine`(含 reports 缺失守卫、`_resolve_config`、embedding store)。`search` 与 `stream_search` 共用,避免双份维护。
-2. **套 `_StreamFixWrapper`:** 流式路径下四种方法都会 `await self.model.completion_async(..., stream=True)`,均需把 `engine.model` 包成 `_StreamFixWrapper`(当前只有 basic 在阻塞路径包)。统一在 `_build_engine` 后包一次。
+2. **无需 `_StreamFixWrapper`(经源码核实):** 四种方法的 `stream_search` 都**正确 `await`** 了 `self.model.completion_async(..., stream=True)`(local/global/drift/basic 均是 `resp = await self.model.completion_async(stream=True)` 再 `async for`),因此流式路径**不套** `_StreamFixWrapper`。只有 basic 的**阻塞** `search()` 因不 `await` 仍需该 wrapper —— 保持现状不变。`_build_engine` 返回裸引擎,不包 model。
 3. **注册 `SourceCapturingCallback`:** 实现 `graphrag.callbacks.query_callbacks.QueryCallbacks`,`on_context(context)` 把 context_records 存进实例属性;其余方法空实现。在 `_build_engine` 时 `callbacks=[capturer]` 传入(local/global/basic 在 `stream_search` 内触发 `on_context`;drift 触发 `on_reduce_response_start`)。
 4. **驱动流式:** 计时开始 → `async for chunk in engine.stream_search(query): yield StreamDelta(chunk)` → 计时结束 → 用 capturer 的 context 走既有 `_extract_sources(context_data, method)` → `yield StreamDone(method, elapsed_ms, sources=…, error=None)`。
 5. **错误兜底:** 全程 try/except → `yield StreamDone(method, error=str(e), elapsed_ms=…)`(不抛,让端点转成 `error` 事件)。reports 缺失等前置守卫同样以 `StreamDone(error=…)` 收尾。
@@ -170,7 +170,7 @@ async def send_streaming(self, conversation_id, content, method) -> AsyncIterato
 ## 6. 测试策略
 
 - **引擎层(`tests/test_query_engine.py` 扩展):** `FakeQueryEngine.stream_search` 吐确定性 delta + `StreamDone`;断言 delta/done 序列与契约(恰好一个 done)。
-- **GraphRag 引擎:** 因需真 graphrag index,以 `FakeGraphAdapter` 产出的轻量 index + mock completion 验证 `_build_engine` 共用、`SourceCapturingCallback` 捕 context、`_StreamFixWrapper` 套用(不跑真 LLM)。
+- **GraphRag 引擎:** 因需真 graphrag index,以 monkey-patch `_build_engine` 返回假引擎(其 `stream_search` 吐已知增量并触发 `on_context`)验证 `stream_search` 接线(delta→StreamDelta、done→StreamDone、sources 经 capturer→`_extract_sources`);另单测 `_SourceCapturingCallback`(不跑真 LLM、不读 parquet)。
 - **SSE 端点(`tests/test_api_query_stream.py` 新建):** httpx `AsyncClient` 流式读,断言 `meta → delta* → done` 事件序列与 `MessageOut`/`QueryResultOut` 装载;错误路径吐 `error`。
 - **ConversationService(`tests/test_conversation.py` 扩展):** `send_streaming` 用 fake 引擎断言:改写 → meta → 落 user → 流式累加 → 落 assistant(全文+sources)→ done。
 - **MCP(`tests/test_mcp.py` 扩展):** `KbApiClient.query` 消费一段固定 SSE 文本 → 聚合成正确 `QueryResult`;`query_knowledge_base` 工具返回单个结果。
