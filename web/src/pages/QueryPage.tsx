@@ -63,7 +63,11 @@ export default function QueryPage() {
       temperature: temp ? Number(temp) : null,
       system_prompt: sysPrompt || null,
     });
-    setPresets(await listQueryPresets());
+    try {
+      setPresets(await listQueryPresets());
+    } catch {
+      /* best-effort reload; keep the stale list on failure */
+    }
   };
 
   const ask = async () => {

@@ -109,4 +109,6 @@ test("selecting a preset fills the knobs", async () => {
   await waitFor(() =>
     expect((screen.getByLabelText("community_level") as HTMLInputElement).value).toBe("1"),
   );
+  // preset also switched the method to global: top_k only renders for local/basic
+  expect(screen.queryByLabelText("top_k")).not.toBeInTheDocument();
 });
