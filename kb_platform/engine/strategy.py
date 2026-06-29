@@ -1,5 +1,7 @@
 """Unit-step strategy abstraction."""
 
+import hashlib
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -12,6 +14,23 @@ from kb_platform.db.repository import Repository
 class Subject:
     subject_type: str
     subject_id: str
+
+
+def subject_filename(subject_id: str) -> str:
+    """Filesystem-safe JSON filename (incl. ``.json``) for a unit ``subject_id``.
+
+    The SUMMARIZE_DESCRIPTIONS subject is an entity *title*, which LLM extraction
+    can fill with '/', ':' (URLs, paths), or any unicode — using it verbatim as a
+    filename turns ``summaries/"http:/x/y.json"`` into a non-existent subdirectory
+    and raises ``FileNotFoundError``. We sanitize to a path-safe stem and append a
+    short sha256 suffix so two distinct subjects never collide even when their
+    sanitized stems are identical. Deterministic, so persist and finalize always
+    agree on the same path.
+    """
+    key = str(subject_id)
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+    stem = re.sub(r"[^A-Za-z0-9._-]", "_", key)[:48]
+    return f"{stem}__{digest}.json"
 
 
 @dataclass

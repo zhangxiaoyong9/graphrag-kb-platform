@@ -11,7 +11,7 @@ from kb_platform.db.engine import session_scope
 from kb_platform.db.enums import StepStatus, UnitKind, UnitStatus
 from kb_platform.db.models import KnowledgeBase
 from kb_platform.db.repository import Repository
-from kb_platform.engine.strategy import Subject, UnitResult
+from kb_platform.engine.strategy import Subject, UnitResult, subject_filename
 
 
 class SummarizeDescriptionsStrategy:
@@ -66,7 +66,11 @@ class SummarizeDescriptionsStrategy:
     def persist(self, data_root: Path, unit, result: UnitResult) -> None:
         d = data_root / "summaries"
         d.mkdir(parents=True, exist_ok=True)
-        (d / f"{unit.subject_id}.json").write_text(json.dumps({"summary": result.payload}))
+        # subject_id is an entity title, which can contain '/'/':' — use a
+        # filesystem-safe name so we don't write into a non-existent subdir.
+        (d / subject_filename(unit.subject_id)).write_text(
+            json.dumps({"summary": result.payload})
+        )
 
     def finalize(self, repo: Repository, adapter, step, data_root: Path, min_success_ratio: float) -> StepStatus:
         units = repo.list_units(step.id)
@@ -77,7 +81,7 @@ class SummarizeDescriptionsStrategy:
                 return StepStatus.PARTIALLY_FAILED
             summaries = {}
             for u in succeeded:
-                p = data_root / "summaries" / f"{u.subject_id}.json"
+                p = data_root / "summaries" / subject_filename(u.subject_id)
                 if p.exists():
                     summaries[u.subject_id] = json.loads(p.read_text())["summary"]
 

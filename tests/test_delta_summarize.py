@@ -1,6 +1,8 @@
 import hashlib
 import json
 
+from kb_platform.engine.strategy import subject_filename
+
 
 def _entities_parquet(tmp_path, rows):
     import pandas as pd
@@ -77,7 +79,9 @@ def test_delta_summarize_finalize_carries_over(tmp_path):
     )
     (tmp_path / "summaries").mkdir()
     # B was summarized in a PRIOR job (carry-over, not a unit in this job):
-    (tmp_path / "summaries" / "B.json").write_text(json.dumps({"summary": "B carried over"}))
+    (tmp_path / "summaries" / subject_filename("B")).write_text(
+        json.dumps({"summary": "B carried over"})
+    )
     with session_scope(repo.engine) as s:
         s.add(KnowledgeBase(id=1, name="k", settings_json="{}", data_root=str(tmp_path)))
         s.flush()
@@ -106,7 +110,7 @@ def test_delta_summarize_finalize_carries_over(tmp_path):
         )
         s.flush()
         step = s.get(Step, 1)
-    (tmp_path / "summaries" / "A.json").write_text(json.dumps({"summary": "A fresh"}))
+    (tmp_path / "summaries" / subject_filename("A")).write_text(json.dumps({"summary": "A fresh"}))
 
     from kb_platform.graph.adapter import FakeGraphAdapter
 

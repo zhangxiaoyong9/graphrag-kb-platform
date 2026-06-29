@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 
 from kb_platform.db.enums import StepStatus, UnitStatus
-from kb_platform.engine.strategy import Subject
+from kb_platform.engine.strategy import Subject, subject_filename
 from kb_platform.engine.strategies.community_reports import (
     CommunityReportsStrategy,
     _data_root,
@@ -52,7 +52,7 @@ class SummarizeDeltaStrategy(SummarizeDescriptionsStrategy):
         # Carry-over: every on-disk summary (from prior jobs) for entities in this graph.
         sdir = data_root / "summaries"
         for title in ents["title"]:
-            p = sdir / f"{title}.json"
+            p = sdir / subject_filename(title)
             if p.exists():
                 summaries[str(title)] = json.loads(p.read_text())["summary"]
         # min_success_ratio applies to THIS job's units only:
