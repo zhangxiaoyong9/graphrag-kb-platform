@@ -13,7 +13,7 @@ from sqlalchemy.orm import selectinload
 from kb_platform.db.crypto import decrypt_values, encrypt_values
 from kb_platform.db.engine import session_scope
 from kb_platform.db.enums import JobStatus, StepStatus, UnitStatus
-from kb_platform.db.models import Chunk, Document, Job, KnowledgeBase, Step, Unit
+from kb_platform.db.models import Chunk, Document, Job, KnowledgeBase, QueryPreset, Step, Unit
 from kb_platform.db.models_conversation import Conversation, Message
 from kb_platform.db.models_profile import ProviderProfile
 from kb_platform.engine.spec import StepSpec
@@ -24,6 +24,7 @@ class Repository:
 
     def __init__(self, engine: Engine) -> None:
         self.engine = engine
+        self._seed_builtin_presets()
 
     # ---- documents / chunks ----
     def add_document(self, kb_id: int, title: str, text: str, source_uri: str = "") -> Document:
@@ -770,3 +771,97 @@ class Repository:
             )
             rows.reverse()
             return rows
+
+    # --- query presets ------------------------------------------------------
+
+    def _seed_builtin_presets(self) -> None:
+        """Idempotently insert the built-in presets.
+
+        Alembic 0007 seeds production DBs via ``op.bulk_insert``; in-memory test
+        DBs created via ``Base.metadata.create_all`` bypass Alembic, so this
+        method makes built-ins available there too. The table may not exist yet
+        when a caller constructs ``Repository`` *before* creating the schema
+        (some existing tests do ``Repository(create_engine(...))`` then
+        ``Base.metadata.create_all``); in that case we silently skip — the seed
+        is only meaningful once the table is present, and create_all doesn't
+        re-invoke ``__init__``.
+        """
+        from sqlalchemy import inspect as sa_inspect
+
+        if "query_preset" not in sa_inspect(self.engine).get_table_names():
+            return
+        with session_scope(self.engine) as s:
+            existing = {row[0] for row in s.execute(select(QueryPreset.name)).all()}
+            for p in _BUILTIN_PRESETS:
+                if p["name"] not in existing:
+                    s.add(QueryPreset(**p))
+
+    def list_query_presets(self) -> list[QueryPreset]:
+        """All presets, built-ins first then alphabetical by name."""
+        with session_scope(self.engine) as s:
+            return list(
+                s.scalars(
+                    select(QueryPreset).order_by(
+                        QueryPreset.is_builtin.desc(), QueryPreset.name
+                    )
+                )
+            )
+
+    def get_query_preset(self, preset_id: int) -> QueryPreset | None:
+        with session_scope(self.engine) as s:
+            return s.get(QueryPreset, preset_id)
+
+    def create_query_preset(self, **fields) -> QueryPreset:
+        with session_scope(self.engine) as s:
+            p = QueryPreset(**fields)
+            s.add(p)
+            s.flush()
+            return p
+
+    def update_query_preset(self, preset_id: int, **fields) -> QueryPreset | None:
+        with session_scope(self.engine) as s:
+            p = s.get(QueryPreset, preset_id)
+            if p is None:
+                return None
+            for k, v in fields.items():
+                setattr(p, k, v)
+            s.flush()
+            return p
+
+    def delete_query_preset(self, preset_id: int) -> bool:
+        with session_scope(self.engine) as s:
+            p = s.get(QueryPreset, preset_id)
+            if p is None:
+                return False
+            s.delete(p)
+            return True
+
+
+# Built-in presets seeded into every new Repository. Duplicated in Alembic
+# migration 0007_query_presets.py (op.bulk_insert for production DBs); keep the
+# two lists in sync when editing.
+_BUILTIN_PRESETS = [
+    {
+        "name": "默认",
+        "description": "graphrag 默认行为",
+        "method": "local",
+        "is_builtin": True,
+    },
+    {
+        "name": "简洁要点",
+        "description": "单段、低温、更确定",
+        "method": "local",
+        "response_type": "single paragraph",
+        "temperature": 0.2,
+        "is_builtin": True,
+    },
+    {
+        "name": "详尽调研",
+        "description": "global、粗社区、多段",
+        "method": "global",
+        "community_level": 1,
+        "response_type": "multiple paragraphs",
+        "temperature": 0.3,
+        "is_builtin": True,
+    },
+]

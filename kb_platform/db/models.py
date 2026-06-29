@@ -4,7 +4,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from kb_platform.db.enums import JobStatus, StepKind, StepStatus, UnitKind, UnitStatus
@@ -100,3 +100,26 @@ class Unit(Base):
 # avoid a circular import; the FK columns above reference provider_profile.id).
 from kb_platform.db.models_profile import ProviderProfile  # noqa: E402,F401
 from kb_platform.db.models_conversation import Conversation, Message  # noqa: E402,F401
+
+
+class QueryPreset(Base):
+    """A named, reusable bundle of query-tuning params (A3).
+
+    Global across KBs; not scoped to any one KB. Built-in presets (is_builtin)
+    are seeded by Alembic 0007 (production) and Repository._seed_builtin_presets
+    (in-memory test DBs created via Base.metadata.create_all).
+    """
+
+    __tablename__ = "query_preset"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String, unique=True)
+    description: Mapped[str] = mapped_column(String, default="", server_default="")
+    method: Mapped[str] = mapped_column(String)  # local|global|drift|basic
+    community_level: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    response_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    top_k: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    temperature: Mapped[float | None] = mapped_column(Float, nullable=True)
+    system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_builtin: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
