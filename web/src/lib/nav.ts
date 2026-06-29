@@ -44,6 +44,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: "/query", label: "检索测试", icon: IconSearch },
       { to: "/chat", label: "问答对话", icon: IconChat },
+      { to: "/query-presets", label: "检索预设", icon: IconSearch },
     ],
   },
   {

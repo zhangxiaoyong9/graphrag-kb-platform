@@ -24,6 +24,7 @@ import AnalyticsPage from "./pages/AnalyticsPage";
 import SettingsPage from "./pages/SettingsPage";
 import ProviderProfilesPage from "./pages/ProviderProfilesPage";
 import ApiKeysPage from "./pages/ApiKeysPage";
+import QueryPresetsPage from "./pages/QueryPresetsPage";
 
 export default function App() {
   return (
@@ -55,6 +56,7 @@ export default function App() {
         <Route path="/graph" element={<GraphCenterPage />} />
         <Route path="/query" element={<QueryTestPage />} />
         <Route path="/chat" element={<ChatPage />} />
+        <Route path="/query-presets" element={<QueryPresetsPage />} />
         <Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/provider-profiles" element={<ProviderProfilesPage />} />
