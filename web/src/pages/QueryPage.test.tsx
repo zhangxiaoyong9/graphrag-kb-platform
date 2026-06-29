@@ -64,3 +64,49 @@ test(
   },
   20000,
 );
+
+test("tuning panel is collapsed by default and opens on click", async () => {
+  render(
+    <KbContext.Provider value={kbCtx}>
+      <QueryPage />
+    </KbContext.Provider>,
+  );
+  expect(screen.queryByLabelText("community_level")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /调参/ }));
+  expect(await screen.findByLabelText("community_level")).toBeInTheDocument();
+});
+
+test("top_k is hidden for global method", async () => {
+  render(
+    <KbContext.Provider value={kbCtx}>
+      <QueryPage />
+    </KbContext.Provider>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: /调参/ }));
+  await screen.findByLabelText("community_level");
+  fireEvent.click(screen.getByText("global").closest("button")!);
+  expect(screen.queryByLabelText("top_k")).not.toBeInTheDocument();
+});
+
+test("selecting a preset fills the knobs", async () => {
+  server.use(
+    http.get("/query-presets", () =>
+      HttpResponse.json([
+        { id: 9, name: "详尽调研", description: "", method: "global",
+          community_level: 1, response_type: "multiple paragraphs",
+          temperature: 0.3, is_builtin: true },
+      ]),
+    ),
+  );
+  render(
+    <KbContext.Provider value={kbCtx}>
+      <QueryPage />
+    </KbContext.Provider>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: /调参/ }));
+  const select = await screen.findByLabelText("预设");
+  fireEvent.change(select, { target: { value: "详尽调研" } });
+  await waitFor(() =>
+    expect((screen.getByLabelText("community_level") as HTMLInputElement).value).toBe("1"),
+  );
+});
