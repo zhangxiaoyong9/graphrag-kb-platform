@@ -1,6 +1,6 @@
 """ConversationService: rewrite + retrieve + persist, above the QueryEngine."""
 from kb_platform.conversation.rewriter import FakeRewriter, RewriteResult
-from kb_platform.conversation.service import ConversationService
+from kb_platform.conversation.service import ConversationService, StreamEvent
 from kb_platform.db.engine import create_engine, session_scope
 from kb_platform.db.models import Base, KnowledgeBase
 from kb_platform.db.repository import Repository
@@ -97,3 +97,42 @@ async def test_auto_title_from_first_message(tmp_path):
     svc = ConversationService(repo, FakeQueryEngine(), FakeRewriter(), data_root=".")
     await svc.send(cid, "Tell me everything about the Acme corporation", None)
     assert repo.get_conversation(cid).title.startswith("Tell me everything about the Acme")
+
+
+async def _drain(gen) -> list[StreamEvent]:
+    return [e async for e in gen]
+
+
+async def test_send_streaming_first_turn_meta_delta_done(tmp_path):
+    repo = _setup(tmp_path)
+    cid = repo.create_conversation(1).id
+    svc = ConversationService(repo, FakeQueryEngine(), None, data_root=".")
+    events = await _drain(svc.send_streaming(cid, "What does Acme do?", None))
+    assert [e.type for e in events[:1]] == ["meta"]
+    assert events[0].data["method"] == "local"
+    assert "rewritten_query" not in events[0].data  # first turn: no rewrite
+    deltas = [e for e in events if e.type == "delta"]
+    assert deltas  # at least one streamed chunk
+    terminals = [e for e in events if e.type in ("done", "error")]
+    assert len(terminals) == 1 and terminals[0].type == "done"
+    done = terminals[0]
+    # done carries the persisted assistant message
+    assert done.message.role == "assistant"
+    assert "What does Acme do?" in done.message.content
+    # persisted to DB exactly once (user + assistant)
+    rows = repo.get_messages(cid)
+    assert [r.role for r in rows] == ["user", "assistant"]
+
+
+async def test_send_streaming_followup_rewrites(tmp_path):
+    repo = _setup(tmp_path)
+    cid = repo.create_conversation(1).id
+    rw = _RecordingRewriter()
+    svc = ConversationService(repo, FakeQueryEngine(), rw, data_root=".")
+    await svc.send(cid, "What does Acme do?", "global")  # seed a turn
+    events = await _drain(svc.send_streaming(cid, "who is the CEO?", None))
+    meta = next(e for e in events if e.type == "meta")
+    assert meta.data["rewritten_query"] == "REWRITTEN::who is the CEO?"
+    assert meta.data["method"] == "global"  # defaulted from prior assistant
+    done = next(e for e in events if e.type == "done")
+    assert "REWRITTEN::who is the CEO?" in done.message.content

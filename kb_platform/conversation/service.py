@@ -12,11 +12,28 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
+from typing import Any
 
 from kb_platform.conversation.rewriter import HistoryTurn, Rewriter
-from kb_platform.query.engine import SourceRef
+from kb_platform.query.engine import SourceRef, StreamDone, StreamDelta
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class StreamEvent:
+    """One SSE-bound event from ``send_streaming``.
+
+    ``data`` is the JSON-serializable payload for meta/delta/error. For ``done``
+    the persisted ORM ``Message`` is carried on ``message`` and serialized by the
+    route (the service stays free of ``api.models``).
+    """
+
+    type: str  # "meta" | "delta" | "done" | "error"
+    data: dict = field(default_factory=dict)
+    message: Any = None  # ORM Message, set only for type == "done"
 
 
 class ConversationService:
@@ -35,21 +52,9 @@ class ConversationService:
         history = [HistoryTurn(r.role, r.content) for r in history_rows]
         chosen_method = method or _last_method(history_rows) or "local"
 
-        rewrote = False
-        rewrite_fell_back = False
-        rw_pt = 0
-        rw_ot = 0
-        standalone = content
-        if history and self._rewriter is not None:
-            try:
-                rr = await self._rewriter.rewrite(content, history)
-                standalone = rr.standalone
-                rw_pt = rr.prompt_tokens
-                rw_ot = rr.output_tokens
-                rewrote = True
-            except Exception:  # noqa: BLE001 - fall back to raw message, never block
-                logger.exception("query rewrite failed; falling back to raw message")
-                rewrite_fell_back = True
+        rewrote, rewrite_fell_back, rw_pt, rw_ot, standalone = await self._rewrite_once(
+            content, history
+        )
 
         # Persist the user message first (always).
         self._repo.add_message(conversation_id, role="user", content=content)
@@ -73,6 +78,78 @@ class ConversationService:
         if not conv.title:
             self._repo.update_conversation_title(conversation_id, _title_from(content))
         return assistant
+
+    async def _rewrite_once(self, content, history):
+        """Run the rewriter if there is history. Returns
+        (rewrote, rewrite_fell_back, prompt_tokens, output_tokens, standalone)."""
+        if not history or self._rewriter is None:
+            return False, False, 0, 0, content
+        try:
+            rr = await self._rewriter.rewrite(content, history)
+            return True, False, rr.prompt_tokens, rr.output_tokens, rr.standalone
+        except Exception:  # noqa: BLE001 - fall back to raw message, never block
+            logger.exception("query rewrite failed; falling back to raw message")
+            return False, True, 0, 0, content
+
+    async def send_streaming(
+        self, conversation_id: int, content: str, method: str | None
+    ) -> AsyncIterator[StreamEvent]:
+        """Streaming variant of ``send``: rewrite -> meta -> persist user ->
+        stream answer deltas -> persist assistant -> done|error."""
+        conv = self._repo.get_conversation(conversation_id)
+        if conv is None:
+            return
+
+        history_rows = self._repo.recent_messages(conversation_id)
+        history = [HistoryTurn(r.role, r.content) for r in history_rows]
+        chosen_method = method or _last_method(history_rows) or "local"
+
+        rewrote, rewrite_fell_back, rw_pt, rw_ot, standalone = await self._rewrite_once(
+            content, history
+        )
+        meta = {"method": chosen_method, "rewrite_fell_back": rewrite_fell_back}
+        if rewrote:
+            meta["rewritten_query"] = standalone
+        yield StreamEvent("meta", meta)
+
+        self._repo.add_message(conversation_id, role="user", content=content)
+
+        accumulated = ""
+        done: StreamDone | None = None
+        async for ev in self._engine.stream_search(
+            chosen_method, standalone, self._data_root
+        ):
+            if isinstance(ev, StreamDelta):
+                accumulated += ev.text
+                yield StreamEvent("delta", {"text": ev.text})
+            else:  # StreamDone
+                done = ev
+        if done is None:  # engine misbehaved; synthesize an error terminal
+            done = StreamDone(method=chosen_method, error="stream ended without a done event")
+        if done.answer:
+            accumulated = done.answer  # prefer the engine's authoritative full text
+
+        assistant = self._repo.add_message(
+            conversation_id,
+            role="assistant",
+            content=accumulated or (done.error or ""),
+            method=chosen_method,
+            rewritten_query=standalone if rewrote else None,
+            rewrite_fell_back=rewrite_fell_back,
+            sources_json=_serialize_sources(done.sources),
+            prompt_tokens=_merge_tokens(rw_pt, done.prompt_tokens),
+            output_tokens=_merge_tokens(rw_ot, done.output_tokens),
+            elapsed_ms=done.elapsed_ms,
+            error=done.error,
+        )
+        self._repo.touch_conversation(conversation_id)
+        if not conv.title:
+            self._repo.update_conversation_title(conversation_id, _title_from(content))
+
+        if done.error:
+            yield StreamEvent("error", {"message": done.error})
+        else:
+            yield StreamEvent("done", {}, message=assistant)
 
 
 def _last_method(history_rows) -> str | None:
