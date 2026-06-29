@@ -39,3 +39,12 @@ async def test_iter_sse_events_from_async_lines():
     lines = blob.split("\n")
     out = [ev async for ev in iter_sse_events(_aiter(lines))]
     assert out == [("delta", {"text": "x"}), ("done", {"ok": True})]
+
+
+@pytest.mark.asyncio
+async def test_iter_sse_events_flushes_event_without_terminating_blank_line():
+    # No trailing "" — the last event has no terminating blank line, as can
+    # happen on the final chunk of a stream. iter_sse_events must still emit it.
+    lines = ["event: delta", 'data: {"text": "x"}', "event: done", 'data: {"ok": true}']
+    out = [ev async for ev in iter_sse_events(_aiter(lines))]
+    assert out == [("delta", {"text": "x"}), ("done", {"ok": True})]

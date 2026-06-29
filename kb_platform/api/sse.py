@@ -50,6 +50,12 @@ async def iter_sse_events(line_aiter: AsyncIterator[str]) -> AsyncIterator[tuple
     data_lines: list[str] = []
     async for line in line_aiter:
         if line.startswith("event: "):
+            # a new event implicitly terminates the previous one if no blank
+            # line separated them (missing terminator on an inner event)
+            if event is not None:
+                payload = json.loads("".join(data_lines)) if data_lines else {}
+                yield event, payload
+                data_lines = []
             event = line[len("event: ") :]
         elif line.startswith("data: "):
             data_lines.append(line[len("data: ") :])
