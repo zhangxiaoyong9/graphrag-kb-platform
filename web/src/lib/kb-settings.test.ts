@@ -108,3 +108,29 @@ describe("parseSettings", () => {
     expect(s.communityReports.maxLength).toBe(DEFAULTS.communityReports.maxLength);
   });
 });
+
+describe("query defaults", () => {
+  it("emits query_defaults only when non-default", () => {
+    const s = {
+      ...DEFAULTS,
+      queryDefaults: { ...DEFAULTS.queryDefaults, communityLevel: "1", temperature: "0.2" },
+    };
+    const out = buildSettings(s);
+    expect(out.query_defaults).toEqual({ community_level: 1, temperature: 0.2 });
+  });
+
+  it("omits query_defaults when all empty", () => {
+    const out = buildSettings({ ...DEFAULTS });
+    expect(out.query_defaults).toBeUndefined();
+  });
+
+  it("parseSettings reads query_defaults back", () => {
+    const s = parseSettings(
+      { query_defaults: { community_level: 1, temperature: 0.2 } },
+      "standard",
+      "1.0",
+    );
+    expect(s.queryDefaults.communityLevel).toBe("1");
+    expect(s.queryDefaults.temperature).toBe("0.2");
+  });
+});

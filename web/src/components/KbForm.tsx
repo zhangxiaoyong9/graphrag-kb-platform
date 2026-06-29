@@ -49,6 +49,7 @@ export default function KbForm({
           cluster: { ...DEFAULTS.cluster },
           prompts: { ...DEFAULTS.prompts },
           queryPrompts: { ...DEFAULTS.queryPrompts },
+          queryDefaults: { ...DEFAULTS.queryDefaults },
         },
   );
   const [name, setName] = useState(kb?.name ?? "");
@@ -526,6 +527,43 @@ export default function KbForm({
             )}
           </div>
         ))}
+      </details>
+
+      {/* 检索默认值 */}
+      <details>
+        <summary className="text-[13px] font-medium text-body cursor-pointer select-none">
+          检索默认值 Query Defaults（留空=默认；查询时可按次覆盖）
+        </summary>
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <Field label="community_level" hint="0–4；越大越细">
+            <input className="input" type="number" min={0} max={4}
+              value={s.queryDefaults.communityLevel}
+              onChange={(e) => set("queryDefaults", { ...s.queryDefaults, communityLevel: e.target.value })}
+              placeholder="留空=2" />
+          </Field>
+          <Field label="response_type" hint="多段/单段/要点">
+            <select className="select"
+              value={s.queryDefaults.responseType}
+              onChange={(e) => set("queryDefaults", { ...s.queryDefaults, responseType: e.target.value })}>
+              <option value="">留空=默认</option>
+              <option value="multiple paragraphs">多段</option>
+              <option value="single paragraph">单段</option>
+              <option value="bullet points">要点</option>
+            </select>
+          </Field>
+          <Field label="top_k" hint="local/basic 结果数">
+            <input className="input" type="number" min={1}
+              value={s.queryDefaults.topK}
+              onChange={(e) => set("queryDefaults", { ...s.queryDefaults, topK: e.target.value })}
+              placeholder="留空=默认" />
+          </Field>
+          <Field label="temperature" hint="0–1">
+            <input className="input" type="number" step="0.05" min={0} max={1}
+              value={s.queryDefaults.temperature}
+              onChange={(e) => set("queryDefaults", { ...s.queryDefaults, temperature: e.target.value })}
+              placeholder="留空=默认" />
+          </Field>
+        </div>
       </details>
 
       {/* 高级：只读预览 + 覆盖框 */}

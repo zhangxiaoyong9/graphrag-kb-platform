@@ -19,6 +19,12 @@ export interface KbFormState {
     globalReduce: string;
     basicSystem: string;
   };
+  queryDefaults: {
+    communityLevel: string;
+    responseType: string;
+    topK: string;
+    temperature: string;
+  };
   concurrency: number;
   advancedOverride: string;
 }
@@ -33,6 +39,7 @@ export const DEFAULTS: KbFormState = {
   cluster: { maxClusterSize: 10 },
   prompts: { extract: "", summarize: "", communityReport: "" },
   queryPrompts: { localSystem: "", globalMap: "", globalReduce: "", basicSystem: "" },
+  queryDefaults: { communityLevel: "", responseType: "", topK: "", temperature: "" },
   concurrency: 4,
   advancedOverride: "",
 };
@@ -135,6 +142,15 @@ export function buildSettings(state: KbFormState): Record<string, unknown> {
     out.query_prompts = q;
   }
 
+  // query defaults (KB-level; omit = hardcoded baseline)
+  const qd = state.queryDefaults;
+  const qdBuiltin: Record<string, number | string> = {};
+  if (qd.communityLevel?.trim()) qdBuiltin.community_level = Number(qd.communityLevel);
+  if (qd.responseType?.trim()) qdBuiltin.response_type = qd.responseType.trim();
+  if (qd.topK?.trim()) qdBuiltin.top_k = Number(qd.topK);
+  if (qd.temperature?.trim()) qdBuiltin.temperature = Number(qd.temperature);
+  if (Object.keys(qdBuiltin).length) out.query_defaults = qdBuiltin;
+
   if (state.concurrency !== DEFAULTS.concurrency) out.concurrency = state.concurrency;
 
   return out;
@@ -155,6 +171,7 @@ export function parseSettings(
   const cr = (settings.community_reports as Record<string, unknown> | undefined) ?? {};
   const cl = (settings.cluster_graph as Record<string, unknown> | undefined) ?? {};
   const qpS = (settings.query_prompts as Record<string, unknown> | undefined) ?? {};
+  const qd = (settings.query_defaults as Record<string, unknown> | undefined) ?? {};
   const etRaw = eg.entity_types;
   const et = Array.isArray(etRaw)
     ? etRaw.join(", ")
@@ -194,6 +211,12 @@ export function parseSettings(
       globalMap: f(qpS, "global_map", ""),
       globalReduce: f(qpS, "global_reduce", ""),
       basicSystem: f(qpS, "basic_system", ""),
+    },
+    queryDefaults: {
+      communityLevel: qd?.community_level != null ? String(qd.community_level) : "",
+      responseType: f(qd, "response_type", ""),
+      topK: qd?.top_k != null ? String(qd.top_k) : "",
+      temperature: qd?.temperature != null ? String(qd.temperature) : "",
     },
     concurrency: Number(settings.concurrency ?? DEFAULTS.concurrency),
     advancedOverride: "",
