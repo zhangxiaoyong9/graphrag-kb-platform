@@ -635,76 +635,80 @@ class QueryRequest(BaseModel):
 
 - [ ] **Step 4: 改 `routes_query.py`(解析 + 透传)**
 
-把 `gen()` 里 `yield format_sse("meta", ...)` 之前注入解析,并把 params 传给 `stream_search`:
+顶部 import 追加(`StreamDelta` 已在文件中导入则不重复):
 
 ```python
-# 顶部 import 加:
 from kb_platform.query.engine import QueryParams, StreamDelta
 from kb_platform.query.params import resolve_query_params
-
-# 在 gen() 内,meta 之前:
-per_query = (
-    QueryParams(**payload.params.model_dump()) if payload.params is not None else None
-)
-resolved = resolve_query_params(getattr(kb, "_resolved_settings", None), per_query) if False else None
 ```
 
-> 注意:`routes_query` 生产路径里 KB settings 在 `assemble_kb_settings(kb, repo)` 解析后只用于建 engine,并未保留 dict。需要把解析后的 settings dict 也拿来用于 `resolve_query_params`。改造点:在 `assemble_kb_settings` 调用处保留返回值 `settings = assemble_kb_settings(kb, repo)`,既有 `model_config = settings` 不变;`resolve_query_params` 需要的是 **原始 settings dict**(含 `query_defaults`),而 `assemble_kb_settings` 返回的可能是 `GraphRagConfig`。因此读 KB 默认值改用 KB 的 `settings_json` 解析后的 dict:
-
-把上面那段的 `if False else None` 替换为真实实现(在 session 内拿到 kb 后):
+把整个 `gen()` 替换为下面这版(关键:`per_query` 从 payload 算;`resolved` 生产分支读 `kb.settings_json` 里的 `query_defaults`,注入分支用空 settings;`params=resolved` 透传给 `stream_search`;`done` 分支的 `QueryResultOut(...)` 构造与原实现完全一致,不要改):
 
 ```python
-# gen() 内,拿到 kb 之后、建 engine 之前:
-import json
-kb_settings = json.loads(kb.settings_json or "{}")
-per_query = QueryParams(**payload.params.model_dump()) if payload.params is not None else None
-resolved = resolve_query_params(kb_settings, per_query)
-```
-
-> `kb` 只在 `engine is None` 分支的 session 内可见。注入 engine(测试)分支没有 kb —— 此时默认走 KB 默认值为空(per_query 仍生效)。重构:把 `resolved` 计算放到两个分支都能到达处。最简做法:在 `gen()` 开头先算 `per_query`(来自 payload),注入 engine 分支用 `resolve_query_params({}, per_query)`(测试 KB 不读默认值),生产分支用 `resolve_query_params(kb_settings, per_query)`。具体:
-
-```python
-async def gen():
-    nonlocal data_root
-    local_engine = engine
-    per_query = QueryParams(**payload.params.model_dump()) if payload.params is not None else None
-    resolved = None
-    if local_engine is None:
-        from kb_platform.graph.graphrag_adapter import assemble_kb_settings
-        from kb_platform.query.graphrag_engine import GraphRagQueryEngine
+    async def gen():
+        nonlocal data_root
+        local_engine = engine
         import json
 
-        repo = request.app.state.repo
-        with session_scope(repo.engine) as s:
-            kb = s.scalar(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))
-            if kb is None:
-                yield format_sse("error", {"message": f"kb {kb_id} not found"})
-                return
-            data_root = kb.data_root
-            kb_settings = json.loads(kb.settings_json or "{}")
-            resolved = resolve_query_params(kb_settings, per_query)
-            try:
-                model_config = assemble_kb_settings(kb, repo)
-            except Exception as exc:
-                yield format_sse("error", {"message": f"settings resolution failed: {exc}"})
-                return
-        try:
-            local_engine = GraphRagQueryEngine(data_root=data_root, model_config=model_config)
-        except Exception as exc:
-            yield format_sse("error", {"message": f"engine build failed: {exc}"})
-            return
-    else:
-        resolved = resolve_query_params({}, per_query)
+        per_query = (
+            QueryParams(**payload.params.model_dump()) if payload.params is not None else None
+        )
+        resolved: QueryParams | None = None
+        if local_engine is None:
+            from kb_platform.graph.graphrag_adapter import assemble_kb_settings
+            from kb_platform.query.graphrag_engine import GraphRagQueryEngine
 
-    yield format_sse("meta", {"method": payload.method})
-    async for ev in local_engine.stream_search(payload.method, payload.query, data_root, params=resolved):
-        if isinstance(ev, StreamDelta):
-            yield format_sse("delta", {"text": ev.text})
+            repo = request.app.state.repo
+            with session_scope(repo.engine) as s:
+                kb = s.scalar(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))
+                if kb is None:
+                    yield format_sse("error", {"message": f"kb {kb_id} not found"})
+                    return
+                data_root = kb.data_root
+                kb_settings = json.loads(kb.settings_json or "{}")
+                resolved = resolve_query_params(kb_settings, per_query)
+                try:
+                    model_config = assemble_kb_settings(kb, repo)
+                except Exception as exc:  # noqa: BLE001 - graceful, never 500
+                    yield format_sse("error", {"message": f"settings resolution failed: {exc}"})
+                    return
+            try:
+                local_engine = GraphRagQueryEngine(data_root=data_root, model_config=model_config)
+            except Exception as exc:  # noqa: BLE001 - graceful, never 500
+                yield format_sse("error", {"message": f"engine build failed: {exc}"})
+                return
         else:
-            yield format_sse("done", { ... unchanged ... })
+            resolved = resolve_query_params({}, per_query)
+
+        yield format_sse("meta", {"method": payload.method})
+        async for ev in local_engine.stream_search(
+            payload.method, payload.query, data_root, params=resolved
+        ):
+            if isinstance(ev, StreamDelta):
+                yield format_sse("delta", {"text": ev.text})
+            else:  # StreamDone — 与原实现一致地构造 QueryResultOut
+                yield format_sse(
+                    "done",
+                    {
+                        "result": QueryResultOut(
+                            answer=ev.answer,
+                            method=payload.method,
+                            error=ev.error,
+                            elapsed_ms=ev.elapsed_ms,
+                            prompt_tokens=ev.prompt_tokens,
+                            output_tokens=ev.output_tokens,
+                            sources=[
+                                SourceOut(kind=s.kind, name=s.name, text=s.text)
+                                for s in ev.sources
+                            ]
+                            if ev.sources
+                            else None,
+                        ).model_dump(mode="json")
+                    },
+                )
 ```
 
-(`done` 分支的 `QueryResultOut(...)` 构造保持原样。)
+> `select`、`session_scope`、`KnowledgeBase`、`QueryResultOut`、`SourceOut`、`format_sse` 均已在文件顶部导入,无需新增。
 
 - [ ] **Step 5: 跑测试确认通过**
 
@@ -796,25 +800,44 @@ async def send_streaming(self, conversation_id, content, method, params=None):
 
 - [ ] **Step 4: 改 `routes_conversations.py`**
 
-在 `gen()` 里建好 `local_engine` 之后、调 `service.send_streaming` 之前解析 KB 默认值并传入。生产分支需要 kb 的 settings_json:
+顶部 import 追加(`json` 已在文件顶部导入则不重复):
 
 ```python
-# 顶部 import:
 from kb_platform.query.params import resolve_query_params
-import json
-
-# gen() 内,engine is None 分支(已拿到 kb)末尾加:
-resolved = resolve_query_params(json.loads(kb.kb_settings_json_or_empty), None)
 ```
 
-> 实际:在 `engine is None` 分支里,已经有 `kb`(via `repo.get_kb(conv.kb_id)`)。计算 `kb_settings = json.loads(kb.settings_json or "{}")`、`resolved = resolve_query_params(kb_settings, None)`。注入 engine(测试)分支 `resolved = resolve_query_params({}, None)`。把 `resolved` 传入:
+在 `gen()` 的两个分支各自算出 `resolved`,然后透传给 `send_streaming`。生产分支(`engine is None`)里 `kb` 已经由 `repo.get_kb(conv.kb_id)` 取到;注入分支没有 kb,用空 settings(即纯 `per_query=None` → 全 None QueryParams)。
+
+在 `engine is None` 分支内、`try: local_engine = GraphRagQueryEngine(...)` 之前加:
 
 ```python
-service = ConversationService(repo, local_engine, local_rewriter, data_root)
-async for ev in service.send_streaming(conv_id, payload.content, payload.method, params=resolved):
+            kb_settings = json.loads(kb.settings_json or "{}")
+            resolved = resolve_query_params(kb_settings, None)
 ```
 
-(两分支都要算出 `resolved`;注入分支用空 settings。)
+在 `else:` 分支(`local_engine = engine` / `local_rewriter = rewriter`)之后加:
+
+```python
+        else:
+            local_engine = engine
+            local_rewriter = rewriter
+            resolved = resolve_query_params({}, None)
+```
+
+把 `send_streaming` 调用改为带 `params=resolved`:
+
+```python
+        service = ConversationService(repo, local_engine, local_rewriter, data_root)
+        async for ev in service.send_streaming(
+            conv_id, payload.content, payload.method, params=resolved
+        ):
+            if ev.type == "done" and ev.message is not None:
+                yield format_sse("done", {"message": _message_out(ev.message).model_dump(mode="json")})
+            else:
+                yield format_sse(ev.type, ev.data)
+```
+
+(其余 gen() 内容不变。)`resolved` 形参在 `ConversationService.send_streaming` 已由 Task 5 Step 3 加好。
 
 - [ ] **Step 5: 跑测试确认通过**
 
