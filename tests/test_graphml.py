@@ -40,3 +40,16 @@ def test_write_graphml_empty():
     xml = write_graphml(pd.DataFrame(columns=["title"]), pd.DataFrame(columns=["source", "target"]))
     assert "graphml" in xml  # no crash on empty
     ET.fromstring(xml)  # still well-formed
+
+
+def test_write_graphml_flattens_list_description():
+    """A relationship/entity extracted from >1 chunk has a *list* description
+    after merge_extractions (numpy array after parquet round-trip). GraphML must
+    emit the joined text, not the raw ``['d1' 'd2']`` repr."""
+    ents = pd.DataFrame([{"title": "A", "type": "CONCEPT", "degree": 1, "description": ["e1", "e2"]}])
+    rels = pd.DataFrame([{"source": "A", "target": "A", "weight": 2.0, "description": ["d1", "d2"]}])
+    xml = write_graphml(ents, rels)
+    ET.fromstring(xml)  # still well-formed
+    assert "d1; d2" in xml  # edge description joined
+    assert "e1; e2" in xml  # node description joined
+    assert "['d1'" not in xml and "['e1'" not in xml  # not the raw list/ndarray repr

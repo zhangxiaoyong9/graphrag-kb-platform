@@ -14,14 +14,19 @@ from typing import Any
 import pandas as pd
 from xml.sax.saxutils import escape
 
+from kb_platform.graph.adapter import cell_to_text
+
 NS = "http://graphml.graphdrawing.org/xmlns"
 
 
 def _fmt(value: Any) -> str:
-    """Render a scalar as an XML-safe GraphML attribute string."""
-    if value is None or (isinstance(value, float) and pd.isna(value)):
-        return ""
-    return escape(str(value))
+    """Render a cell as an XML-safe GraphML attribute string.
+
+    ``description`` may be a list/ndarray of chunk-level strings (see
+    :func:`cell_to_text`); flatten it before escaping so we never emit the raw
+    ``['d1' 'd2']`` numpy repr.
+    """
+    return escape(cell_to_text(value))
 
 
 def write_graphml(entities: pd.DataFrame, relationships: pd.DataFrame) -> str:
