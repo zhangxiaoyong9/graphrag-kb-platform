@@ -52,19 +52,40 @@ class StreamDone:
     error: str | None = None
 
 
+@dataclass
+class QueryParams:
+    """Per-query tuning knobs (all optional; None = use the lower layer).
+
+    Layered by the route: hardcoded baseline <- KB settings (query_defaults)
+    <- per-query (this object). See resolve_query_params.
+    """
+
+    community_level: int | None = None
+    response_type: str | None = None
+    top_k: int | None = None
+    temperature: float | None = None
+    system_prompt: str | None = None
+
+
 class QueryEngine(Protocol):
-    async def search(self, method: str, query: str, kb_data_root: str) -> QueryResult: ...
+    async def search(
+        self, method: str, query: str, kb_data_root: str, params: "QueryParams | None" = None
+    ) -> QueryResult: ...
 
     async def stream_search(
-        self, method: str, query: str, kb_data_root: str
+        self,
+        method: str,
+        query: str,
+        kb_data_root: str,
+        params: "QueryParams | None" = None,
     ) -> AsyncIterator["StreamDelta | StreamDone"]: ...
 
 
 class FakeQueryEngine:
-    async def search(self, method: str, query: str, kb_data_root: str) -> QueryResult:
+    async def search(self, method: str, query: str, kb_data_root: str, params=None) -> QueryResult:
         return QueryResult(answer=f"[{method}] You asked: {query}", method=method)
 
-    async def stream_search(self, method: str, query: str, kb_data_root: str):
+    async def stream_search(self, method: str, query: str, kb_data_root: str, params=None):
         answer = f"[{method}] You asked: {query}"
         # stream word-by-word so tests see multiple deltas
         parts = answer.split(" ")
