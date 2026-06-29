@@ -3,6 +3,7 @@ import { useKb } from "./kb-context";
 import { query as apiQuery } from "../api/client";
 import type { QueryResult } from "../api/types";
 import { QUERY_METHODS } from "../lib/query-methods";
+import { parseSse } from "../lib/sse";
 import { cn } from "../lib/cn";
 import { Card, CardHeader, Button, Spinner } from "../components/ui";
 import { QueryResultView } from "../components/QueryResultView";
@@ -22,9 +23,24 @@ export default function QueryPage() {
     setBusy(true);
     setError(null);
     try {
-      const r = await apiQuery(kbId, method, q);
-      setResult(r);
-      if (r.error) setError(r.error);
+      const resp = await apiQuery(kbId, method, q);
+      if (!resp.ok) throw new Error(`${resp.status}`);
+      let partial = "";
+      let methodUsed = method;
+      for await (const ev of parseSse(resp)) {
+        if (ev.event === "meta") {
+          methodUsed = ev.data.method ?? method;
+        } else if (ev.event === "delta") {
+          partial += ev.data.text ?? "";
+          setResult({ answer: partial, method: methodUsed, error: null });
+        } else if (ev.event === "done") {
+          const data = ev.data.result as QueryResult;
+          setResult(data);
+          if (data.error) setError(data.error);
+        } else if (ev.event === "error") {
+          throw new Error(ev.data.message ?? "stream error");
+        }
+      }
     } catch (e) {
       setError((e as Error).message ?? String(e));
     } finally {

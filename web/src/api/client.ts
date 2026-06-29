@@ -1,4 +1,4 @@
-import type { KbOut, KbDetail, DocumentOut, DocumentDetail, EvidenceDetail, JobOut, StepOut, UnitOut, KbCreate, DocumentCreate, QueryResult, JobCost, KbCost, GraphData, Health, ProviderProfile, ProfileCreate, KbStats, Conversation, ConversationDetail } from "./types";
+import type { KbOut, KbDetail, DocumentOut, DocumentDetail, EvidenceDetail, JobOut, StepOut, UnitOut, KbCreate, DocumentCreate, JobCost, KbCost, GraphData, Health, ProviderProfile, ProfileCreate, KbStats, Conversation, ConversationDetail } from "./types";
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(path, { headers: { "Content-Type": "application/json" }, ...init });
@@ -62,7 +62,11 @@ export const getUnits = (stepId: number, opts: { status?: string; limit?: number
 export const retryUnit = (id: number) => req<{ ok: boolean }>(`/units/${id}/retry`, { method: "POST" });
 export const retryStep = (id: number) => req<{ reset: number }>(`/steps/${id}/retry`, { method: "POST" });
 export const query = (kbId: number, method: string, q: string) =>
-  req<QueryResult>(`/kbs/${kbId}/query`, { method: "POST", body: JSON.stringify({ method, query: q }) });
+  fetch(`/kbs/${kbId}/query`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ method, query: q }),
+  });
 export const listConversations = (kbId: number) => req<Conversation[]>(`/kbs/${kbId}/conversations`);
 export const createConversation = (kbId: number, title?: string) =>
   req<Conversation>(`/kbs/${kbId}/conversations`, { method: "POST", body: JSON.stringify({ title: title ?? null }) });
