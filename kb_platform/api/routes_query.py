@@ -38,7 +38,11 @@ async def query_kb(kb_id: int, payload: QueryRequest, request: Request):
                 except Exception as exc:  # noqa: BLE001 - graceful, never 500
                     yield format_sse("error", {"message": f"settings resolution failed: {exc}"})
                     return
-            local_engine = GraphRagQueryEngine(data_root=data_root, model_config=model_config)
+            try:
+                local_engine = GraphRagQueryEngine(data_root=data_root, model_config=model_config)
+            except Exception as exc:  # noqa: BLE001 - graceful, never 500
+                yield format_sse("error", {"message": f"engine build failed: {exc}"})
+                return
 
         yield format_sse("meta", {"method": payload.method})
         async for ev in local_engine.stream_search(payload.method, payload.query, data_root):

@@ -119,24 +119,28 @@ async def send_message(conv_id: int, payload: MessageSend, request: Request):
     async def gen():
         # Production: resolve KB settings, build a real engine + rewriter.
         if engine is None:
-            try:
-                conv = repo.get_conversation(conv_id)
-                kb = repo.get_kb(conv.kb_id) if conv else None
-                if kb is None:
-                    yield format_sse("error", {"message": f"conversation {conv_id} has no kb"})
-                    return
-                from kb_platform.conversation.rewriter import LlmRewriter
-                from kb_platform.graph.graphrag_adapter import assemble_kb_settings, build_chat_complete
-                from kb_platform.query.graphrag_engine import GraphRagQueryEngine
+            conv = repo.get_conversation(conv_id)
+            kb = repo.get_kb(conv.kb_id) if conv else None
+            if kb is None:
+                yield format_sse("error", {"message": f"conversation {conv_id} has no kb"})
+                return
+            from kb_platform.conversation.rewriter import LlmRewriter
+            from kb_platform.graph.graphrag_adapter import assemble_kb_settings, build_chat_complete
+            from kb_platform.query.graphrag_engine import GraphRagQueryEngine
 
+            try:
                 settings = assemble_kb_settings(kb, repo)
+            except Exception as exc:  # noqa: BLE001 - graceful error, never 500
+                yield format_sse("error", {"message": f"settings resolution failed: {exc}"})
+                return
+            try:
                 local_engine = GraphRagQueryEngine(data_root=kb.data_root, model_config=settings)
                 try:
                     local_rewriter = LlmRewriter(build_chat_complete(settings))
                 except Exception:  # noqa: BLE001 - rewriter optional
                     local_rewriter = None
             except Exception as exc:  # noqa: BLE001 - graceful error, never 500
-                yield format_sse("error", {"message": f"settings resolution failed: {exc}"})
+                yield format_sse("error", {"message": f"engine build failed: {exc}"})
                 return
         else:
             local_engine = engine

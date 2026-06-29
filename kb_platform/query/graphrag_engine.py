@@ -279,7 +279,11 @@ class GraphRagQueryEngine:
             return
 
         capturer = _SourceCapturingCallback()
-        engine.callbacks.append(capturer)
+        # Guard: only some graphrag factory engines expose a mutable `callbacks`
+        # list; if absent, streaming proceeds without source capture (sources are
+        # best-effort/None per spec, never blocking the answer).
+        if hasattr(engine, "callbacks"):
+            engine.callbacks.append(capturer)
         start = time.time()
         accumulated = ""
         try:
