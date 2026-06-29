@@ -10,6 +10,8 @@ from pathlib import Path
 import pandas as pd
 from fastapi import APIRouter, Request
 
+from kb_platform.graph.adapter import cell_to_text
+
 router = APIRouter()
 
 CAP = 500
@@ -115,7 +117,7 @@ def graph(  # noqa: ANN201
             {
                 "id": title,
                 "title": title,
-                "type": str(row.get("type", "") or ""),
+                "type": cell_to_text(row.get("type")),
                 "degree": int(row["degree"]) if pd.notna(row.get("degree")) else 0,
                 "community": tc.get(title),
             }
@@ -129,7 +131,7 @@ def graph(  # noqa: ANN201
             "source": str(r["source"]),
             "target": str(r["target"]),
             "weight": float(r["weight"]) if pd.notna(r.get("weight")) else 0.0,
-            "description": str(r.get("description", "") or ""),
+            "description": cell_to_text(r.get("description")),
         }
         for _, r in selected_edges.iterrows()
     ]

@@ -74,6 +74,25 @@ def _hash(text: str) -> str:
     return hashlib.sha512(text.encode()).hexdigest()
 
 
+def cell_to_text(cell, sep: str = "; ") -> str:
+    """Coerce a single DataFrame/parquet cell to a display string.
+
+    ``merge_extractions`` aggregates ``description``/``text_unit_ids`` into Python
+    lists, which parquet round-trips as numpy arrays. Evaluating such a cell in a
+    boolean context (``cell or ""``) raises ``ValueError: truth value of an array
+    is ambiguous`` for >1 element, and ``str(array)`` yields the ugly repr.
+    Duck-type (str | scalar | sequence) so callers never index numpy; sequences are
+    joined with ``sep``. Use this for any display-facing read of those columns.
+    """
+    if cell is None or isinstance(cell, str):
+        return cell or ""
+    if hasattr(cell, "__iter__"):  # list / tuple / ndarray / Series
+        return sep.join(str(x) for x in cell)
+    if pd.isna(cell):  # scalar NaN/NaT
+        return ""
+    return str(cell)
+
+
 class FakeGraphAdapter:
     """Deterministic, no-LLM adapter for engine tests.
 

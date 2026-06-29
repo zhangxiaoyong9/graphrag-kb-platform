@@ -143,3 +143,28 @@ def test_empty_graph_when_no_parquet(client, tmp_path):
 
 def test_missing_kb_404(client):
     assert client.get("/kbs/999/graph").status_code == 404
+
+
+def test_relationship_multichunk_description_does_not_crash(client, tmp_path):
+    """A relationship extracted from >1 chunk has a *list* description after
+    merge_extractions, which parquet round-trips as a numpy array. The view must
+    coerce it to a string instead of evaluating ``array or ""`` (500 otherwise)."""
+    r = client.post(
+        "/kbs",
+        json={"name": "kb1", "method": "standard", "settings_yaml": "{}", "llm_profile_id": 1},
+    )
+    kb_id = r.json()["id"]
+
+    pd.DataFrame(
+        [{"title": "Alpha", "type": "CONCEPT", "degree": 2, "description": "a"}]
+    ).to_parquet(tmp_path / "entities.parquet")
+    # description is a LIST (real merge_extractions shape) with >1 element.
+    pd.DataFrame(
+        [{"source": "Alpha", "target": "Alpha", "weight": 2.0, "description": ["d1", "d2"]}]
+    ).to_parquet(tmp_path / "relationships.parquet")
+
+    r = client.get(f"/kbs/{kb_id}/graph")
+    assert r.status_code == 200, r.text
+    edges = r.json()["edges"]
+    assert edges, "expected the seeded self-edge"
+    assert edges[0]["description"] == "d1; d2"
