@@ -1,6 +1,7 @@
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { createKb, deleteConversation, deleteDocument, getDocumentDetail, getDocumentEvidence, listKbs, retryUnit, createConversation, sendMessage } from "./client";
+import { parseSse } from "../lib/sse";
 
 const server = setupServer(
   http.get("/kbs", () => HttpResponse.json([{ id: 1, name: "kb1", method: "standard" }])),
@@ -31,15 +32,11 @@ const server = setupServer(
   ),
   http.post("/conversations/9/messages", async ({ request }) => {
     const b = (await request.json()) as { content: string; method: string };
-    return HttpResponse.json({
-      id: 10,
-      role: "assistant",
-      content: `A:${b.content}`,
-      method: b.method,
-      rewritten_query: null,
-      rewrite_fell_back: false,
-      sources: [],
-    });
+    const body =
+      `event: meta\ndata: {"method":"${b.method}","rewrite_fell_back":false}\n\n` +
+      `event: delta\ndata: {"text":"A:${b.content}"}\n\n` +
+      `event: done\ndata: {"message":{"id":10,"role":"assistant","content":"A:${b.content}","method":"${b.method}","rewrite_fell_back":false,"sources":[]}}\n\n`;
+    return new HttpResponse(body, { headers: { "content-type": "text/event-stream" } });
   }),
 );
 beforeAll(() => server.listen());
@@ -94,8 +91,18 @@ test("deleteConversation resolves on a 204 empty body", async () => {
 test("conversation client posts to the right paths", async () => {
   const c = await createConversation(1);
   expect(c.id).toBe(9);
-  const m = await sendMessage(9, "hi", "local");
-  expect(m.role).toBe("assistant");
-  expect(m.content).toBe("A:hi");
-  expect(m.method).toBe("local");
+  // sendMessage now returns the raw SSE Response; the caller iterates parseSse.
+  const resp = await sendMessage(9, "hi", "local");
+  expect(resp.ok).toBe(true);
+  expect(resp.headers.get("content-type")).toBe("text/event-stream");
+  let message: any;
+  const deltas: string[] = [];
+  for await (const ev of parseSse(resp)) {
+    if (ev.event === "delta") deltas.push(ev.data.text);
+    else if (ev.event === "done") message = ev.data.message;
+  }
+  expect(deltas.join("")).toBe("A:hi");
+  expect(message.role).toBe("assistant");
+  expect(message.content).toBe("A:hi");
+  expect(message.method).toBe("local");
 });

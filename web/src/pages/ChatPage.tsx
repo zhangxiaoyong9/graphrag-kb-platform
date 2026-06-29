@@ -13,6 +13,7 @@ import { QUERY_METHODS } from "../lib/query-methods";
 import { cn } from "../lib/cn";
 import { Card, CardHeader, Button, Spinner, Badge, EmptyState } from "../components/ui";
 import { QueryResultView } from "../components/QueryResultView";
+import { parseSse } from "../lib/sse";
 import type { SourceRef, Conversation, ChatMessage } from "../api/types";
 import { IconChat, IconSparkle, IconWarn, IconClock, IconDatabase, IconPlus, IconTrash } from "../components/icons";
 
@@ -123,21 +124,41 @@ export default function ChatPage() {
     setInput("");
     setBusy(true);
     const t0 = performance.now();
+    const fallbackElapsed = performance.now() - t0;
     try {
-      const r = await sendMessage(convId, q, method);
-      const fallbackElapsed = performance.now() - t0;
-      setMessages((m) =>
-        m.map((msg) =>
-          msg.id === pendingId ? { ...r, elapsed_ms: r.elapsed_ms ?? fallbackElapsed } : msg,
-        ),
-      );
+      const resp = await sendMessage(convId, q, method);
+      if (!resp.ok) throw new Error(`${resp.status}`);
+      let rewritten: string | undefined;
+      for await (const ev of parseSse(resp)) {
+        if (ev.event === "meta") {
+          rewritten = ev.data.rewritten_query;
+          if (rewritten) {
+            setMessages((m) =>
+              m.map((msg) =>
+                msg.id === pendingId ? { ...msg, rewritten_query: rewritten } : msg,
+              ),
+            );
+          }
+        } else if (ev.event === "delta") {
+          setMessages((m) =>
+            m.map((msg) =>
+              msg.id === pendingId ? { ...msg, content: msg.content + ev.data.text } : msg,
+            ),
+          );
+        } else if (ev.event === "done") {
+          const persisted: ChatMessage = ev.data.message;
+          setMessages((m) =>
+            m.map((msg) => (msg.id === pendingId ? { ...persisted, elapsed_ms: persisted.elapsed_ms ?? fallbackElapsed } : msg)),
+          );
+        } else if (ev.event === "error") {
+          throw new Error(ev.data.message ?? "stream error");
+        }
+      }
       void reloadList(); // refresh sidebar snippet/title
     } catch (e) {
       setMessages((m) =>
         m.map((msg) =>
-          msg.id === pendingId
-            ? { ...msg, content: "", error: (e as Error).message ?? String(e) }
-            : msg,
+          msg.id === pendingId ? { ...msg, error: (e as Error).message ?? String(e) } : msg,
         ),
       );
     } finally {

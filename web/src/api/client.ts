@@ -1,4 +1,4 @@
-import type { KbOut, KbDetail, DocumentOut, DocumentDetail, EvidenceDetail, JobOut, StepOut, UnitOut, KbCreate, DocumentCreate, QueryResult, JobCost, KbCost, GraphData, Health, ProviderProfile, ProfileCreate, KbStats, Conversation, ConversationDetail, ChatMessage } from "./types";
+import type { KbOut, KbDetail, DocumentOut, DocumentDetail, EvidenceDetail, JobOut, StepOut, UnitOut, KbCreate, DocumentCreate, QueryResult, JobCost, KbCost, GraphData, Health, ProviderProfile, ProfileCreate, KbStats, Conversation, ConversationDetail } from "./types";
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(path, { headers: { "Content-Type": "application/json" }, ...init });
@@ -71,7 +71,11 @@ export const renameConversation = (id: number, title: string) =>
   req<Conversation>(`/conversations/${id}`, { method: "PATCH", body: JSON.stringify({ title }) });
 export const deleteConversation = (id: number) => req<void>(`/conversations/${id}`, { method: "DELETE" });
 export const sendMessage = (convId: number, content: string, method?: string) =>
-  req<ChatMessage>(`/conversations/${convId}/messages`, { method: "POST", body: JSON.stringify({ content, method: method ?? null }) });
+  fetch(`/conversations/${convId}/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content, method: method ?? null }),
+  });
 export const getJobCost = (kbId: number, jobId: number) => req<JobCost>(`/kbs/${kbId}/jobs/${jobId}/cost`);
 export const getKbCost = (kbId: number) => req<KbCost>(`/kbs/${kbId}/cost`);
 export const getGraph = (kbId: number, params?: { limit?: number; q?: string; hop?: number }) => {
