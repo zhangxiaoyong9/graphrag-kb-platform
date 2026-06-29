@@ -61,3 +61,57 @@ def test_query_route_kb_defaults_applied():
     resolved = resolve_query_params(kb_settings, per_query)
     assert resolved.temperature == 0.9
     assert resolved.top_k == 5  # KB default still applies for unset field
+
+
+def test_query_route_production_branch_forwards_kb_defaults(monkeypatch, tmp_path):
+    """Drive the PRODUCTION branch (query_engine=None) end-to-end through the
+    HTTP layer and assert KB ``query_defaults`` reach the engine's
+    ``stream_search``. The injected-engine tests above never load the KB, so a
+    regression that drops the ``kb.settings_json`` read would slip past them.
+    """
+    import json
+
+    from sqlalchemy import create_engine as sa_create_engine
+    from starlette.testclient import TestClient
+
+    from kb_platform.graph import graphrag_adapter as ga
+    from kb_platform.query import graphrag_engine as gre
+    from kb_platform.query.engine import StreamDone
+
+    # File-backed SQLite so TestClient's request thread sees the seeded KB.
+    db_path = tmp_path / "kb.db"
+    sa_engine = sa_create_engine(f"sqlite:///{db_path}")
+    Base.metadata.create_all(sa_engine)
+    with session_scope(sa_engine) as s:
+        s.add(
+            KnowledgeBase(
+                name="kb1",
+                method="standard",
+                settings_json=json.dumps({"query_defaults": {"temperature": 0.2}}),
+                data_root=".",
+                llm_profile_id=None,
+            )
+        )
+    repo = Repository(sa_engine)
+
+    captured: list = []
+
+    class _CapturingEngine:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def stream_search(self, method, query, kb_data_root, params=None):
+            captured.append(params)
+            yield StreamDone(method=method, answer="ok")
+
+    # Stub the two production-branch dependencies so no real graphrag/LLM runs.
+    monkeypatch.setattr(ga, "assemble_kb_settings", lambda kb, repo: {})
+    monkeypatch.setattr(gre, "GraphRagQueryEngine", _CapturingEngine)
+
+    app = create_app(repo, data_root=".", query_engine=None)
+    client = TestClient(app)
+
+    r = client.post("/kbs/1/query", json={"method": "local", "query": "hi"})
+    assert r.status_code == 200, r.text
+    assert captured, "stream_search was never called"
+    assert captured[0].temperature == 0.2
