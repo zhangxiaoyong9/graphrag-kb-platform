@@ -313,3 +313,38 @@ class MessageSend(BaseModel):
 
 class ConversationDetailOut(ConversationOut):
     messages: list[MessageOut] = []
+
+
+class QueryPresetIn(BaseModel):
+    name: str
+    description: str = ""
+    method: str
+    community_level: int | None = None
+    response_type: str | None = None
+    top_k: int | None = None
+    temperature: float | None = None
+    system_prompt: str | None = None
+
+
+class QueryPresetUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    method: str | None = None
+    community_level: int | None = None
+    response_type: str | None = None
+    top_k: int | None = None
+    temperature: float | None = None
+    system_prompt: str | None = None
+
+
+class QueryPresetOut(BaseModel):
+    id: int
+    name: str
+    description: str
+    method: str
+    community_level: int | None = None
+    response_type: str | None = None
+    top_k: int | None = None
+    temperature: float | None = None
+    system_prompt: str | None = None
+    is_builtin: bool
