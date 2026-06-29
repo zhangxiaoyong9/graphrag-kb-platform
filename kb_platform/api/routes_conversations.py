@@ -21,6 +21,7 @@ from kb_platform.api.models import (
 )
 from kb_platform.api.sse import format_sse
 from kb_platform.conversation.service import ConversationService
+from kb_platform.query.params import resolve_query_params
 
 router = APIRouter()
 
@@ -130,6 +131,8 @@ async def send_message(conv_id: int, payload: MessageSend, request: Request):
 
             try:
                 settings = assemble_kb_settings(kb, repo)
+                kb_settings = json.loads(kb.settings_json or "{}")
+                resolved = resolve_query_params(kb_settings, None)
             except Exception as exc:  # noqa: BLE001 - graceful error, never 500
                 yield format_sse("error", {"message": f"settings resolution failed: {exc}"})
                 return
@@ -145,9 +148,14 @@ async def send_message(conv_id: int, payload: MessageSend, request: Request):
         else:
             local_engine = engine
             local_rewriter = rewriter
+            # Injected-engine branch: no KB at hand, so resolve from empty
+            # settings (per-query=None -> all-None QueryParams).
+            resolved = resolve_query_params({}, None)
 
         service = ConversationService(repo, local_engine, local_rewriter, data_root)
-        async for ev in service.send_streaming(conv_id, payload.content, payload.method):
+        async for ev in service.send_streaming(
+            conv_id, payload.content, payload.method, params=resolved
+        ):
             if ev.type == "done" and ev.message is not None:
                 yield format_sse("done", {"message": _message_out(ev.message).model_dump(mode="json")})
             else:

@@ -43,7 +43,13 @@ class ConversationService:
         self._rewriter = rewriter
         self._data_root = data_root
 
-    async def send(self, conversation_id: int, content: str, method: str | None):
+    async def send(
+        self,
+        conversation_id: int,
+        content: str,
+        method: str | None,
+        params=None,
+    ):
         conv = self._repo.get_conversation(conversation_id)
         if conv is None:
             return None
@@ -59,7 +65,9 @@ class ConversationService:
         # Persist the user message first (always).
         self._repo.add_message(conversation_id, role="user", content=content)
 
-        result = await self._engine.search(chosen_method, standalone, self._data_root)
+        result = await self._engine.search(
+            chosen_method, standalone, self._data_root, params=params
+        )
 
         assistant = self._repo.add_message(
             conversation_id,
@@ -92,7 +100,11 @@ class ConversationService:
             return False, True, 0, 0, content
 
     async def send_streaming(
-        self, conversation_id: int, content: str, method: str | None
+        self,
+        conversation_id: int,
+        content: str,
+        method: str | None,
+        params=None,
     ) -> AsyncIterator[StreamEvent]:
         """Streaming variant of ``send``: rewrite -> meta -> persist user ->
         stream answer deltas -> persist assistant -> done|error."""
@@ -117,7 +129,7 @@ class ConversationService:
         accumulated = ""
         done: StreamDone | None = None
         async for ev in self._engine.stream_search(
-            chosen_method, standalone, self._data_root
+            chosen_method, standalone, self._data_root, params=params
         ):
             if isinstance(ev, StreamDelta):
                 accumulated += ev.text

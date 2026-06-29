@@ -136,3 +136,38 @@ async def test_send_streaming_followup_rewrites(tmp_path):
     assert meta.data["method"] == "global"  # defaulted from prior assistant
     done = next(e for e in events if e.type == "done")
     assert "REWRITTEN::who is the CEO?" in done.message.content
+
+
+async def test_send_streaming_forwards_params_to_engine(tmp_path):
+    """Chat path forwards the resolved params object to the engine."""
+    from kb_platform.query.engine import QueryParams
+
+    repo = _setup(tmp_path)
+    cid = repo.create_conversation(1).id
+    captured: list = []
+
+    class _RecordingEngine(FakeQueryEngine):
+        async def stream_search(self, method, query, kb_data_root, params=None):
+            captured.append(params)
+            async for ev in super().stream_search(method, query, kb_data_root, params):
+                yield ev
+
+    svc = ConversationService(repo, _RecordingEngine(), None, data_root=".")
+    await _drain(svc.send_streaming(cid, "hi", None, params=QueryParams(temperature=0.2)))
+    assert captured and captured[0] is not None and captured[0].temperature == 0.2
+
+
+async def test_send_streaming_defaults_params_none_when_omitted(tmp_path):
+    repo = _setup(tmp_path)
+    cid = repo.create_conversation(1).id
+    captured: list = []
+
+    class _RecordingEngine(FakeQueryEngine):
+        async def stream_search(self, method, query, kb_data_root, params=None):
+            captured.append(params)
+            async for ev in super().stream_search(method, query, kb_data_root, params):
+                yield ev
+
+    svc = ConversationService(repo, _RecordingEngine(), None, data_root=".")
+    await _drain(svc.send_streaming(cid, "hi", None))
+    assert captured and captured[0] is None  # no params passed -> engine sees None
