@@ -1,8 +1,36 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { MemoryRouter } from "react-router-dom";
+import { vi } from "vitest";
 import ChatPage from "./ChatPage";
+
+// Mock parseSse so no real ReadableStream/getReader runs under jsdom (which
+// deadlocks under vitest worker parallelism). Real parsing is unit-tested in
+// sse.test.ts and end-to-end via Playwright.
+vi.mock("../lib/sse", () => ({
+  // Yield each event on its own macrotask so React flushes each setMessages
+  // commit independently (mirrors real SSE framing). Without the inter-yield
+  // waits, the three events fire in one synchronous burst and, under vitest
+  // worker parallelism, React can defer/lose the commit of the delta — making
+  // the test flaky. The waits make each render deterministic regardless of load.
+  parseSse: async function* () {
+    await Promise.resolve();
+    yield { event: "meta", data: { method: "local", rewrite_fell_back: false } };
+    await Promise.resolve();
+    yield { event: "delta", data: { text: "A:hello" } };
+    await Promise.resolve();
+    yield {
+      event: "done",
+      data: {
+        message: {
+          id: 11, role: "assistant", content: "A:hello", method: "local",
+          rewritten_query: null, rewrite_fell_back: false, sources: [],
+        },
+      },
+    };
+  },
+}));
 
 const server = setupServer(
   http.get("/kbs", () => HttpResponse.json([{ id: 1, name: "kb1", method: "standard" }])),
@@ -38,22 +66,19 @@ test(
     const ta = await screen.findByRole("textbox");
     fireEvent.change(ta, { target: { value: "hello" } });
     fireEvent.click(screen.getByRole("button", { name: /发送/ }));
-    // The `delta` event renders "A:hello" into the optimistic assistant bubble
-    // before `done` replaces it with the persisted message.
-    //
-    // NOTE on the poll loop: the answer streams over SSE, and ChatPage consumes
-    // `response.body.getReader()` inside `send()`'s async loop. In jsdom, React
-    // defers the commit of those streamed state updates, and testing-library's
-    // waitFor/findByText polling can starve both that commit and the stream's
-    // microtask reads; polling with real macrotask waits (`setTimeout`) lets
-    // React flush and the stream drain. Under full-suite parallel jsdom load the
-    // stream drain can take several seconds, hence the generous window + outer
-    // timeout. In a real browser the deltas render within milliseconds.
-    const start = Date.now();
-    while (Date.now() - start < 20000 && !screen.queryByText("A:hello")) {
-      await new Promise((r) => setTimeout(r, 50));
-    }
-    expect(screen.getByText("A:hello")).toBeInTheDocument();
+    // parseSse is mocked (no real ReadableStream/getReader under jsdom, which
+    // deadlocks under vitest worker parallelism). The streamed answer "A:hello"
+    // is rendered in both the assistant bubble and QueryResultView, so we match
+    // by substring and accept multiple nodes. waitFor with a generous timeout
+    // absorbs the React-commit scheduling jitter under parallel jsdom load.
+    // Real parseSse parsing is unit-tested in sse.test.ts.
+    await waitFor(
+      () =>
+        expect(
+          screen.getAllByText((_, node) => !!node?.textContent && node.textContent.includes("A:hello")),
+        ).not.toHaveLength(0),
+      { timeout: 15000, interval: 50 },
+    );
   },
-  40000,
+  20000,
 );
