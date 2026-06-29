@@ -29,8 +29,9 @@ index parquet files on disk and the caller-supplied ``model_config`` (a
 
 import logging
 import os
+import time
 
-from kb_platform.query.engine import QueryResult, SourceRef
+from kb_platform.query.engine import QueryResult, SourceRef, StreamDelta, StreamDone
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,21 @@ class _StreamFixWrapper:
 
     def __getattr__(self, name):
         return getattr(self._inner, name)
+
+
+class _SourceCapturingCallback:
+    """Duck-typed ``QueryCallbacks``: captures ``on_context`` so ``stream_search``
+    can extract sources; every other callback hook is a no-op."""
+
+    def __init__(self) -> None:
+        self.context_data = None
+
+    def on_context(self, context) -> None:
+        self.context_data = context
+
+    def __getattr__(self, name):
+        # on_llm_new_token / on_map_response_* / on_reduce_response_* ... → no-op
+        return lambda *args, **kwargs: None
 
 
 def _join_cell(value) -> str:
@@ -239,15 +255,76 @@ class GraphRagQueryEngine:
             logger.exception("graphrag search failed for method=%s", method)
             return QueryResult(answer="", method=method, error=str(e))
 
+    async def stream_search(self, method: str, query: str, kb_data_root: str):
+        """Stream the final answer as ``StreamDelta`` chunks then one ``StreamDone``.
+
+        graphrag's four engines expose ``async stream_search(query)`` that yield
+        answer ``str`` deltas after doing retrieval/map-reduce internally. We
+        register a ``_SourceCapturingCallback`` to recover sources via
+        ``on_context`` (best-effort; drift never fires it → sources None).
+        Verified: all four ``stream_search`` AWAITS ``completion_async(stream=True)``
+        correctly, so no ``_StreamFixWrapper`` is needed here.
+        """
+        root = self._data_root or kb_data_root
+        if method in _REPORTS_REQUIRED and not os.path.exists(
+            os.path.join(root, _COMMUNITY_REPORTS_FILE)
+        ):
+            yield StreamDone(method=method, answer="", error=_NO_REPORTS_MSG)
+            return
+        try:
+            engine = self._build_engine(method, root)
+        except Exception as e:  # noqa: BLE001 - missing parquet / config error
+            logger.exception("stream_search build_engine failed for method=%s", method)
+            yield StreamDone(method=method, answer="", error=str(e))
+            return
+
+        capturer = _SourceCapturingCallback()
+        engine.callbacks.append(capturer)
+        start = time.time()
+        accumulated = ""
+        try:
+            async for chunk in engine.stream_search(query=query):
+                accumulated += chunk or ""
+                yield StreamDelta(text=chunk or "")
+            yield StreamDone(
+                answer=accumulated,
+                method=method,
+                elapsed_ms=round((time.time() - start) * 1000, 1),
+                sources=self._extract_sources(capturer.context_data, method),
+            )
+        except Exception as e:  # noqa: BLE001 - surface as a terminal error event
+            logger.exception("graphrag stream_search failed for method=%s", method)
+            yield StreamDone(
+                method=method,
+                answer=accumulated,
+                error=str(e),
+                elapsed_ms=round((time.time() - start) * 1000, 1),
+            )
+
     async def _run_graphrag_search(self, method: str, query: str, root: str) -> QueryResult:
         """Best-effort real graphrag search.
 
-        Loads index parquet files, adapts them via
-        ``graphrag.query.indexer_adapters``, constructs the appropriate engine
-        via ``graphrag.query.factory``, and awaits ``engine.search(query)``.
+        Constructs the engine via ``_build_engine`` (shared with
+        ``stream_search``), applies the basic-method ``_StreamFixWrapper`` (the
+        blocking ``search()`` path only), and awaits ``engine.search(query)``.
 
         Failures (missing parquet, unconfigured LLM/embedder, etc.) are caught
         by the caller and returned as ``QueryResult.error``.
+        """
+        engine = self._build_engine(method, root)
+        # BasicSearch.search() calls completion_async(stream=True) WITHOUT await
+        # → wrap so streaming returns an async gen (graphrag-llm returns a coroutine).
+        if method == "basic":
+            engine.model = _StreamFixWrapper(engine.model)
+        result = await engine.search(query=query)
+        return self._result_from_search(method, result)
+
+    def _build_engine(self, method: str, root: str):
+        """Construct the graphrag search engine for ``method`` from on-disk index
+        parquet + resolved config. Shared by ``search`` and ``stream_search``.
+
+        Returns the raw engine (no model wrapping). Raises FileNotFoundError if
+        a required parquet artifact is missing, or any graphrag config error.
         """
         import pandas as pd
 
@@ -294,20 +371,14 @@ class GraphRagQueryEngine:
         relationships_df = _norm_relationships(_read("relationships.parquet"))
 
         communities = read_indexer_communities(communities_df, reports_df)
-        reports = read_indexer_reports(
-            reports_df,
-            communities_df,
-            community_level=community_level,
-        )
-        entities = read_indexer_entities(
-            entities_df, communities_df, community_level=community_level
-        )
+        reports = read_indexer_reports(reports_df, communities_df, community_level=community_level)
+        entities = read_indexer_entities(entities_df, communities_df, community_level=community_level)
         relationships = read_indexer_relationships(relationships_df)
         text_units = read_indexer_text_units(text_units_df)
 
         if method == "local":
             store = self._build_embedding_store(config, _ENTITY_DESCRIPTION)
-            engine = get_local_search_engine(
+            return get_local_search_engine(
                 config,
                 reports=reports,
                 text_units=text_units,
@@ -318,8 +389,8 @@ class GraphRagQueryEngine:
                 description_embedding_store=store,
                 system_prompt=local_prompt,
             )
-        elif method == "global":
-            engine = get_global_search_engine(
+        if method == "global":
+            return get_global_search_engine(
                 config,
                 reports=reports,
                 entities=entities,
@@ -328,12 +399,13 @@ class GraphRagQueryEngine:
                 map_system_prompt=global_map_prompt,
                 reduce_system_prompt=global_reduce_prompt,
             )
-        elif method == "drift":
+        if method == "drift":
             store = self._build_embedding_store(config, _ENTITY_DESCRIPTION)
             report_store = self._build_embedding_store(config, _COMMUNITY_FULL_CONTENT)
             from graphrag.query.indexer_adapters import read_indexer_report_embeddings
+
             read_indexer_report_embeddings(reports, report_store)
-            engine = get_drift_search_engine(
+            return get_drift_search_engine(
                 config,
                 reports=reports,
                 text_units=text_units,
@@ -344,28 +416,16 @@ class GraphRagQueryEngine:
                 local_system_prompt=local_prompt,
                 reduce_system_prompt=global_reduce_prompt,
             )
-        elif method == "basic":
+        if method == "basic":
             store = self._build_embedding_store(config, _TEXT_UNIT_TEXT)
-            engine = get_basic_search_engine(
+            return get_basic_search_engine(
                 text_units=text_units,
                 text_unit_embeddings=store,
                 config=config,
                 response_type=response_type,
                 system_prompt=basic_prompt,
             )
-            # graphrag's BasicSearch calls model.completion_async(stream=True) WITHOUT
-            # await, expecting an async iterator directly. graphrag-llm returns a
-            # coroutine → TypeError. Wrap the model so streaming returns an async gen.
-            engine.model = _StreamFixWrapper(engine.model)
-        else:
-            return QueryResult(
-                answer="",
-                method=method,
-                error=f"unknown query method: {method}",
-            )
-
-        result = await engine.search(query=query)
-        return self._result_from_search(method, result)
+        raise ValueError(f"unknown query method: {method}")
 
     def _result_from_search(self, method: str, search_result) -> QueryResult:
         """Map a graphrag SearchResult into an enriched QueryResult."""
