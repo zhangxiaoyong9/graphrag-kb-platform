@@ -16,7 +16,7 @@ class _Stub:
             sources=[SourceRef("entity", "宁德时代", "电池厂商")],
         )
 
-    async def stream_search(self, method, query, kb_data_root):
+    async def stream_search(self, method, query, kb_data_root, params=None):
         yield StreamDelta(text="A")
         yield StreamDone(
             answer="A", method=method,

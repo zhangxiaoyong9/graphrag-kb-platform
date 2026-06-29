@@ -8,7 +8,8 @@ from kb_platform.api.models import QueryRequest, QueryResultOut, SourceOut
 from kb_platform.api.sse import format_sse
 from kb_platform.db.engine import session_scope
 from kb_platform.db.models import KnowledgeBase
-from kb_platform.query.engine import StreamDelta
+from kb_platform.query.engine import QueryParams, StreamDelta
+from kb_platform.query.params import resolve_query_params
 
 router = APIRouter()
 
@@ -20,8 +21,15 @@ async def query_kb(kb_id: int, payload: QueryRequest, request: Request):
 
     async def gen():
         # Injected engine (tests) takes priority; otherwise build a real one per-KB.
+        # Resolves QueryParams from KB settings (query_defaults) ← per-query params.
         nonlocal data_root
         local_engine = engine
+        import json
+
+        per_query = (
+            QueryParams(**payload.params.model_dump()) if payload.params is not None else None
+        )
+        resolved: QueryParams | None = None
         if local_engine is None:
             from kb_platform.graph.graphrag_adapter import assemble_kb_settings
             from kb_platform.query.graphrag_engine import GraphRagQueryEngine
@@ -33,6 +41,8 @@ async def query_kb(kb_id: int, payload: QueryRequest, request: Request):
                     yield format_sse("error", {"message": f"kb {kb_id} not found"})
                     return
                 data_root = kb.data_root
+                kb_settings = json.loads(kb.settings_json or "{}")
+                resolved = resolve_query_params(kb_settings, per_query)
                 try:
                     model_config = assemble_kb_settings(kb, repo)
                 except Exception as exc:  # noqa: BLE001 - graceful, never 500
@@ -43,12 +53,18 @@ async def query_kb(kb_id: int, payload: QueryRequest, request: Request):
             except Exception as exc:  # noqa: BLE001 - graceful, never 500
                 yield format_sse("error", {"message": f"engine build failed: {exc}"})
                 return
+        else:
+            # Injected engine (tests): per-query params only; KB defaults are
+            # applied in the production branch where the KB is already loaded.
+            resolved = resolve_query_params({}, per_query)
 
         yield format_sse("meta", {"method": payload.method})
-        async for ev in local_engine.stream_search(payload.method, payload.query, data_root):
+        async for ev in local_engine.stream_search(
+            payload.method, payload.query, data_root, params=resolved
+        ):
             if isinstance(ev, StreamDelta):
                 yield format_sse("delta", {"text": ev.text})
-            else:  # StreamDone
+            else:  # StreamDone — unchanged QueryResultOut construction
                 yield format_sse(
                     "done",
                     {

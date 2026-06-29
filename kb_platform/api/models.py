@@ -169,9 +169,18 @@ class JobOut(BaseModel):
 # --- Query ---------------------------------------------------------------
 
 
+class QueryParamsIn(BaseModel):
+    community_level: int | None = None
+    response_type: str | None = None
+    top_k: int | None = None
+    temperature: float | None = None
+    system_prompt: str | None = None
+
+
 class QueryRequest(BaseModel):
     method: str
     query: str
+    params: QueryParamsIn | None = None
 
 
 class SourceOut(BaseModel):
