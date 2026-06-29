@@ -31,7 +31,13 @@ import logging
 import os
 import time
 
-from kb_platform.query.engine import QueryResult, SourceRef, StreamDelta, StreamDone
+from kb_platform.query.engine import (
+    QueryParams,
+    QueryResult,
+    SourceRef,
+    StreamDelta,
+    StreamDone,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +99,69 @@ class _SourceCapturingCallback:
     def __getattr__(self, name):
         # on_llm_new_token / on_map_response_* / on_reduce_response_* ... → no-op
         return lambda *args, **kwargs: None
+
+
+# --- QueryParams wiring (module-level pure helpers; no graphrag imports) ---
+# Per-query system_prompt maps to each method's PRIMARY answer-shaping prompt slot.
+# (global/drift reduce is the final answer step; their map/local slots stay KB-level.)
+_PRIMARY_PROMPT_SLOT = {
+    "local": "local_system",
+    "global": "global_reduce",
+    "drift": "global_reduce",
+    "basic": "basic_system",
+}
+_BASE_COMMUNITY_LEVEL = 2
+_BASE_RESPONSE_TYPE = "multiple paragraphs"
+
+
+def _effective_levels(params: "QueryParams | None") -> tuple[int, str]:
+    """community_level / response_type from params, else the hardcoded baseline."""
+    cl = (
+        params.community_level
+        if params and params.community_level is not None
+        else _BASE_COMMUNITY_LEVEL
+    )
+    rt = params.response_type if params and params.response_type else _BASE_RESPONSE_TYPE
+    return cl, rt
+
+
+def _effective_system_prompt(params, query_prompts: dict, method: str) -> str | None:
+    """Per-query system_prompt overrides the method's primary KB prompt slot; else
+    the KB value for that slot; else None (= graphrag default)."""
+    if params is not None and params.system_prompt:
+        return params.system_prompt
+    slot = _PRIMARY_PROMPT_SLOT.get(method)
+    return (query_prompts or {}).get(slot) if slot else None
+
+
+def _apply_params(config, method: str, params: "QueryParams | None") -> None:
+    """Mutate the resolved GraphRagConfig in place for top_k / temperature.
+
+    graphrag itself mutates config objects (e.g. vector_store.db_uri), so this is
+    safe; production builds a fresh config per request. No-op when params is None.
+    """
+    if params is None:
+        return
+    if params.top_k is not None:
+        if method == "local":
+            config.local_search.top_k_entities = params.top_k
+            config.local_search.top_k_relationships = params.top_k
+        elif method == "basic":
+            config.basic_search.k = params.top_k
+        # global / drift: top_k is not applicable -> ignored
+    if params.temperature is not None:
+        if method == "drift":
+            config.drift_search.reduce_temperature = params.temperature
+            config.drift_search.local_search_temperature = params.temperature
+        else:
+            mid = {
+                "local": config.local_search.completion_model_id,
+                "global": config.global_search.completion_model_id,
+                "basic": config.basic_search.completion_model_id,
+            }.get(method)
+            cm = config.completion_models.get(mid) if mid else None
+            if cm is not None:
+                cm.call_args = {**(cm.call_args or {}), "temperature": params.temperature}
 
 
 def _join_cell(value) -> str:
@@ -240,7 +309,13 @@ class GraphRagQueryEngine:
         self._data_root = data_root
         self._model_config = model_config
 
-    async def search(self, method: str, query: str, kb_data_root: str) -> QueryResult:
+    async def search(
+        self,
+        method: str,
+        query: str,
+        kb_data_root: str,
+        params: QueryParams | None = None,
+    ) -> QueryResult:
         root = self._data_root or kb_data_root
 
         # Guard: global / drift need community reports produced during indexing.
@@ -250,12 +325,18 @@ class GraphRagQueryEngine:
             return QueryResult(answer="", method=method, error=_NO_REPORTS_MSG)
 
         try:
-            return await self._run_graphrag_search(method, query, root)
+            return await self._run_graphrag_search(method, query, root, params)
         except Exception as e:  # noqa: BLE001 - surface as QueryResult.error
             logger.exception("graphrag search failed for method=%s", method)
             return QueryResult(answer="", method=method, error=str(e))
 
-    async def stream_search(self, method: str, query: str, kb_data_root: str):
+    async def stream_search(
+        self,
+        method: str,
+        query: str,
+        kb_data_root: str,
+        params: QueryParams | None = None,
+    ):
         """Stream the final answer as ``StreamDelta`` chunks then one ``StreamDone``.
 
         graphrag's four engines expose ``async stream_search(query)`` that yield
@@ -272,7 +353,7 @@ class GraphRagQueryEngine:
             yield StreamDone(method=method, answer="", error=_NO_REPORTS_MSG)
             return
         try:
-            engine = self._build_engine(method, root)
+            engine = self._build_engine(method, root, params)
         except Exception as e:  # noqa: BLE001 - missing parquet / config error
             logger.exception("stream_search build_engine failed for method=%s", method)
             yield StreamDone(method=method, answer="", error=str(e))
@@ -305,7 +386,13 @@ class GraphRagQueryEngine:
                 elapsed_ms=round((time.time() - start) * 1000, 1),
             )
 
-    async def _run_graphrag_search(self, method: str, query: str, root: str) -> QueryResult:
+    async def _run_graphrag_search(
+        self,
+        method: str,
+        query: str,
+        root: str,
+        params: QueryParams | None = None,
+    ) -> QueryResult:
         """Best-effort real graphrag search.
 
         Constructs the engine via ``_build_engine`` (shared with
@@ -315,7 +402,7 @@ class GraphRagQueryEngine:
         Failures (missing parquet, unconfigured LLM/embedder, etc.) are caught
         by the caller and returned as ``QueryResult.error``.
         """
-        engine = self._build_engine(method, root)
+        engine = self._build_engine(method, root, params)
         # BasicSearch.search() calls completion_async(stream=True) WITHOUT await
         # → wrap so streaming returns an async gen (graphrag-llm returns a coroutine).
         if method == "basic":
@@ -323,7 +410,7 @@ class GraphRagQueryEngine:
         result = await engine.search(query=query)
         return self._result_from_search(method, result)
 
-    def _build_engine(self, method: str, root: str):
+    def _build_engine(self, method: str, root: str, params: QueryParams | None = None):
         """Construct the graphrag search engine for ``method`` from on-disk index
         parquet + resolved config. Shared by ``search`` and ``stream_search``.
 
@@ -347,16 +434,12 @@ class GraphRagQueryEngine:
         )
 
         config = self._resolve_config(root=root)
-        community_level = 2
-        response_type = "multiple paragraphs"
+        _apply_params(config, method, params)
+        community_level, response_type = _effective_levels(params)
 
         # Optional custom query prompts from KB settings.
         ls = (self._model_config if isinstance(self._model_config, dict) else {}) if self._model_config else {}
         qp = ls.get("query_prompts") or {}
-        local_prompt = qp.get("local_system")
-        global_map_prompt = qp.get("global_map")
-        global_reduce_prompt = qp.get("global_reduce")
-        basic_prompt = qp.get("basic_system")
 
         def _read(name: str) -> pd.DataFrame:
             path = os.path.join(root, name)
@@ -391,7 +474,7 @@ class GraphRagQueryEngine:
                 covariates={},
                 response_type=response_type,
                 description_embedding_store=store,
-                system_prompt=local_prompt,
+                system_prompt=_effective_system_prompt(params, qp, "local"),
             )
         if method == "global":
             return get_global_search_engine(
@@ -400,8 +483,8 @@ class GraphRagQueryEngine:
                 entities=entities,
                 communities=communities,
                 response_type=response_type,
-                map_system_prompt=global_map_prompt,
-                reduce_system_prompt=global_reduce_prompt,
+                map_system_prompt=qp.get("global_map"),  # map stays KB-level
+                reduce_system_prompt=_effective_system_prompt(params, qp, "global"),
             )
         if method == "drift":
             store = self._build_embedding_store(config, _ENTITY_DESCRIPTION)
@@ -417,8 +500,8 @@ class GraphRagQueryEngine:
                 relationships=relationships,
                 description_embedding_store=store,
                 response_type=response_type,
-                local_system_prompt=local_prompt,
-                reduce_system_prompt=global_reduce_prompt,
+                local_system_prompt=qp.get("local_system"),  # drift local phase stays KB-level
+                reduce_system_prompt=_effective_system_prompt(params, qp, "drift"),
             )
         if method == "basic":
             store = self._build_embedding_store(config, _TEXT_UNIT_TEXT)
@@ -427,7 +510,7 @@ class GraphRagQueryEngine:
                 text_unit_embeddings=store,
                 config=config,
                 response_type=response_type,
-                system_prompt=basic_prompt,
+                system_prompt=_effective_system_prompt(params, qp, "basic"),
             )
         raise ValueError(f"unknown query method: {method}")
 
