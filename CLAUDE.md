@@ -89,6 +89,8 @@ assemble_kb_settings(kb, repo)   # profiles + decrypted keys + structured_output
 ### Frontend SPA hosting
 In production the API server serves `web/dist` (path via `KB_WEB_DIST`): `/assets/*` static + a catch-all `/{full_path}` → `index.html` for history routing. API routers are registered **before** the catch-all so explicit API routes always win. Route handlers get `repo` / `data_root` / `query_engine` from `app.state`; `query_engine=None` means production (build a real per-KB engine), a non-None value means tests injected it.
 
+- **查询端点是 SSE 流式**:`POST /kbs/{id}/query` 与 `POST /conversations/{id}/messages` 返回 `text/event-stream`(事件 `meta`/`delta`/`done`/`error`),由 `QueryEngine.stream_search` 驱动;MCP 代理在 `KbApiClient.query()` 内部聚合 SSE 成单结果(工具契约不变)。单发 JSON 不再存在 —— 测试与客户端都按 SSE 解析。
+
 ## Conventions & gotchas
 
 - **`loop="asyncio"` is required** in `uvicorn.run` (both production and the e2e server): graphrag-llm calls `nest_asyncio.apply()` at import, which cannot patch uvloop (uvicorn auto-selects it). Don't switch to uvloop.
