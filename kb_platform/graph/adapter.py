@@ -184,6 +184,15 @@ class FakeGraphAdapter:
                 columns=["source", "target", "description", "text_unit_ids", "weight"]
             )
         )
+        # Relationships have no LLM summarize step (entities do — they need the
+        # list to detect multi-description titles), so collapse the per-chunk
+        # description list into a scalar string here. This matches graphrag's
+        # canonical schema (description is scalar) so every consumer — view,
+        # export, query — reads a scalar, and it survives every parquet writer
+        # (extract / finalize / merge_delta / reconsolidate all go through here).
+        # text_unit_ids stays a list: it is array-typed in graphrag's schema too.
+        if not relationships.empty:
+            relationships["description"] = relationships["description"].map(cell_to_text)
         if not entities.empty and not relationships.empty:
             titles = set(entities["title"])
             relationships = relationships[

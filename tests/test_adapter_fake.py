@@ -24,6 +24,28 @@ def test_fake_merge():
     assert not entities.empty
 
 
+def test_merge_relationship_description_is_scalar_string():
+    """A relationship extracted from >1 chunk must land in relationships.parquet
+    with a SCALAR description (graphrag's schema), not a list/ndarray. Lists
+    round-trip through parquet as numpy arrays and crash boolean checks /
+    stringify to the ndarray repr in downstream consumers."""
+    from kb_platform.graph.adapter import ExtractionResult
+
+    adapter = FakeGraphAdapter()
+    rel = lambda desc, src: pd.DataFrame(  # noqa: E731
+        [{"source": "A", "target": "B", "weight": 1.0, "description": desc, "source_id": src}]
+    )
+    results = [
+        ExtractionResult(entities=pd.DataFrame(), relationships=rel("d1", "c1")),
+        ExtractionResult(entities=pd.DataFrame(), relationships=rel("d2", "c2")),
+    ]
+    _, relationships = adapter.merge_extractions(results)
+    assert len(relationships) == 1
+    desc = relationships.iloc[0]["description"]
+    assert isinstance(desc, str)  # scalar, not list/ndarray
+    assert desc == "d1; d2"
+
+
 # --- Task 4: summarize / report / cluster / finalize ---
 
 from kb_platform.graph.adapter import CommunityReport  # noqa: E402
