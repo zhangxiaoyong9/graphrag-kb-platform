@@ -1,6 +1,6 @@
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
-import { createKb, deleteConversation, deleteDocument, getDocumentDetail, getDocumentEvidence, listKbs, retryUnit, createConversation, sendMessage } from "./client";
+import { createKb, deleteConversation, deleteDocument, getDocumentDetail, getDocumentEvidence, listKbs, retryUnit, createConversation, sendMessage, query } from "./client";
 
 const server = setupServer(
   http.get("/kbs", () => HttpResponse.json([{ id: 1, name: "kb1", method: "standard" }])),
@@ -96,4 +96,28 @@ test("conversation client posts to the right paths", async () => {
   const resp = await sendMessage(9, "hi", "local");
   expect(resp.ok).toBe(true);
   expect(resp.headers.get("content-type")).toContain("text/event-stream");
+});
+
+test("query sends params in body when provided", async () => {
+  let captured: unknown;
+  server.use(
+    http.post("/kbs/1/query", async ({ request }) => {
+      captured = await request.json();
+      return new HttpResponse("event: done\n", { headers: { "content-type": "text/event-stream" } });
+    }),
+  );
+  await query(1, "local", "q", { community_level: 1 });
+  expect((captured as { params: unknown }).params).toEqual({ community_level: 1 });
+});
+
+test("query omits params when undefined", async () => {
+  let captured: unknown;
+  server.use(
+    http.post("/kbs/1/query", async ({ request }) => {
+      captured = await request.json();
+      return new HttpResponse("event: done\n", { headers: { "content-type": "text/event-stream" } });
+    }),
+  );
+  await query(1, "local", "q");
+  expect((captured as { params?: unknown }).params).toBeUndefined();
 });

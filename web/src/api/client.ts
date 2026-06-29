@@ -1,4 +1,4 @@
-import type { KbOut, KbDetail, DocumentOut, DocumentDetail, EvidenceDetail, JobOut, StepOut, UnitOut, KbCreate, DocumentCreate, JobCost, KbCost, GraphData, Health, ProviderProfile, ProfileCreate, KbStats, Conversation, ConversationDetail } from "./types";
+import type { KbOut, KbDetail, DocumentOut, DocumentDetail, EvidenceDetail, JobOut, StepOut, UnitOut, KbCreate, DocumentCreate, JobCost, KbCost, GraphData, Health, ProviderProfile, ProfileCreate, KbStats, Conversation, ConversationDetail, QueryParams, QueryPreset } from "./types";
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(path, { headers: { "Content-Type": "application/json" }, ...init });
@@ -61,11 +61,11 @@ export const getUnits = (stepId: number, opts: { status?: string; limit?: number
 };
 export const retryUnit = (id: number) => req<{ ok: boolean }>(`/units/${id}/retry`, { method: "POST" });
 export const retryStep = (id: number) => req<{ reset: number }>(`/steps/${id}/retry`, { method: "POST" });
-export const query = (kbId: number, method: string, q: string) =>
+export const query = (kbId: number, method: string, q: string, params?: QueryParams) =>
   fetch(`/kbs/${kbId}/query`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ method, query: q }),
+    body: JSON.stringify({ method, query: q, ...(params ? { params } : {}) }),
   });
 export const listConversations = (kbId: number) => req<Conversation[]>(`/kbs/${kbId}/conversations`);
 export const createConversation = (kbId: number, title?: string) =>
@@ -104,3 +104,10 @@ export interface PromptDefaults {
   basic_system: string;
 }
 export const getPromptDefaults = () => req<PromptDefaults>("/prompts/defaults");
+
+export const listQueryPresets = () => req<QueryPreset[]>("/query-presets");
+export const createQueryPreset = (b: Omit<QueryPreset, "id" | "is_builtin">) =>
+  req<QueryPreset>("/query-presets", { method: "POST", body: JSON.stringify(b) });
+export const updateQueryPreset = (id: number, b: Partial<Omit<QueryPreset, "id" | "is_builtin">>) =>
+  req<QueryPreset>(`/query-presets/${id}`, { method: "PATCH", body: JSON.stringify(b) });
+export const deleteQueryPreset = (id: number) => req<void>(`/query-presets/${id}`, { method: "DELETE" });

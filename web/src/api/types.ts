@@ -133,3 +133,24 @@ export interface Conversation {
 export interface ConversationDetail extends Conversation {
   messages: ChatMessage[];
 }
+
+export interface QueryParams {
+  community_level?: number;
+  response_type?: string;
+  top_k?: number;
+  temperature?: number;
+  system_prompt?: string;
+}
+
+export interface QueryPreset {
+  id: number;
+  name: string;
+  description: string;
+  method: string;
+  community_level?: number | null;
+  response_type?: string | null;
+  top_k?: number | null;
+  temperature?: number | null;
+  system_prompt?: string | null;
+  is_builtin: boolean;
+}
