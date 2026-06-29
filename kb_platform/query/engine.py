@@ -1,5 +1,6 @@
 """QueryEngine seam: Fake + GraphRag wrappers."""
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -29,10 +30,44 @@ class QueryResult:
     sources: list[SourceRef] | None = None
 
 
+@dataclass
+class StreamDelta:
+    """One incremental answer chunk (token run) from a streaming search."""
+
+    text: str
+
+
+@dataclass
+class StreamDone:
+    """Terminal event of a streaming search. Carries the full accumulated answer
+    plus the same metadata `QueryResult` carries. ``error`` non-empty => failure
+    (``answer`` then holds whatever streamed before the failure)."""
+
+    answer: str = ""
+    method: str | None = None
+    elapsed_ms: float | None = None
+    prompt_tokens: int | None = None
+    output_tokens: int | None = None
+    sources: list[SourceRef] | None = None
+    error: str | None = None
+
+
 class QueryEngine(Protocol):
     async def search(self, method: str, query: str, kb_data_root: str) -> QueryResult: ...
+
+    async def stream_search(
+        self, method: str, query: str, kb_data_root: str
+    ) -> AsyncIterator["StreamDelta | StreamDone"]: ...
 
 
 class FakeQueryEngine:
     async def search(self, method: str, query: str, kb_data_root: str) -> QueryResult:
         return QueryResult(answer=f"[{method}] You asked: {query}", method=method)
+
+    async def stream_search(self, method: str, query: str, kb_data_root: str):
+        answer = f"[{method}] You asked: {query}"
+        # stream word-by-word so tests see multiple deltas
+        parts = answer.split(" ")
+        for i, w in enumerate(parts):
+            yield StreamDelta(text=(w + (" " if i < len(parts) - 1 else "")))
+        yield StreamDone(answer=answer, method=method)
