@@ -3,11 +3,19 @@ import httpx
 import pytest
 
 from kb_platform.api.app import create_app
+from kb_platform.api.sse import parse_sse
 from kb_platform.conversation.rewriter import FakeRewriter
 from kb_platform.db.engine import create_engine, session_scope
 from kb_platform.db.models import Base, KnowledgeBase
 from kb_platform.db.repository import Repository
 from kb_platform.query.engine import FakeQueryEngine
+
+
+async def _post_sse(client, path, body):
+    """POST and parse the SSE response into a list of (event, data)."""
+    r = await client.post(path, json=body)
+    assert r.status_code == 200, r.text
+    return parse_sse(r.text)
 
 
 def _make_app(tmp_path, *, inject=True):
@@ -52,16 +60,19 @@ async def test_send_first_turn_then_followup(client):
     await client.__aenter__()
     try:
         cid = (await client.post("/kbs/1/conversations", json={})).json()["id"]
-        m1 = await client.post(f"/conversations/{cid}/messages", json={"content": "hi", "method": "local"})
-        assert m1.status_code == 200
-        body1 = m1.json()
-        assert body1["role"] == "assistant" and "hi" in body1["content"]
-        assert body1["rewritten_query"] is None and body1["rewrite_fell_back"] is False
+        ev1 = await _post_sse(client, f"/conversations/{cid}/messages", {"content": "hi", "method": "local"})
+        types1 = [e for e, _ in ev1]
+        assert types1[0] == "meta" and types1[-1] == "done"
+        assert "delta" in types1
+        done1 = next(d for e, d in ev1 if e == "done")
+        msg1 = done1["message"]
+        assert msg1["role"] == "assistant" and "hi" in msg1["content"]
+        assert msg1["rewritten_query"] is None and msg1["rewrite_fell_back"] is False
         # second turn rewrites
-        m2 = await client.post(f"/conversations/{cid}/messages", json={"content": "more"})
-        body2 = m2.json()
-        assert body2["rewritten_query"] is not None  # follow-up was rewritten
-        assert body2["method"] == "local"  # defaulted from prior assistant
+        ev2 = await _post_sse(client, f"/conversations/{cid}/messages", {"content": "more"})
+        meta2 = next(d for e, d in ev2 if e == "meta")
+        assert meta2["rewritten_query"] is not None  # follow-up was rewritten
+        assert meta2["method"] == "local"  # defaulted from prior assistant
         # detail has 4 rows
         det = await client.get(f"/conversations/{cid}")
         assert len(det.json()["messages"]) == 4
@@ -79,13 +90,12 @@ async def test_send_missing_conversation_404(client):
 
 
 async def test_production_settings_error_is_graceful(tmp_path):
-    # No injected engine/rewriter -> production path; KB has no profile, so
-    # assemble_kb_settings raises -> the route returns a 200 with an error
-    # field instead of a 500.
     app = _make_app(tmp_path, inject=False)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://t") as ac:
         cid = (await ac.post("/kbs/1/conversations", json={})).json()["id"]
         r = await ac.post(f"/conversations/{cid}/messages", json={"content": "hi"})
         assert r.status_code == 200
-        assert r.json()["error"].startswith("settings resolution failed")
+        events = parse_sse(r.text)
+        err = next(d for e, d in events if e == "error")
+        assert err["message"].startswith("settings resolution failed")

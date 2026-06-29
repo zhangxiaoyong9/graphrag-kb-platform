@@ -8,6 +8,7 @@ is the multi-turn path that runs ConversationService above the QueryEngine.
 import json
 
 from fastapi import APIRouter, HTTPException, Request
+from starlette.responses import StreamingResponse
 
 from kb_platform.api.models import (
     ConversationCreate,
@@ -18,6 +19,8 @@ from kb_platform.api.models import (
     MessageSend,
     SourceOut,
 )
+from kb_platform.api.sse import format_sse
+from kb_platform.conversation.service import ConversationService
 
 router = APIRouter()
 
@@ -104,37 +107,46 @@ def delete_conversation(conv_id: int, request: Request):
         raise HTTPException(404)
 
 
-@router.post("/conversations/{conv_id}/messages", response_model=MessageOut)
+@router.post("/conversations/{conv_id}/messages")
 async def send_message(conv_id: int, payload: MessageSend, request: Request):
     repo = request.app.state.repo
+    if repo.get_conversation(conv_id) is None:
+        raise HTTPException(404)
     engine = request.app.state.query_engine
     rewriter = request.app.state.rewriter
-    if engine is None:
-        # Production: resolve KB settings, then build a real engine + rewriter.
-        conv = repo.get_conversation(conv_id)
-        if conv is None:
-            raise HTTPException(404)
-        kb = repo.get_kb(conv.kb_id)
-        if kb is None:
-            raise HTTPException(404)
-        from kb_platform.conversation.rewriter import LlmRewriter
-        from kb_platform.graph.graphrag_adapter import assemble_kb_settings, build_chat_complete
-        from kb_platform.query.graphrag_engine import GraphRagQueryEngine
+    data_root = request.app.state.data_root
 
-        try:
-            settings = assemble_kb_settings(kb, repo)
-        except Exception as exc:  # noqa: BLE001 - graceful error, never 500
-            return MessageOut(id=0, role="assistant", content="", error=f"settings resolution failed: {exc}")
-        engine = GraphRagQueryEngine(data_root=kb.data_root, model_config=settings)
-        try:
-            rewriter = LlmRewriter(build_chat_complete(settings))
-        except Exception:  # noqa: BLE001 - rewriter optional; service falls back per-turn
-            rewriter = None
+    async def gen():
+        # Production: resolve KB settings, build a real engine + rewriter.
+        if engine is None:
+            try:
+                conv = repo.get_conversation(conv_id)
+                kb = repo.get_kb(conv.kb_id) if conv else None
+                if kb is None:
+                    yield format_sse("error", {"message": f"conversation {conv_id} has no kb"})
+                    return
+                from kb_platform.conversation.rewriter import LlmRewriter
+                from kb_platform.graph.graphrag_adapter import assemble_kb_settings, build_chat_complete
+                from kb_platform.query.graphrag_engine import GraphRagQueryEngine
 
-    from kb_platform.conversation.service import ConversationService
+                settings = assemble_kb_settings(kb, repo)
+                local_engine = GraphRagQueryEngine(data_root=kb.data_root, model_config=settings)
+                try:
+                    local_rewriter = LlmRewriter(build_chat_complete(settings))
+                except Exception:  # noqa: BLE001 - rewriter optional
+                    local_rewriter = None
+            except Exception as exc:  # noqa: BLE001 - graceful error, never 500
+                yield format_sse("error", {"message": f"settings resolution failed: {exc}"})
+                return
+        else:
+            local_engine = engine
+            local_rewriter = rewriter
 
-    service = ConversationService(repo, engine, rewriter, request.app.state.data_root)
-    msg = await service.send(conv_id, payload.content, payload.method)
-    if msg is None:
-        raise HTTPException(404)
-    return _message_out(msg)
+        service = ConversationService(repo, local_engine, local_rewriter, data_root)
+        async for ev in service.send_streaming(conv_id, payload.content, payload.method):
+            if ev.type == "done" and ev.message is not None:
+                yield format_sse("done", {"message": _message_out(ev.message).model_dump(mode="json")})
+            else:
+                yield format_sse(ev.type, ev.data)
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
