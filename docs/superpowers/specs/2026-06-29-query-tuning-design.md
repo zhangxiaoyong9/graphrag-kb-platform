@@ -91,13 +91,15 @@ def resolve_query_params(kb_settings: dict, per_query: QueryParams | None) -> Qu
   - prompt 覆盖:在既有 `query_prompts` 读取处再叠一层 `params.system_prompt`(对当前 method 的主回答 prompt 槽生效)。
 - `search` / `stream_search` 接收 `params` 并透传给 `_build_engine`。
 
-### 4.5 `temperature` / `top_k` 的 config 注入(需 plan 期 spike 确认)
+### 4.5 `temperature` / `top_k` 的 config 注入(已对 graphrag v3.1.0 源码核实)
 
-这两个在 graphrag 里**不是工厂直参**:`top_k` 来自 `config.local_search.top_k_entities`/`top_k_relationships`(local)、`config.basic_search.top_k`(basic);`temperature` 来自模型 `call_args`(`model_settings.call_args` → engine 的 `model_params`)。
+这两个在 graphrag 里**不是工厂直参**,而是 config 字段。核实结论:
 
-做法:在 `_resolve_config` 返回的 `GraphRagConfig` 上**就地改字段**再建 engine。生产路径每次请求 `_resolve_config` 新建 config(`GraphRagConfig.model_validate(values)`)、无共享状态,改它安全。
+- **top_k**:`config.local_search.top_k_entities` + `config.local_search.top_k_relationships`(local,两个都设);`config.basic_search.k`(basic —— 字段名是 `k` 不是 `top_k`)。global/drift 不适用。
+- **temperature**:local/global/basic 经模型 `call_args` 生效 —— 工厂把 `model_settings.call_args` 作为 `model_params` 传给 engine,engine 在补全时 `**self.model_params`。故注入 `config.completion_models[<method 的 completion_model_id>].call_args["temperature"]`。drift 走自己的字段:`config.drift_search.reduce_temperature` 与 `config.drift_search.local_search_temperature`(两个都设)。
+- `ModelConfig.call_args` 默认 `{}`(`default_factory`);graphrag 自身就在改 config 对象(`vector_store.db_uri`),pydantic v2 BaseModel 默认可变,故**就地改字段安全**。
 
-> ⚠️ 唯一需对着 graphrag v3.1.0 源码实测确认的点:`temperature` 注入到 `call_args` 的确切路径、`basic_search.top_k` 的字段名。plan 的第一个任务就是 spike 这两处,结论回填本节。
+做法:在 `_build_engine` 里 `config = self._resolve_config(root=root)` 之后,**按 `params` 就地改上述字段**再建 engine。生产路径每次请求新建 config、无共享状态。
 
 ### 4.6 请求模型(`kb_platform/api/models.py`)
 
@@ -189,7 +191,7 @@ QueryPage 调参面板(或预设灌值)→ QueryRequest.params
 **后端**
 - `resolve_query_params` 三层顺序:全 None→各字段 None(引擎走默认);KB 有值、per_query 无→用 KB;两者都有→用 per_query。
 - `GraphRagQueryEngine._build_engine`:monkeypatch 四个工厂,捕获入参,断言 `community_level`/`response_type` 用 `params` 覆盖硬编码;`params=None` 时仍是 `2`/`"multiple paragraphs"`(回归)。
-- top_k/temperature 注入:断言 resolved `config.local_search.top_k_entities`(及 basic 的对应字段)、模型 `call_args.temperature` 被改(plan spike 后补确切字段)。
+- top_k/temperature 注入:`params.top_k` → 断言 `config.local_search.top_k_entities`/`top_k_relationships`(local)或 `config.basic_search.k`(basic)被改;`params.temperature` → 断言 `config.completion_models[<id>].call_args["temperature"]`(local/global/basic)或 `config.drift_search.reduce_temperature`+`local_search_temperature`(drift)被改。
 - `QueryParams` 透传到 `FakeQueryEngine`(断言收到对象)。
 - 预设 CRUD:`GET` 含内置;`POST` 建自定义;`PATCH`/`DELETE` 自定义 OK、对内置 403;`name` 唯一冲突 422/409。
 - 路由:`QueryRequest.params` 到达 engine(SSE 路径用 Fake engine 断言)。
@@ -204,7 +206,7 @@ QueryPage 调参面板(或预设灌值)→ QueryRequest.params
 
 ## 6. 风险与对策
 
-1. **temperature/top_k 注入点不确定** → plan 首任务 spike graphrag v3.1.0 源码,结论回填 §4.5;若某字段不可注入则该旋钮降级为"仅当 config 未显式设置时生效"或标注受限。
+1. **temperature/top_k 注入点** → 已对 graphrag v3.1.0 源码核实(§4.5):`local_search.top_k_entities/relationships`、`basic_search.k`、`completion_models[<id>].call_args["temperature"]`、`drift_search.reduce_temperature`/`local_search_temperature`。graphrag 自身就地改 config,故安全。
 2. **community_level 超出索引实际层级** → graphrag 返回空上下文。对策:前端下拉只给 0–4 合理档;后端不强制(保持 graphrag 原生行为),文档提示"层级过高可能无结果"。
 3. **per-query 改 config 的线程/并发安全** → 生产每次请求 `_resolve_config` 新建 config,无共享;测试里也按此构造,不复用。
 4. **预设 system_prompt 单值 vs global 双 prompt(map+reduce)** → 已定:单值填 reduce,map 维持 KB 级;spec 与 UI 文案均说明。
@@ -216,7 +218,7 @@ QueryPage 调参面板(或预设灌值)→ QueryRequest.params
 - QueryPage「调参」面板:四旋钮可调 + 预设下拉(含 3 条内置)+「另存为预设」;按 method 显隐 top_k;留空=默认。
 - KB 设置「检索默认值」段:四旋钮可选,留空=不变。
 - 检索预设页:列表 + 增删改,内置只读。
-- 四旋钮经 `params` → resolved config → graphrag,实际改变检索行为(community_level/response_type 单测必过;top_k/temperature 单测在 spike 后补;可选手验:切 community_level 答案粗细变化)。
+- 四旋钮经 `params` → resolved config → graphrag,实际改变检索行为(community_level/response_type/top_k/temperature 单测必过;可选手验:切 community_level 答案粗细变化)。
 - 预设 CRUD 端点 + 内置 seed + `is_builtin` 保护。
 - 聊天仍走 KB 默认值、行为不回归;MCP 契约不变。
 - 既有测试全绿;ruff / `npm run build` 干净。
