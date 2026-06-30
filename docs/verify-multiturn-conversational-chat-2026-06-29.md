@@ -102,9 +102,9 @@ Running 11 tests using 1 worker
 
 对话路由是**纯增量**（additive）：假服务器不感知对话端点，现有 e2e 全部通过。当前 e2e 套件**未覆盖** Chat 页面多轮交互（未来可在引入真实 / 打桩对话响应后补一条 Chat 流程）。
 
-## 手动真实 LLM 冒烟（**未运行 —— 待操作员手动执行**）
+## 手动真实 LLM 冒烟（**2026-06-30 已执行,见下**）
 
-> 原因：headless 环境无法启动 API server + worker、无已索引 KB、无真实 provider key。以下清单照抄 task-7-brief Step 4，供操作员补测。
+> 原始说明：headless 环境无法启动 API server + worker、无已索引 KB、无真实 provider key。以下清单照抄 task-7-brief Step 4，供操作员补测。
 
 前置：启动两个进程，指向一个**已索引**的 KB + 可用的 LLM profile：
 
@@ -115,13 +115,16 @@ uv run python -m kb_platform.worker kb.db                     # 终端 2
 
 打开 `http://127.0.0.1:8000` → 检索与问答 → Chat，逐项核对：
 
-1. 新建对话 → 提问 "Acme 是做什么的?" → 返回带 sources 的接地答案。
-2. 追问 "它的 CEO 是谁?" → 助手气泡显示 **理解为: <改写后引用 Acme 的独立查询>**，答案正确消解代词。
-3. 刷新页面 → 对话仍在侧栏；重新打开能恢复完整 transcript。
-4. 对话中途切换检索方式（如 local → global）→ 新轮采用所选 method。
-5. 删除对话 → 消失，其下消息一并清除。
+1. ✅ 新建对话 → 提问 "宁德时代是做什么的?" → 返回带 sources 的接地答案（local, 10595ms）。
+2. ✅ 追问 "它的总部在哪里?请详细说明" → 助手气泡显示 **理解为：What is the location of CATL's headquarters?**（「它」正确消解为 CATL），答案随后逐字流出（6552ms）。
+3. ✅ 刷新页面 → 对话仍在侧栏（自动标题=首条提问 + 最新回答片段）；点开后两轮完整 transcript + sources 恢复（连改写提示也被持久化）。
+4. [ ] 对话中途切换检索方式（如 local → global）→ 新轮采用所选 method。*(2026-06-30 未测)*
+5. [ ] 删除对话 → 消失，其下消息一并清除。*(未测;侧栏「删除对话」按钮可见)*
 
-请在补测后回填实际 `rewritten_query` 示例到本节。
+### 2026-06-30 执行环境
+全 Ollama 本地(`llama3` chat + `nomic-embed-text` embed,无 remote key);KB「冒烟KB」1 段电池行业语料,全量索引 90s 全绿(5 实体/1 关系/1 community/1 report)。证据截图:仓库根 `smoke-02-chat-q1-done.png`、`smoke-03-chat-q2-streaming.png`(流式中间帧 + 改写提示)、`smoke-04-chat-recovered.png`(刷新后 transcript 恢复)。
+
+冒烟期同时发现两个平台问题(非 A1 范围):① SPA 路由与同名 API 碰撞导致 `/query-presets`、`/kbs` 直接访问返回 JSON —— 已修(commit `5fa931d`);② 多 KB 共用同一 `data_root` 无隔离(`routes_kbs.py:130`),详见 `docs/verify-streaming-2026-06-29.md` 执行记录。
 
 ## 自审
 

@@ -6,6 +6,7 @@ dist/
 .env
 *.db
 *.db-*
+.kb_secret_key
 .superpowers/
 
 # Frontend (web/)
