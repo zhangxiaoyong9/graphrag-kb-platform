@@ -593,12 +593,14 @@ class Repository:
     # --- provider profiles -------------------------------------------------
 
     def create_profile(self, *, name, kind, provider, model, api_base=None,
-                       api_version=None, api_keys=None, structured_output=True) -> ProviderProfile:
+                       api_version=None, api_keys=None, structured_output=True,
+                       ssl_verify=True) -> ProviderProfile:
         with session_scope(self.engine) as s:
             p = ProviderProfile(name=name, kind=kind, provider=provider, model=model,
                                 api_base=api_base, api_version=api_version,
                                 api_keys_enc=encrypt_values(api_keys or []),
-                                structured_output=structured_output)
+                                structured_output=structured_output,
+                                ssl_verify=ssl_verify)
             s.add(p)
             s.flush()
             return p

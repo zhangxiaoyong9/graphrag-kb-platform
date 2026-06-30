@@ -56,3 +56,14 @@ def test_patch_replaces_keys_only_when_sent(tmp_path, monkeypatch):
     assert client.patch(f"/provider-profiles/{pid}", json={"model": "gpt-4o"}).json()["api_keys_count"] == 1
     # patch with [] -> cleared
     assert client.patch(f"/provider-profiles/{pid}", json={"api_keys": []}).json()["api_keys_count"] == 0
+
+
+def test_create_profile_persists_ssl_verify(tmp_path, monkeypatch):
+    _, repo = _client(tmp_path, monkeypatch)
+    p = repo.create_profile(name="SelfSigned", kind="embedding", provider="ollama",
+                            model="nomic-embed-text", api_base="https://emb.internal",
+                            api_keys=["ollama"], ssl_verify=False)
+    assert p.ssl_verify is False
+    p2 = repo.create_profile(name="Cloud", kind="llm", provider="openai",
+                             model="gpt-4o-mini", api_keys=["sk-1"])
+    assert p2.ssl_verify is True  # default
