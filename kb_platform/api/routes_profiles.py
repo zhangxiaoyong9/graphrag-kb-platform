@@ -1,9 +1,13 @@
 # Copyright (c) 2024Microsoft Corporation.
 # Licensed under the MIT License.
 """Provider-profile CRUD: reusable LLM/embedding connections + encrypted keys."""
+import logging
+
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from kb_platform.api.models import ProfileCreate, ProfileOut, ProfileUpdate
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -12,7 +16,8 @@ def _out(repo, p) -> ProfileOut:
     return ProfileOut(
         id=p.id, name=p.name, kind=p.kind, provider=p.provider, model=p.model,
         api_base=p.api_base, api_version=p.api_version,
-        structured_output=p.structured_output, api_keys_count=repo.profile_key_count(p.id),
+        structured_output=p.structured_output, ssl_verify=p.ssl_verify,
+        api_keys_count=repo.profile_key_count(p.id),
     )
 
 
@@ -29,6 +34,8 @@ def create_profile(payload: ProfileCreate, request: Request):
         p = repo.create_profile(**payload.model_dump())
     except Exception as exc:  # noqa: BLE001 - IntegrityError on duplicate name
         raise HTTPException(409, f"profile name already exists: {exc}") from exc
+    if not p.ssl_verify:
+        logger.warning("provider profile '%s' has SSL verification disabled", p.name)
     return _out(repo, p)
 
 
@@ -38,6 +45,8 @@ def update_profile(pid: int, payload: ProfileUpdate, request: Request):
     p = repo.update_profile(pid, **payload.model_dump(exclude_unset=True))
     if p is None:
         raise HTTPException(404)
+    if not p.ssl_verify:
+        logger.warning("provider profile '%s' has SSL verification disabled", p.name)
     return _out(repo, p)
 
 

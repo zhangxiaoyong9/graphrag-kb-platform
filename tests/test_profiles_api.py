@@ -67,3 +67,22 @@ def test_create_profile_persists_ssl_verify(tmp_path, monkeypatch):
     p2 = repo.create_profile(name="Cloud", kind="llm", provider="openai",
                              model="gpt-4o-mini", api_keys=["sk-1"])
     assert p2.ssl_verify is True  # default
+
+
+def test_profile_out_includes_ssl_verify_and_patch_persists(tmp_path, monkeypatch):
+    client, repo = _client(tmp_path, monkeypatch)
+    r = client.post("/provider-profiles", json={
+        "name": "SelfSigned", "kind": "embedding", "provider": "ollama",
+        "model": "nomic-embed-text", "api_keys": ["ollama"], "ssl_verify": False,
+    })
+    assert r.status_code == 201, r.text
+    assert r.json()["ssl_verify"] is False
+    # default True on omit
+    assert client.post("/provider-profiles", json={
+        "name": "Cloud", "kind": "llm", "provider": "openai",
+        "model": "gpt-4o-mini", "api_keys": ["sk-1"],
+    }).json()["ssl_verify"] is True
+    # patch flips it
+    pid = r.json()["id"]
+    patched = client.patch(f"/provider-profiles/{pid}", json={"ssl_verify": True}).json()
+    assert patched["ssl_verify"] is True

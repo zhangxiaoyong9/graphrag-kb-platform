@@ -249,6 +249,7 @@ class ProfileCreate(BaseModel):
     api_version: str | None = None
     api_keys: list[str] = []
     structured_output: bool = True
+    ssl_verify: bool = True
 
 
 class ProfileUpdate(BaseModel):
@@ -259,6 +260,7 @@ class ProfileUpdate(BaseModel):
     api_version: str | None = None
     api_keys: list[str] | None = None  # None=unchanged, []=clear
     structured_output: bool | None = None
+    ssl_verify: bool | None = None  # None=unchanged
 
 
 class ProfileOut(BaseModel):
@@ -270,6 +272,7 @@ class ProfileOut(BaseModel):
     api_base: str | None = None
     api_version: str | None = None
     structured_output: bool
+    ssl_verify: bool
     api_keys_count: int
 
 
