@@ -53,3 +53,18 @@ def test_write_graphml_flattens_list_description():
     assert "d1; d2" in xml  # edge description joined
     assert "e1; e2" in xml  # node description joined
     assert "['d1'" not in xml and "['e1'" not in xml  # not the raw list/ndarray repr
+
+
+def test_write_graphml_quotes_in_id_and_endpoints():
+    """Attribute values (node id / edge source / target) containing a double or
+    single quote must stay well-formed and round-trip. escape() does not escape
+    ", so attribute values must go through quoteattr."""
+    ents = pd.DataFrame([{"title": 'a"b', "type": "X", "degree": 1, "description": 'd"e'}])
+    rels = pd.DataFrame([{"source": 'a"b', "target": "c'd", "weight": 1.0, "description": "r"}])
+    root = ET.fromstring(write_graphml(ents, rels))  # must parse (would raise on the bug)
+    ns = "{http://graphml.graphdrawing.org/xmlns}"
+    node = root.find(f".//{ns}node")
+    assert node.get("id") == 'a"b'
+    edge = root.find(f".//{ns}edge")
+    assert edge.get("source") == 'a"b'
+    assert edge.get("target") == "c'd"

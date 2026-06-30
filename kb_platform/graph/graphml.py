@@ -3,8 +3,10 @@
 """Self-written GraphML writer (no networkx dependency).
 
 Produces schema-valid GraphML: every ``<data>`` element is a child of a
-``<node>`` or ``<edge>`` element (as required by the GraphML spec), and all
-text content is XML-escaped via :func:`xml.sax.saxutils.escape`.
+``<node>`` or ``<edge>`` element (as required by the GraphML spec); text
+content is XML-escaped (:func:`xml.sax.saxutils.escape`) and attribute values
+go through :func:`xml.sax.saxutils.quoteattr` so a ``"`` in a title/endpoint
+stays well-formed.
 """
 
 from __future__ import annotations
@@ -12,21 +14,32 @@ from __future__ import annotations
 from typing import Any
 
 import pandas as pd
-from xml.sax.saxutils import escape
+from xml.sax.saxutils import escape, quoteattr
 
 from kb_platform.graph.adapter import cell_to_text
 
 NS = "http://graphml.graphdrawing.org/xmlns"
 
 
-def _fmt(value: Any) -> str:
-    """Render a cell as an XML-safe GraphML attribute string.
+def _text(value: Any) -> str:
+    """Render a cell for an XML **text content** context (``<data>...</data>``).
 
+    ``escape`` handles ``&``/``<``/``>``; quotes are legal in text content.
     ``description`` may be a list/ndarray of chunk-level strings (see
-    :func:`cell_to_text`); flatten it before escaping so we never emit the raw
-    ``['d1' 'd2']`` numpy repr.
+    :func:`cell_to_text`); flatten it so we never emit ``['d1' 'd2']`` repr.
     """
     return escape(cell_to_text(value))
+
+
+def _attr(value: Any) -> str:
+    """Render a cell for an XML **attribute value** context (``id`` / ``source``
+    / ``target``).
+
+    ``quoteattr`` returns the value already wrapped in quotes and escapes what
+    those quotes require — unlike ``escape`` it handles ``"``, so a title like
+    ``a"b`` stays well-formed. Caller must NOT add its own surrounding quotes.
+    """
+    return quoteattr(cell_to_text(value))
 
 
 def write_graphml(entities: pd.DataFrame, relationships: pd.DataFrame) -> str:
@@ -54,25 +67,24 @@ def write_graphml(entities: pd.DataFrame, relationships: pd.DataFrame) -> str:
 
     if not entities.empty:
         for _, row in entities.iterrows():
-            node_id = _fmt(row["title"])
-            lines.append(f'<node id="{node_id}">')
+            lines.append(f"<node id={_attr(row['title'])}>")
             if "type" in entities.columns:
-                lines.append(f'<data key="d_type">{_fmt(row.get("type"))}</data>')
+                lines.append(f'<data key="d_type">{_text(row.get("type"))}</data>')
             if "degree" in entities.columns:
-                lines.append(f'<data key="d_deg">{_fmt(row.get("degree"))}</data>')
+                lines.append(f'<data key="d_deg">{_text(row.get("degree"))}</data>')
             if "description" in entities.columns:
-                lines.append(f'<data key="d_desc">{_fmt(row.get("description"))}</data>')
+                lines.append(f'<data key="d_desc">{_text(row.get("description"))}</data>')
             lines.append("</node>")
 
     if not relationships.empty:
         for _, row in relationships.iterrows():
-            source = _fmt(row["source"])
-            target = _fmt(row["target"])
-            lines.append(f'<edge source="{source}" target="{target}">')
+            source = _attr(row["source"])
+            target = _attr(row["target"])
+            lines.append(f"<edge source={source} target={target}>")
             if "weight" in relationships.columns:
-                lines.append(f'<data key="d_w">{_fmt(row.get("weight"))}</data>')
+                lines.append(f'<data key="d_w">{_text(row.get("weight"))}</data>')
             if "description" in relationships.columns:
-                lines.append(f'<data key="d_edesc">{_fmt(row.get("description"))}</data>')
+                lines.append(f'<data key="d_edesc">{_text(row.get("description"))}</data>')
             lines.append("</edge>")
 
     lines.append("</graph>")
