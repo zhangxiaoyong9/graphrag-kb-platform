@@ -20,6 +20,7 @@ export function ProviderProfilesPage() {
   const [apiBase, setApiBase] = useState("");
   const [apiVersion, setApiVersion] = useState("");
   const [structured, setStructured] = useState(true);
+  const [sslVerify, setSslVerify] = useState(true);
   const [keys, setKeys] = useState<string[]>([""]);
   const [busy, setBusy] = useState(false);
 
@@ -43,8 +44,9 @@ export function ProviderProfilesPage() {
         api_version: apiVersion || null,
         api_keys: keys.filter((k) => k),
         structured_output: structured,
+        ssl_verify: sslVerify,
       });
-      setName(""); setProvider(""); setModel(""); setApiBase(""); setApiVersion(""); setKeys([""]);
+      setName(""); setProvider(""); setModel(""); setApiBase(""); setApiVersion(""); setKeys([""]); setSslVerify(true);
       reload();
     } catch (e) {
       setError((e as Error).message);
@@ -135,6 +137,11 @@ export function ProviderProfilesPage() {
             structured_output（json_schema；DeepSeek 等不支持请取消勾选）
           </label>
         )}
+
+        <label className="mt-3 flex items-center gap-2 text-[13px] text-body">
+          <input type="checkbox" checked={sslVerify} onChange={(e) => setSslVerify(e.target.checked)} />
+          校验 SSL 证书（自签证书可取消勾选）
+        </label>
 
         <div className="mt-4">
           <p className="mb-2 text-[13px] font-medium text-body">API Keys</p>

@@ -42,6 +42,7 @@ export interface ProviderProfile {
   api_version: string | null;
   structured_output: boolean;
   api_keys_count: number;
+  ssl_verify: boolean;
 }
 export interface ProfileCreate {
   name: string;
@@ -52,6 +53,7 @@ export interface ProfileCreate {
   api_version?: string | null;
   api_keys: string[];
   structured_output: boolean;
+  ssl_verify?: boolean;
 }
 export interface ProfileRef { id: number; name: string; provider: string; model: string }
 export interface KbCreate {
