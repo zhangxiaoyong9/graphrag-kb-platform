@@ -77,6 +77,84 @@ async def test_job_succeeds_even_if_write_kb_stats_raises(setup, monkeypatch):
     assert repo.get_job(job.id).status == "succeeded"
 
 
+@pytest.mark.asyncio
+async def test_atomic_step_failure_marks_step_failed_not_running(setup):
+    """An atomic step that raises (e.g. ollama embed endpoint down) must land in
+    FAILED, not be stranded at RUNNING. unit_fanout steps record a terminal status
+    via strategy.finalize; atomic steps have no such path, so the orchestrator must
+    set FAILED on exception or the step can never be retried ('status stuck running').
+    """
+    from kb_platform.graph.adapter import FakeGraphAdapter
+    from kb_platform.graph.vector_store import FakeVectorStore
+
+    class EmbedDownAdapter(FakeGraphAdapter):
+        def embed_items(self, texts):  # noqa: ARG002
+            raise RuntimeError("ollama embed failed: connection refused")
+
+    repo, data_root = setup
+    orch = Orchestrator(
+        repo=repo,
+        adapter=EmbedDownAdapter(),
+        data_root=data_root,
+        vector_store=FakeVectorStore(dim=8),
+    )
+    job = repo.create_job(kb_id=1, type="full", specs=Orchestrator.plan_full())
+    with pytest.raises(RuntimeError, match="ollama embed failed"):
+        await orch.run(job.id)
+
+    assert repo.get_job(job.id).status == "failed"
+    steps = {s.name: s.status for s in repo.get_steps(job.id)}
+    # the failed atomic step is FAILED (not stranded at running) -> retryable
+    assert steps["generate_text_embeddings"] == "failed"
+    # earlier steps keep their terminal status (crash-skip on resume relies on this)
+    assert steps["community_reports"] == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_failed_atomic_step_is_retriable_after_reactivation(setup):
+    """After an atomic step fails and the job is reactivated (the /steps/{id}/retry
+    path), re-running the orchestrator with a healthy adapter retries only the
+    failed step (skipping SUCCEEDED ones) and the job succeeds."""
+    from kb_platform.graph.adapter import FakeGraphAdapter
+    from kb_platform.graph.vector_store import FakeVectorStore
+
+    class EmbedDownAdapter(FakeGraphAdapter):
+        def embed_items(self, texts):  # noqa: ARG002
+            raise RuntimeError("ollama embed failed")
+
+    repo, data_root = setup
+    orch = Orchestrator(
+        repo=repo,
+        adapter=EmbedDownAdapter(),
+        data_root=data_root,
+        vector_store=FakeVectorStore(dim=8),
+    )
+    job = repo.create_job(kb_id=1, type="full", specs=Orchestrator.plan_full())
+    with pytest.raises(RuntimeError):
+        await orch.run(job.id)
+    embed_step_id = next(
+        s.id for s in repo.get_steps(job.id) if s.name == "generate_text_embeddings"
+    )
+    assert repo.get_step(embed_step_id).status == "failed"
+
+    # /steps/{id}/retry: reset failed units (no-op for atomic) + reactivate the job.
+    repo.reset_failed_units_to_pending(embed_step_id)
+    repo.reactivate_job_for_step(embed_step_id)
+    assert repo.get_job(job.id).status == "pending"
+
+    # Worker re-claims with a healthy adapter; SUCCEEDED steps are skipped, the
+    # FAILED embed step is retried.
+    healthy = Orchestrator(
+        repo=repo,
+        adapter=FakeGraphAdapter(),
+        data_root=data_root,
+        vector_store=FakeVectorStore(dim=8),
+    )
+    await healthy.run(job.id)
+    assert repo.get_job(job.id).status == "succeeded"
+    assert repo.get_step(embed_step_id).status == "succeeded"
+
+
 def test_plan_has_seven_steps():
     from kb_platform.engine.orchestrator import Orchestrator
 

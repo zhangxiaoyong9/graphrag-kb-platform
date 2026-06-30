@@ -34,3 +34,21 @@ test("step-level retry button appears and calls retryStep", async () => {
   expect(btn).toBeInTheDocument();
   await userEvent.click(btn);
 });
+
+test("failed atomic step shows a retry-step button (no units to retry)", async () => {
+  // generate_text_embeddings has no units; when it fails (e.g. embed endpoint
+  // down) the step lands in `failed` and must still be retryable, with a label
+  // that doesn't promise per-unit retry.
+  server.use(
+    http.get("/jobs/10", () => HttpResponse.json({ id: 10, status: "failed", steps: [{ id: 101, name: "generate_text_embeddings", ordinal: 7, kind: "atomic", status: "failed", progress: null }] })),
+    http.get("/kbs/1/jobs/10/cost", () => HttpResponse.json({ total_usd: 0, by_step: {}, by_model: {} })),
+    http.get("/steps/101/units", () => HttpResponse.json({ items: [], total: 0 })),
+    http.post("/steps/101/retry", () => HttpResponse.json({ reset: 0 })),
+  );
+  render(<MemoryRouter initialEntries={["/kbs/1/jobs/10"]}><Routes><Route path="/kbs/:id/jobs/:jobId" element={<JobDetailPage />} /></Routes></MemoryRouter>);
+  await screen.findByText("generate_text_embeddings");
+  await userEvent.click(screen.getByText("generate_text_embeddings"));
+  const btn = await screen.findByRole("button", { name: "重试步骤" });
+  expect(btn).toBeInTheDocument();
+  await userEvent.click(btn);
+});

@@ -133,6 +133,20 @@ class Orchestrator:
 
     async def _run_step(self, step, min_success_ratio: float) -> None:
         self.repo.set_step_status(step.id, StepStatus.RUNNING)
+        try:
+            await self._dispatch_step(step, min_success_ratio)
+        except Exception:
+            # A raised step must not be stranded at RUNNING. unit_fanout steps
+            # normally reach a terminal status via strategy.finalize, but a blowup
+            # before/inside finalize — and *any* atomic step failure (e.g.
+            # generate_text_embeddings when the embed endpoint is down, which has
+            # no units to record the error) — would otherwise leave the step row
+            # at RUNNING forever, hiding the failure and blocking retry. Mark it
+            # FAILED so the job-level handler and the retry path see a terminal step.
+            self.repo.set_step_status(step.id, StepStatus.FAILED)
+            raise
+
+    async def _dispatch_step(self, step, min_success_ratio: float) -> None:
         if step.kind == StepKind.ATOMIC:
             await self._run_atomic(step)
         else:

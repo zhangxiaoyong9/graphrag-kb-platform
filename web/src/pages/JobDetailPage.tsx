@@ -129,7 +129,7 @@ export default function JobDetailPage() {
               }
               icon={<IconTask width={18} height={18} />}
               actions={
-                step && step.status === "partially_failed" ? (
+                step && (step.status === "partially_failed" || step.status === "failed") ? (
                   <Button
                     variant="primary"
                     size="sm"
@@ -137,7 +137,8 @@ export default function JobDetailPage() {
                       await retryStep(step.id);
                     }}
                   >
-                    <IconRefresh width={14} height={14} /> 重试失败 unit
+                    <IconRefresh width={14} height={14} />{" "}
+                    {step.kind === "atomic" ? "重试步骤" : "重试失败 unit"}
                   </Button>
                 ) : undefined
               }
