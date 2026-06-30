@@ -572,6 +572,7 @@ class GraphRagQueryEngine:
                     "model": llm.get("model", "gpt-4o-mini"),
                     "api_base": llm.get("api_base"),
                     "api_version": llm.get("api_version"),
+                    "call_args": {"ssl_verify": llm.get("ssl_verify", True)},
                 }
                 if resolved_key:
                     entry["api_key"] = resolved_key
@@ -603,6 +604,7 @@ class GraphRagQueryEngine:
                     "model": emb.get("model", "text-embedding-3-small"),
                     "api_base": emb.get("api_base"),
                     "api_version": emb.get("api_version"),
+                    "call_args": {"ssl_verify": emb.get("ssl_verify", True)},
                 }
                 if resolved_key:
                     entry["api_key"] = resolved_key

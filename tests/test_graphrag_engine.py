@@ -48,3 +48,18 @@ async def test_local_without_reports_proceeds_past_guard(tmp_path):
     # 没有 index 数据 → 应进入异常路径,error 不应是 "community reports"
     if result.error is not None:
         assert "community reports" not in result.error.lower()
+
+
+def test_resolve_config_carries_ssl_verify(tmp_path):
+    qe = GraphRagQueryEngine(
+        data_root=str(tmp_path),
+        model_config={
+            "llm": {"model_provider": "openai", "model": "gpt-4o-mini",
+                    "api_key": "sk-x", "ssl_verify": False},
+            "embedding": {"model_provider": "ollama", "model": "nomic-embed-text",
+                          "api_key": "ollama", "ssl_verify": False},
+        },
+    )
+    cfg = qe._resolve_config()
+    assert cfg.completion_models["default_completion_model"].call_args["ssl_verify"] is False
+    assert cfg.embedding_models["default_embedding_model"].call_args["ssl_verify"] is False
