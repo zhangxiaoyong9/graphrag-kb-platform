@@ -513,6 +513,7 @@ def assemble_kb_settings(kb, repo) -> dict:
             "api_base": lp.api_base,
             "api_version": lp.api_version,
             "api_keys": api_keys,
+            "ssl_verify": lp.ssl_verify,
         },
         "chunking": content.get("chunking", {}),
         "extract_graph": content.get("extract_graph", {}),
@@ -537,6 +538,7 @@ def assemble_kb_settings(kb, repo) -> dict:
             "api_base": ep.api_base,
             "api_version": ep.api_version,
             "api_key": emb_keys[0] if emb_keys else None,
+            "ssl_verify": ep.ssl_verify,
         }
     return assembled
 

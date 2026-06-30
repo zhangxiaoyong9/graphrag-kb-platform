@@ -52,3 +52,14 @@ def test_assemble_raises_without_key(tmp_path, monkeypatch):
     with pytest.raises(ValueError):
         with session_scope(engine) as s:
             assemble_kb_settings(s.get(KnowledgeBase, 1), repo)
+
+
+def test_assemble_propagates_ssl_verify(tmp_path, monkeypatch):
+    engine, repo = _seed_kb(tmp_path, monkeypatch)  # profiles id=1 (llm), id=2 (embedding)
+    # flip both profiles to insecure via repo update path
+    repo.update_profile(1, ssl_verify=False)
+    repo.update_profile(2, ssl_verify=False)
+    with session_scope(engine) as s:
+        assembled = assemble_kb_settings(s.get(KnowledgeBase, 1), repo)
+    assert assembled["llm"]["ssl_verify"] is False
+    assert assembled["embedding"]["ssl_verify"] is False
