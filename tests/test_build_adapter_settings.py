@@ -163,3 +163,34 @@ def test_build_adapter_passes_ssl_verify_to_llm_model_config(monkeypatch):
     gra.build_adapter_from_settings(settings_json=settings, data_root="/tmp/_x_")
     assert captured["llm"].call_args["ssl_verify"] is False
 
+
+def test_build_default_adapter_extra_keys_inherit_call_args(monkeypatch):
+    """Multi-key round-robin ModelConfigs must inherit call_args (e.g. ssl_verify)
+    from the primary model_config — otherwise extra keys skip SSL verification."""
+    import graphrag_chunking.chunker_factory as cf
+    import graphrag_llm.completion as comp_mod
+    import graphrag_llm.embedding as emb_mod
+    from kb_platform.graph.graphrag_adapter import build_default_adapter
+
+    captured: list = []
+
+    class _FakeChunker:
+        def chunk(self, text):
+            return []
+
+    monkeypatch.setattr(
+        comp_mod, "create_completion",
+        lambda mc: (captured.append(mc), object())[1])
+    monkeypatch.setattr(emb_mod, "create_embedding", lambda mc: object())
+    monkeypatch.setattr(cf, "create_chunker", lambda *a, **k: _FakeChunker())
+
+    llm = ModelConfig(
+        model_provider="openai", model="gpt-4o-mini", api_key="sk-1",
+        call_args={"ssl_verify": False})
+    build_default_adapter(
+        data_root="/tmp/_x_", model_config=llm, extra_api_keys=["sk-2", "sk-3"])
+
+    assert len(captured) == 3  # primary + 2 extras
+    for mc in captured:
+        assert mc.call_args.get("ssl_verify") is False
+

@@ -362,6 +362,7 @@ def build_default_adapter(
                 api_base=model_config.api_base,
                 api_version=model_config.api_version,
                 api_key=key,
+                call_args=dict(model_config.call_args or {}),
             )
             wrappers.append(CostCapturingCompletion(create_completion(extra_cfg), model_id=model_id))
         wrapped = LoadBalancingCompletion(wrappers)
