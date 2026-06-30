@@ -1,5 +1,11 @@
 """embed_items must use graphrag-llm's real embedding API: embedding(input=[...])
-returns an LLMEmbeddingResponse with .embeddings (list[list[float]])."""
+returns an LLMEmbeddingResponse with .embeddings (list[list[float]]).
+
+embed_items must BATCH a large input: a single embedding(input=[thousands]) call
+overwhelms providers (Ollama /api/embed returns 400 / times out past ~hundreds),
+so it chunks to _EMBED_BATCH_SIZE and concatenates the vectors in input order.
+"""
+from kb_platform.graph import graphrag_adapter
 from kb_platform.graph.graphrag_adapter import GraphRagAdapter
 
 
@@ -45,3 +51,33 @@ def test_embed_items_empty_returns_empty():
     adapter = _make_adapter(embedder)
     assert adapter.embed_items([]) == []
     assert embedder.calls == []  # not called for empty input
+
+
+def test_embed_items_batches_large_input(monkeypatch):
+    """Large inputs are split into _EMBED_BATCH_SIZE-sized calls, vectors
+    concatenated in order. Guards against the timeout/400 from sending the
+    whole collection in one embedding() call."""
+    monkeypatch.setattr(graphrag_adapter, "_EMBED_BATCH_SIZE", 3)
+
+    class _OrderEmbedder:
+        def __init__(self) -> None:
+            self.calls: list[list[str]] = []
+
+        def embedding(self, *, input):  # noqa: A002
+            self.calls.append(list(input))
+            # distinct vector per text so order is observable end-to-end
+            return _FakeResponse([[float(ord(s[-1])), 0.0] for s in input])
+
+    embedder = _OrderEmbedder()
+    adapter = _make_adapter(embedder)
+    items = [f"t{i}" for i in range(8)]  # 8 / batch=3 -> [3, 3, 2]
+
+    out = adapter.embed_items(items)
+
+    assert [len(c) for c in embedder.calls] == [3, 3, 2]
+    assert embedder.calls[0] == ["t0", "t1", "t2"]
+    assert embedder.calls[-1] == ["t6", "t7"]
+    assert len(out) == 8
+    # order preserved: out[i] derived from items[i]
+    assert out[0] == [float(ord("0")), 0.0]
+    assert out[7] == [float(ord("7")), 0.0]

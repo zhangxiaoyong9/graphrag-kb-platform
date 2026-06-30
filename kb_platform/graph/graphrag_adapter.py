@@ -10,6 +10,12 @@ import pandas as pd
 
 from kb_platform.graph.adapter import ChunkText, CommunityReport, ExtractionResult, _hash
 
+# Texts per embedding API call. A single embedding(input=[whole collection])
+# overwhelms providers — verified against Ollama: ~hundreds OK, 2000 texts ->
+# 400 Bad Request / 58s hang at /api/embed. Keep batches small so each call
+# finishes well under any HTTP timeout.
+_EMBED_BATCH_SIZE = 64
+
 
 class GraphRagAdapter:
     """Adapter calling graphrag chunking + LLM entity extraction.
@@ -158,18 +164,27 @@ class GraphRagAdapter:
         return e, rr
 
     def embed_items(self, texts: list[str]) -> list[list[float]]:
-        """Embed texts via graphrag-llm's configured embedding model.
+        """Embed texts via graphrag-llm's configured embedding model, in batches.
 
         graphrag-llm's LiteLLMEmbedding.embedding takes ``input=list[str]``
         (LLMEmbeddingArgs) and returns an LLMEmbeddingResponse whose
         ``.embeddings`` is the list of vectors in input order.
+
+        The input is chunked to ``_EMBED_BATCH_SIZE`` per call: passing the
+        whole collection at once overwhelms providers (e.g. Ollama's
+        ``/api/embed`` returns 400 / times out past ~hundreds of texts), so we
+        batch and concatenate the vectors in input order.
         """
         if self._embed_factory is None:
             raise RuntimeError("embed_factory not configured")
         if not texts:
             return []
         embedder = self._embed_factory()
-        return embedder.embedding(input=texts).embeddings
+        out: list[list[float]] = []
+        for start in range(0, len(texts), _EMBED_BATCH_SIZE):
+            batch = texts[start : start + _EMBED_BATCH_SIZE]
+            out.extend(embedder.embedding(input=batch).embeddings)
+        return out
 
 
 def _parse_report_json(text: str, context: dict) -> CommunityReport:
