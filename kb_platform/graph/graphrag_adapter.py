@@ -289,6 +289,7 @@ def _build_embed_model_config(settings: dict):
         api_base=emb.get("api_base"),
         api_version=emb.get("api_version"),
         api_key=resolved,
+        call_args={"ssl_verify": emb.get("ssl_verify", True)},
     )
 
 
@@ -452,6 +453,7 @@ def build_adapter_from_settings(
         api_base=llm.get("api_base"),
         api_version=llm.get("api_version"),
         api_key=resolved_key,
+        call_args={"ssl_verify": llm.get("ssl_verify", True)},
     )
     chunking = settings.get("chunking") or {}
     cluster_graph = settings.get("cluster_graph") or {}

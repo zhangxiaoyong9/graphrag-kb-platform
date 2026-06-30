@@ -138,3 +138,28 @@ def test_build_adapter_from_settings_prompts_default_none(monkeypatch):
     assert captured["summarize_prompt"] is None
     assert captured["community_report_prompt"] is None
 
+
+def test_build_embed_model_config_carries_ssl_verify():
+    from kb_platform.graph.graphrag_adapter import _build_embed_model_config
+    mc = _build_embed_model_config({"embedding": {
+        "model_provider": "ollama", "model": "nomic-embed-text",
+        "api_key": "ollama", "ssl_verify": False}})
+    assert mc.call_args["ssl_verify"] is False
+    # default True when absent
+    mc2 = _build_embed_model_config({"embedding": {
+        "model_provider": "ollama", "model": "nomic-embed-text", "api_key": "ollama"}})
+    assert mc2.call_args["ssl_verify"] is True
+
+
+def test_build_adapter_passes_ssl_verify_to_llm_model_config(monkeypatch):
+    import kb_platform.graph.graphrag_adapter as gra
+    captured = {}
+    def fake_build_default_adapter(*, model_config, embed_model_config=None, **kw):
+        captured["llm"] = model_config
+        return object()
+    monkeypatch.setattr(gra, "build_default_adapter", fake_build_default_adapter)
+    settings = ('{"llm":{"model_provider":"openai","model":"gpt-4o-mini",'
+                '"api_keys":["sk-x"],"ssl_verify":false}}')
+    gra.build_adapter_from_settings(settings_json=settings, data_root="/tmp/_x_")
+    assert captured["llm"].call_args["ssl_verify"] is False
+
