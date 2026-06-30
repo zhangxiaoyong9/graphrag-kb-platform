@@ -14,13 +14,13 @@ const base: KbFormState = {
 };
 
 describe("buildSettings", () => {
-  it("all defaults -> empty object", () => {
-    expect(buildSettings(base)).toEqual({});
+  it("all defaults -> only force-written strategy", () => {
+    expect(buildSettings(base)).toEqual({ chunking: { strategy: "markdown" } });
   });
 
-  it("emits only non-default chunking field", () => {
+  it("emits only non-default chunking field (plus always-on strategy)", () => {
     const s = { ...base, chunking: { ...DEFAULTS.chunking, size: 300 } };
-    expect(buildSettings(s)).toEqual({ chunking: { size: 300 } });
+    expect(buildSettings(s)).toEqual({ chunking: { size: 300, strategy: "markdown" } });
   });
 
   it("never emits llm/embedding (providers live in profiles, not KB content)", () => {
@@ -33,12 +33,15 @@ describe("buildSettings", () => {
 
   it("emits community_reports.max_length when non-default", () => {
     const s = { ...base, communityReports: { maxLength: 1500 } };
-    expect(buildSettings(s)).toEqual({ community_reports: { max_length: 1500 } });
+    expect(buildSettings(s)).toEqual({
+      chunking: { strategy: "markdown" },
+      community_reports: { max_length: 1500 },
+    });
   });
 
   it("emits concurrency when non-default", () => {
     const s = { ...base, concurrency: 8 };
-    expect(buildSettings(s)).toEqual({ concurrency: 8 });
+    expect(buildSettings(s)).toEqual({ chunking: { strategy: "markdown" }, concurrency: 8 });
   });
 
   it("advanced override replaces everything", () => {
@@ -53,7 +56,10 @@ describe("buildSettings", () => {
 
   it("entity_types csv -> list", () => {
     const s = { ...base, extractGraph: { entityTypes: "ORG, PERSON", maxGleanings: 0 } };
-    expect(buildSettings(s)).toEqual({ extract_graph: { entity_types: ["ORG", "PERSON"] } });
+    expect(buildSettings(s)).toEqual({
+      chunking: { strategy: "markdown" },
+      extract_graph: { entity_types: ["ORG", "PERSON"] },
+    });
   });
 
   it("emits prompts only when non-empty", () => {
@@ -62,13 +68,16 @@ describe("buildSettings", () => {
       prompts: { extract: "MY-EXTRACT", summarize: "", communityReport: "MY-REPORT" },
     };
     expect(buildSettings(s)).toEqual({
+      chunking: { strategy: "markdown" },
       extract_graph: { prompt: "MY-EXTRACT" },
       community_reports: { prompt: "MY-REPORT" },
     });
   });
 
   it("omits prompts when all empty", () => {
-    expect(buildSettings({ ...base, prompts: { extract: "", summarize: "", communityReport: "" } })).toEqual({});
+    expect(buildSettings({ ...base, prompts: { extract: "", summarize: "", communityReport: "" } })).toEqual({
+      chunking: { strategy: "markdown" },
+    });
   });
 });
 
@@ -132,5 +141,30 @@ describe("query defaults", () => {
     );
     expect(s.queryDefaults.communityLevel).toBe("1");
     expect(s.queryDefaults.temperature).toBe("0.2");
+  });
+});
+
+describe("chunking strategy", () => {
+  it("defaults a new form to markdown", () => {
+    expect(DEFAULTS.chunking.strategy).toBe("markdown");
+  });
+
+  it("buildSettings force-writes strategy even when it equals the default", () => {
+    const out = buildSettings({ ...DEFAULTS });
+    expect((out.chunking as Record<string, unknown>).strategy).toBe("markdown");
+  });
+
+  it("buildSettings writes an explicit tokens strategy", () => {
+    const out = buildSettings({ ...DEFAULTS, chunking: { ...DEFAULTS.chunking, strategy: "tokens" } });
+    expect((out.chunking as Record<string, unknown>).strategy).toBe("tokens");
+  });
+
+  it("parseSettings defaults a pre-feature KB (no key) to tokens", () => {
+    expect(parseSettings({}, "standard", "1.0").chunking.strategy).toBe("tokens");
+  });
+
+  it("parseSettings round-trips an explicit markdown strategy", () => {
+    const s = parseSettings({ chunking: { strategy: "markdown" } }, "standard", "1.0");
+    expect(s.chunking.strategy).toBe("markdown");
   });
 });

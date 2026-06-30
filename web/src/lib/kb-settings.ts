@@ -7,7 +7,7 @@
 export interface KbFormState {
   method: string;
   minRatio: string;
-  chunking: { size: number; overlap: number; encodingModel: string };
+  chunking: { size: number; overlap: number; encodingModel: string; strategy: string };
   extractGraph: { entityTypes: string; maxGleanings: number };
   summarize: { maxLength: number; maxInputTokens: number };
   communityReports: { maxLength: number };
@@ -32,7 +32,7 @@ export interface KbFormState {
 export const DEFAULTS: KbFormState = {
   method: "standard",
   minRatio: "1.0",
-  chunking: { size: 1200, overlap: 100, encodingModel: "cl100k_base" },
+  chunking: { size: 1200, overlap: 100, encodingModel: "cl100k_base", strategy: "markdown" },
   extractGraph: { entityTypes: "", maxGleanings: 0 },
   summarize: { maxLength: 500, maxInputTokens: 32000 },
   communityReports: { maxLength: 2000 },
@@ -66,6 +66,15 @@ export function buildSettings(state: KbFormState): Record<string, unknown> {
     DEFAULTS.chunking.encodingModel,
     "chunking",
   );
+
+  // strategy is always persisted (force-write, not addIf) so a new KB explicitly
+  // stores markdown even though it's the form default. The BACKEND default stays
+  // "tokens", so this explicit write is what makes new dashboard KBs use markdown.
+  {
+    const b = (out.chunking ?? {}) as Record<string, unknown>;
+    b.strategy = state.chunking.strategy;
+    out.chunking = b;
+  }
 
   addIf(
     "max_cluster_size",
@@ -186,6 +195,7 @@ export function parseSettings(
       size: n(ch, "size", DEFAULTS.chunking.size),
       overlap: n(ch, "overlap", DEFAULTS.chunking.overlap),
       encodingModel: f(ch, "encoding_model", DEFAULTS.chunking.encodingModel),
+      strategy: f(ch, "strategy", "tokens"),
     },
     extractGraph: {
       entityTypes: et,
