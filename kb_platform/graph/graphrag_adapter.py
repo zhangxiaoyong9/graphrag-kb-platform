@@ -585,6 +585,7 @@ def build_chat_complete(settings: dict):
         api_base=llm.get("api_base"),
         api_version=llm.get("api_version"),
         api_key=api_keys[0],
+        call_args={"ssl_verify": llm.get("ssl_verify", True)},
     )
     completion = create_completion(model_config)
 

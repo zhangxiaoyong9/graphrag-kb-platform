@@ -80,3 +80,35 @@ async def test_build_chat_complete_returns_callable_mapping_usage(monkeypatch):
     turn = await complete("system-prompt", "Q")
     assert turn.text == "standalone"
     assert turn.prompt_tokens == 11 and turn.output_tokens == 4
+
+
+def test_build_chat_complete_carries_ssl_verify_false(monkeypatch):
+    """Multi-turn rewriter's ModelConfig must carry ssl_verify so a self-signed LLM
+    endpoint works for follow-up rewrites (graphrag-llm spreads **call_args to litellm)."""
+    captured = {}
+
+    def fake_create_completion(cfg):
+        captured["cfg"] = cfg
+        return object()
+
+    monkeypatch.setattr(glc, "create_completion", fake_create_completion)
+    build_chat_complete(
+        {"llm": {"model_provider": "openai", "model": "gpt-4o-mini",
+                 "api_keys": ["sk-x"], "ssl_verify": False}}
+    )
+    assert captured["cfg"].call_args["ssl_verify"] is False
+
+
+def test_build_chat_complete_defaults_ssl_verify_true(monkeypatch):
+    """Omitting ssl_verify must default to True (secure default) in the rewriter's ModelConfig."""
+    captured = {}
+
+    def fake_create_completion(cfg):
+        captured["cfg"] = cfg
+        return object()
+
+    monkeypatch.setattr(glc, "create_completion", fake_create_completion)
+    build_chat_complete(
+        {"llm": {"model_provider": "openai", "model": "gpt-4o-mini", "api_keys": ["sk-x"]}}
+    )
+    assert captured["cfg"].call_args["ssl_verify"] is True
