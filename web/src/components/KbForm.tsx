@@ -228,6 +228,25 @@ export default function KbForm({
         <summary className="text-[13px] font-medium text-body cursor-pointer select-none">
           分块 Chunking
         </summary>
+        <div className="mt-3">
+          <Field
+            label="切片方式"
+            hint={
+              s.chunking.strategy !== "tokens" ? "结构切分不使用此项" : undefined
+            }
+          >
+            <select
+              className="select"
+              value={s.chunking.strategy}
+              onChange={(e) =>
+                set("chunking", { ...s.chunking, strategy: e.target.value })
+              }
+            >
+              <option value="markdown">按结构（段落 / 表格不断开）</option>
+              <option value="tokens">按 token 数</option>
+            </select>
+          </Field>
+        </div>
         <div className="mt-3 grid grid-cols-3 gap-3">
           <Field label="size">
             <input
@@ -244,6 +263,7 @@ export default function KbForm({
               className="input"
               type="number"
               value={s.chunking.overlap}
+              disabled={s.chunking.strategy !== "tokens"}
               onChange={(e) =>
                 set("chunking", { ...s.chunking, overlap: Number(e.target.value) })
               }

@@ -146,6 +146,31 @@ test("bad JSON in advanced override shows inline error and does not submit", asy
   expect(onCreated).not.toHaveBeenCalled();
 });
 
+test("chunking strategy defaults to markdown and serializes on submit", async () => {
+  const onCreated = renderForm();
+  await screen.findByLabelText(/LLM 配置/);
+  const select = screen.getByLabelText(/切片方式/) as HTMLSelectElement;
+  expect(select.value).toBe("markdown");
+  await userEvent.selectOptions(screen.getByLabelText(/LLM 配置/), "1");
+  await userEvent.type(screen.getByPlaceholderText(/请输入知识库名称/), "md-kb");
+  await userEvent.click(screen.getByRole("button", { name: /创建知识库/ }));
+
+  await waitFor(() => expect(onCreated).toHaveBeenCalled());
+  const last = captured[captured.length - 1]?.body as { settings_yaml: string };
+  expect(JSON.parse(last.settings_yaml).chunking.strategy).toBe("markdown");
+});
+
+test("overlap input is disabled in markdown mode, enabled for tokens", async () => {
+  renderForm();
+  await screen.findByLabelText(/LLM 配置/);
+  const overlap = screen.getByLabelText(/^overlap$/) as HTMLInputElement;
+  expect(overlap.disabled).toBe(true); // default markdown -> overlap not used
+  await userEvent.selectOptions(screen.getByLabelText(/切片方式/), "tokens");
+  expect(overlap.disabled).toBe(false); // tokens -> overlap relevant again
+  await userEvent.selectOptions(screen.getByLabelText(/切片方式/), "markdown");
+  expect(overlap.disabled).toBe(true);
+});
+
 // --- edit mode -----------------------------------------------------------
 
 const editKb = {
