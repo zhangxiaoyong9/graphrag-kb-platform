@@ -194,3 +194,80 @@ def test_build_default_adapter_extra_keys_inherit_call_args(monkeypatch):
     for mc in captured:
         assert mc.call_args.get("ssl_verify") is False
 
+
+def test_build_default_adapter_markdown_wires_markdown_chunker(monkeypatch):
+    import graphrag_chunking.chunker_factory as cf
+    import graphrag_llm.completion as comp_mod
+    import graphrag_llm.embedding as emb_mod
+    from graphrag_llm.config import ModelConfig
+
+    from kb_platform.graph.graphrag_adapter import build_default_adapter
+    from kb_platform.graph.markdown_chunker import MarkdownChunker
+
+    monkeypatch.setattr(comp_mod, "create_completion", lambda mc: object())
+    monkeypatch.setattr(emb_mod, "create_embedding", lambda mc: object())
+    monkeypatch.setattr(cf, "create_chunker", lambda *a, **k: object())
+
+    adapter = build_default_adapter(
+        data_root="/tmp/_x_",
+        model_config=ModelConfig(model_provider="openai", model="gpt-4o-mini", api_key="sk-x"),
+        chunk_strategy="markdown",
+        chunk_size=500,
+    )
+    assert isinstance(adapter._chunker, MarkdownChunker)
+
+
+def test_build_default_adapter_default_strategy_is_tokens(monkeypatch):
+    import graphrag_chunking.chunker_factory as cf
+    import graphrag_llm.completion as comp_mod
+    import graphrag_llm.embedding as emb_mod
+    from graphrag_llm.config import ModelConfig
+
+    from kb_platform.graph.graphrag_adapter import build_default_adapter
+    from kb_platform.graph.markdown_chunker import MarkdownChunker
+
+    captured: dict = {}
+
+    def fake_create_chunker(cfg, encode, decode):
+        captured["cfg"] = cfg
+        return object()
+
+    monkeypatch.setattr(comp_mod, "create_completion", lambda mc: object())
+    monkeypatch.setattr(emb_mod, "create_embedding", lambda mc: object())
+    monkeypatch.setattr(cf, "create_chunker", fake_create_chunker)
+
+    adapter = build_default_adapter(
+        data_root="/tmp/_x_",
+        model_config=ModelConfig(model_provider="openai", model="gpt-4o-mini", api_key="sk-x"),
+        chunk_size=300,
+    )
+    assert not isinstance(adapter._chunker, MarkdownChunker)
+    assert captured["cfg"].size == 300
+
+
+def test_build_adapter_from_settings_passes_chunk_strategy(monkeypatch):
+    import json
+    import kb_platform.graph.graphrag_adapter as ga
+
+    captured: dict = {}
+    monkeypatch.setattr(ga, "build_default_adapter", lambda **kw: captured.update(kw) or object())
+    settings = {
+        "llm": {"model": "x", "api_keys": ["k"]},
+        "chunking": {"strategy": "markdown", "size": 700},
+    }
+    ga.build_adapter_from_settings(json.dumps(settings), "/tmp/_x_")
+    assert captured["chunk_strategy"] == "markdown"
+    assert captured["chunk_size"] == 700
+
+
+def test_build_adapter_from_settings_default_strategy_is_tokens(monkeypatch):
+    import json
+    import kb_platform.graph.graphrag_adapter as ga
+
+    captured: dict = {}
+    monkeypatch.setattr(ga, "build_default_adapter", lambda **kw: captured.update(kw) or object())
+    ga.build_adapter_from_settings(
+        json.dumps({"llm": {"model": "x", "api_keys": ["k"]}}), "/tmp/_x_"
+    )
+    assert captured["chunk_strategy"] == "tokens"
+

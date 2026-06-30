@@ -301,6 +301,7 @@ def build_default_adapter(
     chunk_size: int = 1200,
     chunk_overlap: int = 100,
     encoding_model: str = "cl100k_base",
+    chunk_strategy: str = "tokens",
     max_cluster_size: int = 10,
     entity_types=None,
     max_gleanings: int = 0,
@@ -332,16 +333,25 @@ def build_default_adapter(
     from graphrag.config.defaults import DEFAULT_ENTITY_TYPES
 
     tokenizer = get_tokenizer(encoding_model=encoding_model)
-    chunker = create_chunker(
-        ChunkingConfig(
-            type=ChunkerType.Tokens,
-            encoding_model=encoding_model,
-            size=chunk_size,
-            overlap=chunk_overlap,
-        ),
-        encode=tokenizer.encode,
-        decode=tokenizer.decode,
-    )
+    if chunk_strategy == "markdown":
+        # Structure-aware: never cuts inside a sentence / table row. Zero graphrag
+        # imports in the chunker module; tokenizer injected like TokenChunker.
+        from kb_platform.graph.markdown_chunker import MarkdownChunker
+
+        chunker = MarkdownChunker(
+            size=chunk_size, encode=tokenizer.encode, decode=tokenizer.decode
+        )
+    else:
+        chunker = create_chunker(
+            ChunkingConfig(
+                type=ChunkerType.Tokens,
+                encoding_model=encoding_model,
+                size=chunk_size,
+                overlap=chunk_overlap,
+            ),
+            encode=tokenizer.encode,
+            decode=tokenizer.decode,
+        )
     completion = create_completion(model_config)
 
     from kb_platform.graph.cost_capture import CostCapturingCompletion, LoadBalancingCompletion
@@ -473,6 +483,7 @@ def build_adapter_from_settings(
         model_config=model_config,
         embed_model_config=embed_model_config,
         chunk_size=chunking.get("size", 1200),
+        chunk_strategy=chunking.get("strategy", "tokens"),
         chunk_overlap=chunking.get("overlap", 100),
         encoding_model=chunking.get("encoding_model", "cl100k_base"),
         max_cluster_size=cluster_graph.get("max_cluster_size", 10),
