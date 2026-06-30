@@ -96,4 +96,28 @@ def create_app(
         async def spa_fallback(full_path: str, request: Request):  # noqa: ARG001
             return FileResponse(dist / "index.html")
 
+        # Browser navigation to a SPA route whose path is *also* a GET API endpoint
+        # (e.g. /kbs, /query-presets) would otherwise get the API JSON, because API
+        # routers are registered before the catch-all and win the path match —
+        # breaking refresh/deep-link on those pages. Sec-Fetch-Mode: navigate is the
+        # reliable browser-vs-XHR signal (address bar / link / refresh send it; fetch
+        # sends `cors`/`same-origin`; Accept is NOT reliable — Chrome's fetch Accept
+        # varies). Swap only when the API actually returned JSON, so browser-clicked
+        # file downloads (e.g. /kbs/{id}/export → application/zip) stay intact.
+        @app.middleware("http")
+        async def spa_browser_nav_fallback(request: Request, call_next):
+            response = await call_next(request)
+            if (
+                request.method == "GET"
+                and request.headers.get("sec-fetch-mode") == "navigate"
+                and "application/json" in response.headers.get("content-type", "")
+            ):
+                # no-store + Vary: Sec-Fetch-Mode: this URL also serves JSON to XHR,
+                # so the navigation HTML must neither be cached nor reused for a fetch.
+                return FileResponse(
+                    dist / "index.html",
+                    headers={"Cache-Control": "no-store", "Vary": "Sec-Fetch-Mode"},
+                )
+            return response
+
     return app
