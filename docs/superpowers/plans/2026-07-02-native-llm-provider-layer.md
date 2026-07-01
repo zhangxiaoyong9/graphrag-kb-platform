@@ -1249,7 +1249,7 @@ git commit -m "feat(llm): NativeCompletion with dual await/async-for streaming"
 - Test: `tests/llm/test_embedding.py`
 
 **Interfaces:**
-- Produces: `class NativeEmbedding` exposing `.embedding(*, input: list[str]) -> CreateEmbeddingResponse` (graphrag-llm embedding signature), batched at `_EMBED_BATCH_SIZE=64`.
+- Produces: `class NativeEmbedding` exposing `.embedding(*, input: list[str]) -> CreateEmbeddingResponse` (graphrag-llm embedding signature), batched at `_EMBED_BATCH_SIZE=64`. Constructor is **factory-style** (the same shape graphrag-llm's `embedding_factory.create(init_args=…)` calls): `__init__(*, model_id, model_config, tokenizer=None, client=None, **_kwargs)`. It reads the profile from `model_config`'s `kb_profiles` extra (single element) and accepts an optional injected `client` for tests.
 - Consumes: `request.ProviderConfig`/`build_embed_request`. Single profile, multi-key round-robin, retriable retry.
 
 - [ ] **Step 1: Write the failing test**
@@ -1258,18 +1258,23 @@ git commit -m "feat(llm): NativeCompletion with dual await/async-for streaming"
 ```python
 import httpx
 import pytest
+from graphrag_llm.config import ModelConfig
 
 from kb_platform.llm.embedding import NativeEmbedding
-from kb_platform.llm.request import ProviderConfig
 
 
-def _client(payload):
-    async def handler(request):
-        return httpx.Response(200, json=payload)
-    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+def _mc():
+    # ModelConfig(extra="allow") carries kb_profiles in model_extra
+    return ModelConfig(
+        type="kb_native", model_provider="openai", model="m", api_key="x",
+        kb_profiles=[{
+            "provider": "openai", "model": "m", "api_base": None, "api_version": None,
+            "keys": ["k"], "ssl_verify": True,
+        }],
+    )
 
 
-def _resp_payload(n, dim=2):
+def _payload(n):
     return {
         "object": "list",
         "model": "m",
@@ -1278,22 +1283,19 @@ def _resp_payload(n, dim=2):
     }
 
 
+def _client():
+    async def handler(request):
+        import json
+        n = len(json.loads(request.content)["input"])
+        return httpx.Response(200, json=_payload(n))
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+
 @pytest.mark.asyncio
 async def test_embedding_returns_vectors_in_order_and_batches():
-    # 100 inputs -> 2 batches (64 + 36); each call returns inputs.length items
-    payloads = [_resp_payload(64), _resp_payload(36)]
-
-    def make():
-        async def handler(request):
-            import json
-            n = len(json.loads(request.content)["input"])
-            return httpx.Response(200, json=_resp_payload(n))
-        return httpx.AsyncClient(transport=httpx.MockTransport(handler))
-
-    client = make()
-    cfg = ProviderConfig(provider="openai", model="m", api_base=None,
-                         api_version=None, key="k", ssl_verify=True)
-    emb = NativeEmbedding(profile=cfg, client=client)
+    # 100 inputs -> 2 batches (64 + 36); handler returns one row per input
+    client = _client()
+    emb = NativeEmbedding(model_id="openai/m", model_config=_mc(), client=client)
     resp = emb.embedding(input=[f"t{i}" for i in range(100)])
     assert len(resp.embeddings) == 100
     assert resp.embeddings[0] == [0.0, 0.0]
@@ -1331,12 +1333,25 @@ _EMBED_BATCH_SIZE = 64
 
 
 class NativeEmbedding:
-    def __init__(self, *, profile: ProviderConfig, client: httpx.AsyncClient,
-                 keys: list[str] | None = None, **_kwargs: Any) -> None:
-        self._profile = profile
-        self._client = client
-        self._keys = keys or ([profile.key] if profile.key else [""])
-        self._cycle = itertools.cycle(self._keys)
+    def __init__(self, *, model_id: str, model_config: Any, tokenizer: Any = None,
+                 client: httpx.AsyncClient | None = None, keys: list[str] | None = None,
+                 **_kwargs: Any) -> None:
+        extra = getattr(model_config, "model_extra", None) or {}
+        prof = (extra.get("kb_profiles") or [{}])[0]
+        self._profile = ProviderConfig(
+            provider=prof.get("provider", "openai"),
+            model=prof.get("model", "text-embedding-3-small"),
+            api_base=prof.get("api_base"),
+            api_version=prof.get("api_version"),
+            key=(prof.get("keys") or [None])[0],
+            ssl_verify=prof.get("ssl_verify", True),
+        )
+        self._keys = keys or prof.get("keys") or []
+        self._cycle = itertools.cycle(self._keys or [self._profile.key or ""])
+        if client is not None:
+            self._client = client
+        else:
+            self._client = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0))
 
     def embedding(self, *, input: list[str], **_kwargs: Any) -> CreateEmbeddingResponse:
         import asyncio
@@ -1527,6 +1542,9 @@ def test_build_default_adapter_yields_native_completion():
     adapter = build_default_adapter(data_root=".", model_config=mc)
     from kb_platform.llm.client import NativeCompletion
     assert isinstance(adapter._completion, NativeCompletion)
+    # Indexing EMBEDDING path must also be native (spec: embeddings go native too).
+    from kb_platform.llm.embedding import NativeEmbedding
+    assert isinstance(adapter._embed_factory(), NativeEmbedding)
 ```
 
 - [ ] **Step 3: Run test to verify it fails**
@@ -1576,6 +1594,30 @@ Concretely, replace the block with:
 Delete the `extra_api_keys`/`LoadBalancingCompletion` branch that follows.
 
 Also update `build_adapter_from_settings` to drop the `extra_api_keys=extra_keys or None` arg (the keys now ride inside `kb_profiles` via `assemble_kb_settings` — see Step 6) and pass `extra_api_keys=api_keys` instead so the wiring above fans them out. Keep `api_key=resolved_key` as the ModelConfig api_key (validator is skipped for kb_native).
+
+Also flip the **indexing embedding** path to `kb_native` (spec: embeddings go native too; the T10 test asserts `adapter._embed_factory()` is `NativeEmbedding`):
+
+1. In `assemble_kb_settings`, change the `embedding` block to carry `type="kb_native"` + a single-element `kb_profiles` (mirroring the `llm` block):
+```python
+        assembled["embedding"] = {
+            "type": "kb_native",
+            "model_provider": ep.provider,
+            "model": ep.model,
+            "api_base": ep.api_base,
+            "api_version": ep.api_version,
+            "api_keys": emb_keys,
+            "ssl_verify": ep.ssl_verify,
+            "kb_profiles": [{
+                "provider": ep.provider,
+                "model": ep.model,
+                "api_base": ep.api_base,
+                "api_version": ep.api_version,
+                "keys": emb_keys,
+                "ssl_verify": ep.ssl_verify,
+            }],
+        }
+```
+2. In `_build_embed_model_config`, set `type="kb_native"` (instead of `emb.get("type", "litellm")`) and add a `kb_profiles=[{…}]` extra built from the same `emb` fields (provider/model/api_base/api_version/keys=[resolved]/ssl_verify). `build_default_adapter`'s `create_embedding(embed_model_config or model_config)` then returns `NativeEmbedding` for either branch.
 
 - [ ] **Step 5: Delete `LoadBalancingCompletion`**
 
@@ -1668,33 +1710,34 @@ In `kb_platform/query/graphrag_engine.py::_resolve_config`, change the `completi
                 if resolved_key:
                     entry["api_key"] = resolved_key
 ```
-Mirror the same `type="kb_native"` change for the `embedding_models` entry (no `kb_profiles` needed — `NativeEmbedding` is constructed via `register_embedding`; but the embedding factory needs the profile: see Step 3).
-
-- [ ] **Step 3: Reconcile embedding construction**
-
-`NativeEmbedding.__init__` takes `profile` + `client`, but graphrag-llm's factory calls `create_embedding(embedding_settings)` → `embedding_factory.create(init_args={..., "model_config": ..., ...})`. So `NativeEmbedding` must accept the factory's init_args (`model_id, model_config, tokenizer, ...`) like `NativeCompletion` does, and build its own `ProviderConfig` + `httpx.AsyncClient` from `model_config`. Update `NativeEmbedding.__init__` (T8) to:
+Mirror the same `type="kb_native"` change for the `embedding_models` entry. Because `NativeEmbedding` (T8) reads its profile from `model_config.kb_profiles[0]`, the embedding entry MUST carry a single-element `kb_profiles` too:
 ```python
-    def __init__(self, *, model_id: str, model_config: Any, tokenizer: Any = None,
-                 metrics_store: Any = None, cache: Any = None,
-                 cache_key_creator: Any = None, **_kwargs: Any) -> None:
-        import httpx
-        extra = getattr(model_config, "model_extra", None) or {}
-        prof = (extra.get("kb_profiles") or [{}])[0]
-        from kb_platform.llm.request import ProviderConfig
-        self._profile = ProviderConfig(
-            provider=prof.get("provider", "openai"),
-            model=prof.get("model", "text-embedding-3-small"),
-            api_base=prof.get("api_base"),
-            api_version=prof.get("api_version"),
-            key=(prof.get("keys") or [None])[0],
-            ssl_verify=prof.get("ssl_verify", True),
-        )
-        self._client = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0))
-        self._keys = prof.get("keys") or []
-        import itertools
-        self._cycle = itertools.cycle(self._keys or [self._profile.key or ""])
+                emb_entry = {
+                    "type": "kb_native",
+                    "model_provider": provider,
+                    "model": emb.get("model", "text-embedding-3-small"),
+                    "api_base": emb.get("api_base"),
+                    "api_version": emb.get("api_version"),
+                    "call_args": {"ssl_verify": emb.get("ssl_verify", True)},
+                    "kb_profiles": [{
+                        "provider": provider,
+                        "model": emb.get("model", "text-embedding-3-small"),
+                        "api_base": emb.get("api_base"),
+                        "api_version": emb.get("api_version"),
+                        "keys": list(emb.get("api_keys") or [resolved_key]),
+                        "ssl_verify": emb.get("ssl_verify", True),
+                    }],
+                }
+                if resolved_key:
+                    emb_entry["api_key"] = resolved_key
+                values["embedding_models"] = {"default_embedding_model": emb_entry}
 ```
-So `_resolve_config` must ALSO add a `kb_profiles` (single-element) to the embedding entry — update Step 2's embedding branch to include `"kb_profiles": [{…}]` derived from the `emb` block.
+
+- [ ] **Step 3: Verify graphrag-llm's `embedding_factory` passes `model_config`**
+
+T8 already lands `NativeEmbedding` in the factory-style shape (`__init__(*, model_id, model_config, tokenizer=None, client=None, …)`), so no rewrite is needed. Before running Step 6, confirm `graphrag_llm/embedding/embedding_factory.py::create_embedding` spreads `init_args={"model_id": …, "model_config": …, "tokenizer": …, …}` (same shape as the completion factory). If it omits `model_config`, fall back to reading the profile from a module-level side-channel keyed on `model_id`. Run:
+`uv run python -c "import inspect, graphrag_llm.embedding.embedding_factory as f; print(inspect.getsource(f.create_embedding))"`
+Expected: `init_args` includes `"model_config": model_config`.
 
 - [ ] **Step 4: Delete `_StreamFixWrapper` and the basic-method swap**
 
@@ -1760,6 +1803,20 @@ def test_native_completion_is_what_graphrag_builds():
                                    "api_base": None, "api_version": None,
                                    "keys": ["x"], "ssl_verify": True}])
     assert isinstance(create_completion(mc), NativeCompletion)
+
+
+def test_native_embedding_is_what_graphrag_builds():
+    # Embeddings also resolve to NativeEmbedding (no litellm on the embedding path).
+    from graphrag_llm.embedding import create_embedding
+    from graphrag_llm.config import ModelConfig
+    from kb_platform.llm.embedding import NativeEmbedding
+
+    mc = ModelConfig(type="kb_native", model_provider="openai", model="text-embedding-3-small",
+                     api_key="x",
+                     kb_profiles=[{"provider": "openai", "model": "text-embedding-3-small",
+                                   "api_base": None, "api_version": None,
+                                   "keys": ["x"], "ssl_verify": True}])
+    assert isinstance(create_embedding(mc), NativeEmbedding)
 ```
 
 - [ ] **Step 6: Run the guard test + full query test suite**
