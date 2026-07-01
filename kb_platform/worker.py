@@ -41,6 +41,7 @@ class _SettingsKb:
     data_root: str
     llm_profile_id: int | None = None
     embedding_profile_id: int | None = None
+    llm_fallback_profile_ids: str | None = None
 
 
 async def run_worker_once(
@@ -78,6 +79,7 @@ async def run_worker_once(
             settings_json = kb.settings_json
             llm_profile_id = kb.llm_profile_id
             embedding_profile_id = kb.embedding_profile_id
+            llm_fallback_profile_ids = kb.llm_fallback_profile_ids
 
         adapter = adapter_factory(
             _SettingsKb(
@@ -85,6 +87,7 @@ async def run_worker_once(
                 data_root=data_root,
                 llm_profile_id=llm_profile_id,
                 embedding_profile_id=embedding_profile_id,
+                llm_fallback_profile_ids=llm_fallback_profile_ids,
             )
         )
         orch = Orchestrator(

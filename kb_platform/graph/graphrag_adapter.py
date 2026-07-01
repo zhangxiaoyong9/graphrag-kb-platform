@@ -574,6 +574,41 @@ def assemble_kb_settings(kb, repo) -> dict:
         raise ValueError(f"LLM profile '{lp.name}' has no API keys.")
     content = json.loads(kb.settings_json or "{}")
     reports = content.get("community_reports") or {}
+
+    # Primary profile dict first, then one dict per declared fallback id, in
+    # failover order. The gateway (T14) consumes the whole list; downstream code
+    # still reads the PRIMARY keys from llm.api_keys. Missing profiles or empty
+    # keys raise ValueError rather than silently degrade.
+    primary_profile = {
+        "provider": lp.provider,
+        "model": lp.model,
+        "api_base": lp.api_base,
+        "api_version": lp.api_version,
+        "keys": api_keys,
+        "ssl_verify": lp.ssl_verify,
+    }
+    kb_profiles = [primary_profile]
+    fallback_ids = json.loads(kb.llm_fallback_profile_ids or "[]")
+    for fid in fallback_ids:
+        fp = repo.get_profile(fid)
+        if fp is None:
+            raise ValueError(
+                f"fallback provider profile {fid} not found (kb={kb.id})"
+            )
+        fk = decrypt_values(fp.api_keys_enc)
+        if not fk:
+            raise ValueError(
+                f"fallback provider profile '{fp.name}' (id={fid}) has no API keys"
+            )
+        kb_profiles.append({
+            "provider": fp.provider,
+            "model": fp.model,
+            "api_base": fp.api_base,
+            "api_version": fp.api_version,
+            "keys": fk,
+            "ssl_verify": fp.ssl_verify,
+        })
+
     assembled = {
         "llm": {
             "type": "kb_native",
@@ -583,16 +618,7 @@ def assemble_kb_settings(kb, repo) -> dict:
             "api_version": lp.api_version,
             "api_keys": api_keys,
             "ssl_verify": lp.ssl_verify,
-            "kb_profiles": [
-                {
-                    "provider": lp.provider,
-                    "model": lp.model,
-                    "api_base": lp.api_base,
-                    "api_version": lp.api_version,
-                    "keys": api_keys,
-                    "ssl_verify": lp.ssl_verify,
-                }
-            ],
+            "kb_profiles": kb_profiles,
         },
         "chunking": content.get("chunking", {}),
         "extract_graph": content.get("extract_graph", {}),
