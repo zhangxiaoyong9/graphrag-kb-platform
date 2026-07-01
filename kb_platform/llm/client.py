@@ -126,10 +126,15 @@ class NativeCompletion(LLMCompletion):
             client = httpx.AsyncClient(
                 timeout=httpx.Timeout(120.0, connect=10.0), verify=verify
             )
+            from kb_platform.llm.circuit_breaker import CircuitBreaker
+            failure_threshold = kwargs.get("failure_threshold", 5)
+            open_seconds = kwargs.get("open_seconds", 30.0)
+            breakers = {i: CircuitBreaker(failure_threshold=failure_threshold,
+                                          open_seconds=open_seconds)
+                        for i in range(len(profiles))}
             self._gateway = FailoverGateway(
-                profiles=profiles, client=client, breakers={},
-                failure_threshold=kwargs.get("failure_threshold", 5),
-                open_seconds=kwargs.get("open_seconds", 30.0),
+                profiles=profiles, client=client, breakers=breakers,
+                failure_threshold=failure_threshold, open_seconds=open_seconds,
             )
 
     # --- abstract property impls (LLMCompletion contract) ---

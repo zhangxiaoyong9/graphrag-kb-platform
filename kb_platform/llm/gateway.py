@@ -66,10 +66,17 @@ class FailoverGateway:
         self._failure_threshold = failure_threshold
         self._open_seconds = open_seconds
 
-    # --- candidate selection (extended in P2) ---
+    # --- candidate selection (P2: breaker-gated) ---
     def _candidates(self) -> list[tuple[int, _ProfileKeys]]:
-        # P1: single profile, always admitted. P2 will skip open breakers + add fallbacks.
-        return [(i, pk) for i, pk in enumerate(self._pks)]
+        # Admit a profile iff it has a breaker AND the breaker allows the call
+        # (closed or half-open). P1 callers that pass breakers={} get an empty
+        # candidate list — but NativeCompletion now always supplies breakers,
+        # and the legacy empty-breakers path falls back to "all admitted" below
+        # so existing single-profile tests keep working.
+        if not self._breakers:
+            return [(i, pk) for i, pk in enumerate(self._pks)]
+        return [(i, pk) for i, pk in enumerate(self._pks)
+                if i in self._breakers and self._breakers[i].allow()]
 
     def _on_attempt_error(self, idx: int, retriable: bool) -> None:
         cb = self._breakers.get(idx)
