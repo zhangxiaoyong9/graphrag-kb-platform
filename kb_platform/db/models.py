@@ -23,6 +23,14 @@ class KnowledgeBase(Base):
     data_root: Mapped[str] = mapped_column(String)
     llm_profile_id: Mapped[int | None] = mapped_column(ForeignKey("provider_profile.id"), nullable=True)
     embedding_profile_id: Mapped[int | None] = mapped_column(ForeignKey("provider_profile.id"), nullable=True)
+    llm_fallback_profile_ids: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    """JSON-encoded ordered list of fallback LLM provider-profile ids.
+
+    Failover order at query time is ``[llm_profile_id] +
+    json.loads(llm_fallback_profile_ids or "[]")``. Existing KBs have NULL
+    (or ``"[]"``) and behave exactly as today — no fallback. Consumed by the
+    cross-profile failover gateway (T14).
+    """
     documents: Mapped[list["Document"]] = relationship(back_populates="kb")
 
 
