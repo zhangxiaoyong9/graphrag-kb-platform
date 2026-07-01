@@ -6,7 +6,7 @@
 
 **Architecture:** Use graphrag-llm's first-class `register_completion`/`register_embedding` seam (`ModelConfig.type = "kb_native"`, which `ModelConfig(extra="allow")` explicitly supports and whose validator only fires for `type=LiteLLM`). A `FailoverGateway` holds an ordered list of provider profiles + per-profile `CircuitBreaker`s; `NativeCompletion`/`NativeEmbedding` are graphrag-llm `LLMCompletion` subclasses that drive the gateway and adapt its normalized events to OpenAI `ChatCompletionChunk` / `LLMCompletionResponse` shapes that graphrag consumes.
 
-**Tech Stack:** Python 3.11, `uv`, pytest (asyncio_mode=auto), `httpx` (already a transitive dep via graphrag-llm; verify it's a direct dep — Task T1), pydantic v2, openai types (re-exported by graphrag-llm), ruff (line-length 100, py311), alembic.
+**Tech Stack:** Python 3.11, `uv`, pytest (asyncio_mode=auto), `httpx` (already a transitive dep via graphrag-llm; verify it's a direct dep — Task 1), pydantic v2, openai types (re-exported by graphrag-llm), ruff (line-length 100, py311), alembic.
 
 ## Global Constraints
 
@@ -56,7 +56,7 @@ Tests under `tests/llm/` (new) mirroring the package; guard test in `tests/`.
 
 ---
 
-### Task T1: Confirm httpx dependency + create package skeleton
+### Task 1: Confirm httpx dependency + create package skeleton
 
 **Files:**
 - Modify: `pyproject.toml`
@@ -105,7 +105,7 @@ git commit -m "feat(llm): scaffold kb_platform.llm package + httpx dep"
 
 ---
 
-### Task T2: Normalized gateway events
+### Task 2: Normalized gateway events
 
 **Files:**
 - Create: `kb_platform/llm/events.py`
@@ -209,7 +209,7 @@ git commit -m "feat(llm): normalized gateway stream events"
 
 ---
 
-### Task T3: Provider SSE parser (provider wire format → events)
+### Task 3: Provider SSE parser (provider wire format → events)
 
 **Files:**
 - Create: `kb_platform/llm/sse.py`
@@ -374,7 +374,7 @@ git commit -m "feat(llm): provider SSE parser -> normalized events"
 
 ---
 
-### Task T4: Per-provider request normalization
+### Task 4: Per-provider request normalization
 
 **Files:**
 - Create: `kb_platform/llm/request.py`
@@ -556,7 +556,7 @@ git commit -m "feat(llm): per-provider request normalization"
 
 ---
 
-### Task T5: Circuit breaker (used by P2, but landed with the gateway)
+### Task 5: Circuit breaker (used by P2, but landed with the gateway)
 
 **Files:**
 - Create: `kb_platform/llm/circuit_breaker.py`
@@ -678,7 +678,7 @@ git commit -m "feat(llm): per-profile circuit breaker"
 
 ---
 
-### Task T6: FailoverGateway (single-profile pass-through now; failover wiring lands in P2)
+### Task 6: FailoverGateway (single-profile pass-through now; failover wiring lands in P2)
 
 **Files:**
 - Create: `kb_platform/llm/gateway.py`
@@ -929,7 +929,7 @@ git commit -m "feat(llm): failover gateway (single-profile pass-through + key RR
 
 ---
 
-### Task T7: NativeCompletion (LLMCompletion subclass) + `_AwaitableAsyncIterator`
+### Task 7: NativeCompletion (LLMCompletion subclass) + `_AwaitableAsyncIterator`
 
 **Files:**
 - Create: `kb_platform/llm/client.py`
@@ -1242,7 +1242,7 @@ git commit -m "feat(llm): NativeCompletion with dual await/async-for streaming"
 
 ---
 
-### Task T8: NativeEmbedding
+### Task 8: NativeEmbedding
 
 **Files:**
 - Create: `kb_platform/llm/embedding.py`
@@ -1396,7 +1396,7 @@ git commit -m "feat(llm): native embedding client (batched, key RR)"
 
 ---
 
-### Task T9: Registry + bootstrap
+### Task 9: Registry + bootstrap
 
 **Files:**
 - Create: `kb_platform/llm/registry.py`, `kb_platform/llm/bootstrap.py`
@@ -1500,7 +1500,7 @@ git commit -m "feat(llm): register kb_native into graphrag-llm factories"
 
 ---
 
-### Task T10: Wire indexing + rewriter to `kb_native`; delete `LoadBalancingCompletion`
+### Task 10: Wire indexing + rewriter to `kb_native`; delete `LoadBalancingCompletion`
 
 **Files:**
 - Modify: `kb_platform/graph/graphrag_adapter.py` (`build_default_adapter`, `build_adapter_from_settings`, `build_chat_complete`)
@@ -1651,7 +1651,7 @@ git commit -m "feat(llm): wire indexing + rewriter to kb_native; drop LoadBalanc
 
 ---
 
-### Task T11: Wire query path; delete `_StreamFixWrapper`; guard test
+### Task 11: Wire query path; delete `_StreamFixWrapper`; guard test
 
 **Files:**
 - Modify: `kb_platform/query/graphrag_engine.py` (`_resolve_config`, `_run_graphrag_search`, delete `_StreamFixWrapper`)
@@ -1848,7 +1848,7 @@ Manual smoke (optional but recommended): with a real provider profile, run one i
 
 ---
 
-### Task T12: Data model — `KnowledgeBase.llm_fallback_profile_ids`
+### Task 12: Data model — `KnowledgeBase.llm_fallback_profile_ids`
 
 **Files:**
 - Modify: `kb_platform/db/models.py`
@@ -1907,7 +1907,7 @@ git commit -m "feat(db): kb.llm_fallback_profile_ids ordered fallback list"
 
 ---
 
-### Task T13: `assemble_kb_settings` packs the full ordered `kb_profiles`
+### Task 13: `assemble_kb_settings` packs the full ordered `kb_profiles`
 
 **Files:**
 - Modify: `kb_platform/graph/graphrag_adapter.py::assemble_kb_settings`
@@ -1926,7 +1926,7 @@ git commit -m "feat(db): kb.llm_fallback_profile_ids ordered fallback list"
 
 ---
 
-### Task T14: Gateway cross-profile failover + breaker gating
+### Task 14: Gateway cross-profile failover + breaker gating
 
 **Files:**
 - Modify: `kb_platform/llm/gateway.py`, `kb_platform/llm/client.py`
@@ -1950,7 +1950,7 @@ git commit -m "feat(db): kb.llm_fallback_profile_ids ordered fallback list"
 
 ---
 
-### Task T15: KB form UI — ordered fallback profile multi-select
+### Task 15: KB form UI — ordered fallback profile multi-select
 
 **Files:**
 - Modify: `web/src/...` (KB create/edit form), the KB API models (`kb_platform/api/models.py`) + routes (`routes_kbs.py`) to accept/return `llm_fallback_profile_ids`.
@@ -1970,7 +1970,7 @@ git commit -m "feat(db): kb.llm_fallback_profile_ids ordered fallback list"
 
 ---
 
-### Task T16: `HealthProbe` background loop
+### Task 16: `HealthProbe` background loop
 
 **Files:**
 - Create: `kb_platform/llm/health.py`
@@ -1997,7 +1997,7 @@ git commit -m "feat(db): kb.llm_fallback_profile_ids ordered fallback list"
 
 ---
 
-### Task T17: Metrics recorders + emission
+### Task 17: Metrics recorders + emission
 
 **Files:**
 - Create: `kb_platform/llm/metrics.py`
@@ -2011,7 +2011,7 @@ git commit -m "feat(db): kb.llm_fallback_profile_ids ordered fallback list"
 
 ---
 
-### Task T18: `GET /llm/health` route
+### Task 18: `GET /llm/health` route
 
 **Files:**
 - Create: `kb_platform/api/routes_llm_health.py`
