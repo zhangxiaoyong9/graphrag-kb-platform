@@ -52,40 +52,6 @@ _TEXT_UNIT_TEXT = "text_unit_text"
 _COMMUNITY_FULL_CONTENT = "community_full_content"
 
 
-class _StreamFixWrapper:
-    """Wraps a graphrag-llm completion so completion_async(stream=True) returns an
-    async generator directly (NOT a coroutine).
-
-    graphrag's BasicSearch assigns ``model.completion_async(stream=True)`` to a
-    variable WITHOUT ``await``, then does ``async for chunk in it``. But
-    graphrag-llm's ``completion_async`` is ``async def`` → returns a coroutine,
-    not an async iterator → ``TypeError: 'async for' requires __aiter__``.
-
-    This wrapper makes ``completion_async`` a regular method: for streaming calls
-    it returns an async generator (awaitable + async-iterable); for non-streaming
-    calls it returns the inner coroutine (graphrag awaits those correctly).
-    """
-
-    def __init__(self, inner) -> None:
-        self._inner = inner
-
-    def completion_async(self, **kwargs):
-        if kwargs.get("stream"):
-            return self._stream(**kwargs)
-        return self._inner.completion_async(**kwargs)
-
-    async def _stream(self, **kwargs):
-        resp = await self._inner.completion_async(**kwargs)
-        if hasattr(resp, "__aiter__"):
-            async for chunk in resp:
-                yield chunk
-        else:
-            yield resp
-
-    def __getattr__(self, name):
-        return getattr(self._inner, name)
-
-
 class _SourceCapturingCallback:
     """Duck-typed ``QueryCallbacks``: captures ``on_context`` so ``stream_search``
     can extract sources; every other callback hook is a no-op."""
@@ -343,8 +309,10 @@ class GraphRagQueryEngine:
         answer ``str`` deltas after doing retrieval/map-reduce internally. We
         register a ``_SourceCapturingCallback`` to recover sources via
         ``on_context`` (best-effort; drift never fires it → sources None).
-        Verified: all four ``stream_search`` AWAITS ``completion_async(stream=True)``
-        correctly, so no ``_StreamFixWrapper`` is needed here.
+        NativeCompletion.completion_async(stream=True) returns an
+        ``_AwaitableAsyncIterator`` that supports both streaming consumption
+        styles (basic_search does not await; local/global/drift do), so all
+        four engines stream without any model wrapper.
         """
         root = self._data_root or kb_data_root
         if method in _REPORTS_REQUIRED and not os.path.exists(
@@ -396,17 +364,18 @@ class GraphRagQueryEngine:
         """Best-effort real graphrag search.
 
         Constructs the engine via ``_build_engine`` (shared with
-        ``stream_search``), applies the basic-method ``_StreamFixWrapper`` (the
-        blocking ``search()`` path only), and awaits ``engine.search(query)``.
+        ``stream_search``) and awaits ``engine.search(query)``. No model
+        wrapping: NativeCompletion's dual-mode stream return covers all
+        four engines.
 
         Failures (missing parquet, unconfigured LLM/embedder, etc.) are caught
         by the caller and returned as ``QueryResult.error``.
         """
+        # No _StreamFixWrapper: NativeCompletion.completion_async(stream=True)
+        # returns an _AwaitableAsyncIterator that supports BOTH consumption
+        # styles (``async for chunk in X`` for basic_search and
+        # ``async for chunk in await X`` for local/global/drift).
         engine = self._build_engine(method, root, params)
-        # BasicSearch.search() calls completion_async(stream=True) WITHOUT await
-        # → wrap so streaming returns an async gen (graphrag-llm returns a coroutine).
-        if method == "basic":
-            engine.model = _StreamFixWrapper(engine.model)
         result = await engine.search(query=query)
         return self._result_from_search(method, result)
 
@@ -566,13 +535,27 @@ class GraphRagQueryEngine:
                     or (os.getenv(llm["api_key_env"]) if llm.get("api_key_env") else None)
                     or os.getenv(f"{provider.upper()}_API_KEY")
                 )
+                # kb_native routes through the native gateway (no litellm on the
+                # query hot path). The kb_profiles bundle lets graphrag-llm's
+                # factory build a NativeCompletion that round-robins keys.
                 entry = {
-                    "type": llm.get("type", "litellm"),
+                    "type": "kb_native",
                     "model_provider": provider,
                     "model": llm.get("model", "gpt-4o-mini"),
                     "api_base": llm.get("api_base"),
                     "api_version": llm.get("api_version"),
                     "call_args": {"ssl_verify": llm.get("ssl_verify", True)},
+                    "kb_profiles": llm.get("kb_profiles")
+                    or [
+                        {
+                            "provider": provider,
+                            "model": llm.get("model", "gpt-4o-mini"),
+                            "api_base": llm.get("api_base"),
+                            "api_version": llm.get("api_version"),
+                            "keys": list(llm.get("api_keys") or []),
+                            "ssl_verify": llm.get("ssl_verify", True),
+                        }
+                    ],
                 }
                 if resolved_key:
                     entry["api_key"] = resolved_key
@@ -587,7 +570,8 @@ class GraphRagQueryEngine:
         # settings when present (same credential resolution as above). Do NOT
         # fall back to `llm` — a chat model is not an embedding model; if no
         # embedding settings are configured, leave it unset so graphrag raises
-        # its own honest "not configured" error.
+        # its own honest "not configured" error. Embeddings also route through
+        # kb_native (NativeEmbedding reads its profile from kb_profiles[0]).
         if not values.get("embedding_models"):
             emb = dict(values.get("embedding") or {})
             if emb:
@@ -598,18 +582,28 @@ class GraphRagQueryEngine:
                     or (os.getenv(emb["api_key_env"]) if emb.get("api_key_env") else None)
                     or os.getenv(f"{provider.upper()}_API_KEY")
                 )
-                entry = {
-                    "type": emb.get("type", "litellm"),
+                emb_entry = {
+                    "type": "kb_native",
                     "model_provider": provider,
                     "model": emb.get("model", "text-embedding-3-small"),
                     "api_base": emb.get("api_base"),
                     "api_version": emb.get("api_version"),
                     "call_args": {"ssl_verify": emb.get("ssl_verify", True)},
+                    "kb_profiles": [
+                        {
+                            "provider": provider,
+                            "model": emb.get("model", "text-embedding-3-small"),
+                            "api_base": emb.get("api_base"),
+                            "api_version": emb.get("api_version"),
+                            "keys": list(emb.get("api_keys") or [resolved_key]),
+                            "ssl_verify": emb.get("ssl_verify", True),
+                        }
+                    ],
                 }
                 if resolved_key:
-                    entry["api_key"] = resolved_key
-                if "api_key" in entry:
-                    values["embedding_models"] = {"default_embedding_model": entry}
+                    emb_entry["api_key"] = resolved_key
+                if "api_key" in emb_entry:
+                    values["embedding_models"] = {"default_embedding_model": emb_entry}
         return GraphRagConfig.model_validate(values)
 
     def _build_embedding_store(self, config, embedding_name: str):
