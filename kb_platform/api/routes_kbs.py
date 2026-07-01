@@ -54,6 +54,36 @@ def _profileref(repo, pid: int | None) -> ProfileRef | None:
     return ProfileRef(id=p.id, name=p.name, provider=p.provider, model=p.model) if p else None
 
 
+def _fallback_ids_from_kb(kb: KnowledgeBase) -> list[int]:
+    """Decode the persisted JSON fallback list into a list[int] (never None)."""
+    raw = kb.llm_fallback_profile_ids
+    if not raw:
+        return []
+    try:
+        ids = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    return [int(i) for i in ids if isinstance(i, (int, float))]
+
+
+def _validate_fallback_ids(
+    repo, ids: list[int] | None, primary_id: int | None
+) -> list[int]:
+    """Validate every fallback id exists and is an LLM profile; drop the primary
+    if it accidentally appears (it would be a no-op in the failover chain)."""
+    if not ids:
+        return []
+    out: list[int] = []
+    for pid in ids:
+        if pid == primary_id:
+            continue  # exclude primary from fallback chain
+        p = repo.get_profile(pid)
+        if p is None or p.kind != "llm":
+            raise HTTPException(400, f"unknown fallback llm profile id {pid}")
+        out.append(int(pid))
+    return out
+
+
 def _snippet(text: str, limit: int = 220) -> str:
     """Return a compact one-line snippet for citation lists."""
     one_line = " ".join((text or "").split())
@@ -121,6 +151,7 @@ def create_kb(payload: KbCreate, request: Request) -> KbOut:
     _require_profile(repo, payload.llm_profile_id, "llm")
     if payload.embedding_profile_id is not None:
         _require_profile(repo, payload.embedding_profile_id, "embedding")
+    fallback_ids = _validate_fallback_ids(repo, payload.llm_fallback_profile_ids, payload.llm_profile_id)
     settings = _parse_settings(payload.settings_yaml)
     with session_scope(repo.engine) as s:
         kb = KnowledgeBase(
@@ -130,6 +161,7 @@ def create_kb(payload: KbCreate, request: Request) -> KbOut:
             data_root=request.app.state.data_root,
             llm_profile_id=payload.llm_profile_id,
             embedding_profile_id=payload.embedding_profile_id,
+            llm_fallback_profile_ids=json.dumps(fallback_ids) if fallback_ids else None,
         )
         s.add(kb)
         s.flush()
@@ -152,11 +184,14 @@ def get_kb(kb_id: int, request: Request) -> KbDetailOut:
         kb = s.get(KnowledgeBase, kb_id)
         if not kb:
             raise HTTPException(404)
+        fallback_ids = _fallback_ids_from_kb(kb)
         return KbDetailOut(
             id=kb.id, name=kb.name, method=kb.method,
             settings=_redact(kb.settings_json),
             llm_profile=_profileref(repo, kb.llm_profile_id),
             embedding_profile=_profileref(repo, kb.embedding_profile_id),
+            llm_fallback_profile_ids=fallback_ids,
+            llm_fallback_profiles=[r for r in (_profileref(repo, i) for i in fallback_ids) if r],
         )
 
 
@@ -183,19 +218,24 @@ def update_kb(kb_id: int, payload: KbUpdate, request: Request) -> KbDetailOut:
     _require_profile(repo, payload.llm_profile_id, "llm")
     if payload.embedding_profile_id is not None:
         _require_profile(repo, payload.embedding_profile_id, "embedding")
+    fallback_ids = _validate_fallback_ids(repo, payload.llm_fallback_profile_ids, payload.llm_profile_id)
     settings = _parse_settings(payload.settings_yaml)
     kb = repo.update_kb(
         kb_id, name=payload.name, method=payload.method, settings_json=settings,
         llm_profile_id=payload.llm_profile_id,
         embedding_profile_id=payload.embedding_profile_id,
+        llm_fallback_profile_ids=json.dumps(fallback_ids) if fallback_ids else None,
     )
     if kb is None:
         raise HTTPException(404)
+    fallback_ids = _fallback_ids_from_kb(kb)
     return KbDetailOut(
         id=kb.id, name=kb.name, method=kb.method,
         settings=_redact(kb.settings_json),
         llm_profile=_profileref(repo, kb.llm_profile_id),
         embedding_profile=_profileref(repo, kb.embedding_profile_id),
+        llm_fallback_profile_ids=fallback_ids,
+        llm_fallback_profiles=[r for r in (_profileref(repo, i) for i in fallback_ids) if r],
     )
 
 

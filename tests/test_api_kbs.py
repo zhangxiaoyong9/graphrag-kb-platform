@@ -80,6 +80,81 @@ def test_create_kb_response_shape(client):
     assert set(body.keys()) == {"id", "name", "method"}  # response_model restricts fields
 
 
+def test_llm_fallback_profile_ids_round_trip(client):
+    """POST /kbs with llm_fallback_profile_ids=[2,3] is persisted and returned
+    verbatim on GET /kbs/{id}; PATCH also round-trips."""
+    # create two extra LLM profiles (ids 2 and 3; profile 1 already seeded)
+    pid2 = seed_profile(client, name="DS2", provider="deepseek", model="deepseek-chat")
+    pid3 = seed_profile(client, name="DS3", provider="deepseek", model="deepseek-chat")
+    assert {pid2, pid3} == {2, 3}
+
+    # create
+    r = client.post(
+        "/kbs",
+        json={
+            "name": "fb", "method": "standard", "settings_yaml": "{}",
+            "llm_profile_id": 1, "llm_fallback_profile_ids": [pid2, pid3],
+        },
+    )
+    assert r.status_code == 201, r.text
+    kb_id = r.json()["id"]
+
+    # GET round-trips the ordered list + resolved ProfileRefs
+    got = client.get(f"/kbs/{kb_id}").json()
+    assert got["llm_fallback_profile_ids"] == [pid2, pid3]
+    assert [p["id"] for p in got["llm_fallback_profiles"]] == [pid2, pid3]
+
+    # PATCH replaces the list (full replace)
+    r = client.patch(
+        f"/kbs/{kb_id}",
+        json={
+            "name": "fb", "method": "standard", "settings_yaml": "{}",
+            "llm_profile_id": 1, "llm_fallback_profile_ids": [pid3],
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["llm_fallback_profile_ids"] == [pid3]
+
+    # empty list = no fallback (persisted as NULL)
+    r = client.patch(
+        f"/kbs/{kb_id}",
+        json={
+            "name": "fb", "method": "standard", "settings_yaml": "{}",
+            "llm_profile_id": 1, "llm_fallback_profile_ids": [],
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["llm_fallback_profile_ids"] == []
+
+
+def test_llm_fallback_excludes_primary_and_rejects_unknown(client):
+    """The primary llm_profile_id is silently dropped from the fallback list;
+    a non-existent id is a 400."""
+    pid2 = seed_profile(client, name="DS2", provider="deepseek", model="deepseek-chat")
+    # primary = 1 also listed in fallback -> should be dropped, not 400
+    r = client.post(
+        "/kbs",
+        json={
+            "name": "fb2", "method": "standard", "settings_yaml": "{}",
+            "llm_profile_id": 1, "llm_fallback_profile_ids": [1, pid2],
+        },
+    )
+    assert r.status_code == 201, r.text
+    kb_id = r.json()["id"]
+    got = client.get(f"/kbs/{kb_id}").json()
+    assert got["llm_fallback_profile_ids"] == [pid2]
+
+    # unknown id -> 400
+    r = client.post(
+        "/kbs",
+        json={
+            "name": "fb3", "method": "standard", "settings_yaml": "{}",
+            "llm_profile_id": 1, "llm_fallback_profile_ids": [9999],
+        },
+    )
+    assert r.status_code == 400
+
+
 def test_get_kb_stats_returns_snapshot(tmp_path):
     """GET /kbs/{id}/stats returns the written stats.json content."""
     import json
