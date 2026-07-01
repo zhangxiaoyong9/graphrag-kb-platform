@@ -1,0 +1,202 @@
+"""NativeCompletion: graphrag-llm LLMCompletion backed by our FailoverGateway.
+
+Adapts the gateway's normalized events to the OpenAI shapes graphrag consumes:
+- non-stream -> LLMCompletionResponse (choices[0].message.content + usage)
+- stream     -> openai ChatCompletionChunk (choices[0].delta.content)
+
+stream return is an _AwaitableAsyncIterator: BOTH ``async for chunk in X``
+(graphrag basic_search, no await) AND ``async for chunk in await X`` (local /
+global / drift) work. This is what retires _StreamFixWrapper for all engines."""
+
+from __future__ import annotations
+
+import time
+import uuid
+from collections.abc import AsyncIterator, Iterator
+from typing import Any
+
+from openai.types.chat import ChatCompletion, ChatCompletionChunk
+from openai.types.chat.chat_completion import Choice
+from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
+from openai.types.chat.chat_completion_chunk import ChoiceDelta
+from openai.types.chat.chat_completion_message import ChatCompletionMessage
+from openai.types.completion_usage import CompletionUsage
+
+try:
+    from graphrag_llm.completion.completion import LLMCompletion
+    from graphrag_llm.types.types import LLMCompletionChunk, LLMCompletionResponse
+except Exception:  # pragma: no cover - graphrag-llm always present in prod
+    class LLMCompletion:  # type: ignore[no-redef]
+        pass
+
+    LLMCompletionResponse = ChatCompletion       # type: ignore[assignment,misc]
+    LLMCompletionChunk = ChatCompletionChunk     # type: ignore[assignment,misc]
+
+from kb_platform.llm.events import Done, Error, TextDelta, Usage
+from kb_platform.llm.gateway import ChatRequest, FailoverGateway, GatewayResult
+from kb_platform.llm.request import ProviderConfig
+
+
+class _AwaitableAsyncIterator:
+    """An async iterator that is also awaitable (await returns self, no-op).
+
+    Lets callers use EITHER ``async for chunk in X`` (basic_search) OR
+    ``resp = await X; async for chunk in resp`` (local/global/drift)."""
+
+    def __init__(self, gen: AsyncIterator[Any]) -> None:
+        self._gen = gen
+
+    def __aiter__(self) -> AsyncIterator[Any]:
+        return self._gen
+
+    async def __anext__(self) -> Any:
+        return await self._gen.__anext__()
+
+    def __await__(self) -> Iterator[Any]:
+        # no-op generator: ``await aai`` evaluates to self immediately.
+        # ``if False: yield`` makes this a generator function so the ``return``
+        # value is delivered via StopIteration.value (the await protocol).
+        if False:  # pragma: no cover
+            yield  # pragma: no cover
+        return self
+
+
+def _profile_configs(model_config: Any) -> list[ProviderConfig]:
+    """Read the ``kb_profiles`` bundle packed into ModelConfig extras."""
+    extra = getattr(model_config, "model_extra", None) or {}
+    raw = extra.get("kb_profiles") or []
+    out: list[ProviderConfig] = []
+    for p in raw:
+        keys = p.get("keys") or []
+        out.append(
+            ProviderConfig(
+                provider=p["provider"],
+                model=p["model"],
+                api_base=p.get("api_base"),
+                api_version=p.get("api_version"),
+                key=keys[0] if keys else None,
+                ssl_verify=p.get("ssl_verify", True),
+            )
+        )
+    return out
+
+
+class NativeCompletion(LLMCompletion):
+    """graphrag-llm completion backed by our native gateway.
+
+    Registered as the ``kb_native`` completion type (registry.py). Built per
+    create_completion call (scope='transient') so each KB gets its own gateway
+    from the ``kb_profiles`` bundle in ModelConfig extras."""
+
+    def __init__(
+        self,
+        *,
+        model_id: str,
+        model_config: Any,
+        tokenizer: Any,
+        metrics_store: Any = None,
+        metrics_processor: Any = None,
+        rate_limiter: Any = None,
+        retrier: Any = None,
+        cache: Any = None,
+        cache_key_creator: Any = None,
+        gateway: FailoverGateway | None = None,
+        **kwargs: Any,
+    ) -> None:
+        self.model_id = model_id
+        self.tokenizer = tokenizer
+        self._model_config = model_config
+        profiles = _profile_configs(model_config)
+        if gateway is not None:
+            self._gateway = gateway
+        else:
+            import httpx
+            client = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0))
+            self._gateway = FailoverGateway(
+                profiles=profiles, client=client, breakers={},
+                failure_threshold=kwargs.get("failure_threshold", 5),
+                open_seconds=kwargs.get("open_seconds", 30.0),
+            )
+
+    # test-only constructor bypass (avoids graphrag-llm factory in unit tests)
+    def _init_for_test(self, **kw) -> None:  # noqa: D401 - test seam
+        if "gateway" in kw:
+            kw["_gateway"] = kw.pop("gateway")
+        self.__dict__.update(kw)
+
+    # --- async ---
+    def completion_async(self, /, **kwargs: Any):  # type: ignore[override]
+        messages = kwargs.get("messages")
+        stream = bool(kwargs.get("stream"))
+        response_format = kwargs.get("response_format")
+        params = {k: v for k, v in kwargs.items()
+                  if k not in {"messages", "stream", "response_format"}}
+        req = ChatRequest(messages=_coerce_messages(messages), stream=stream,
+                          response_format=response_format, params=params)
+        if stream:
+            return _AwaitableAsyncIterator(self._stream_chunks(req))
+        return self._non_stream(req)
+
+    async def _non_stream(self, req: ChatRequest) -> ChatCompletion:
+        res: GatewayResult = await self._gateway.collect(req)
+        # LLMCompletionResponse subclasses ChatCompletion and adds the .content /
+        # .formatted_response graphrag reads (e.g. drift primer.model_response.content)
+        return LLMCompletionResponse(
+            id=f"chatcmpl-{uuid.uuid4().hex[:12]}",
+            object="chat.completion",
+            created=int(time.time()),
+            model=self.model_id,
+            choices=[Choice(index=0, message=ChatCompletionMessage(role="assistant", content=res.content),
+                            finish_reason="stop")],
+            usage=CompletionUsage(prompt_tokens=res.usage[0], completion_tokens=res.usage[1],
+                                  total_tokens=sum(res.usage)),
+        )
+
+    async def _stream_chunks(self, req: ChatRequest) -> AsyncIterator[ChatCompletionChunk]:
+        async for ev in self._gateway.astream(req):
+            if isinstance(ev, TextDelta):
+                yield _chunk(self.model_id, content=ev.text)
+            elif isinstance(ev, Usage):
+                yield _chunk(self.model_id, usage=ev)
+            elif isinstance(ev, Done):
+                # terminal marker from gateway — stop. We do NOT emit a synthetic
+                # finish chunk here; graphrag's engines read choices[0].delta.content
+                # and stop on their own, and an extra empty delta would change the
+                # joined text by exactly one "". The stream just ends.
+                return
+            elif isinstance(ev, Error):
+                # emit a finish_reason="stop" so graphrag stops cleanly, then end.
+                yield _chunk(self.model_id, finish_reason="stop")
+                return
+        # stream ended without an explicit Done/Error event -> emit a terminal chunk
+        yield _chunk(self.model_id, finish_reason="stop")
+
+    # --- sync (used by extract_chunk_sync test helper) ---
+    def completion(self, /, **kwargs: Any):  # type: ignore[override]
+        import asyncio
+        return asyncio.run(self.completion_async(**kwargs))
+
+
+def _chunk(model_id: str, *, content: str | None = None, usage: Usage | None = None,
+           finish_reason: str | None = None) -> ChatCompletionChunk:
+    # LLMCompletionChunk subclasses ChatCompletionChunk; graphrag's basic_search /
+    # local / global / drift all read choices[0].delta.content, which both expose.
+    delta_kwargs: dict[str, Any] = {}
+    if content is not None:
+        delta_kwargs["content"] = content
+    return LLMCompletionChunk(
+        id=f"chatcmpl-{uuid.uuid4().hex[:12]}",
+        object="chat.completion.chunk",
+        created=int(time.time()),
+        model=model_id,
+        choices=[ChunkChoice(index=0, delta=ChoiceDelta(**delta_kwargs), finish_reason=finish_reason)],
+        usage=CompletionUsage(prompt_tokens=usage.prompt_tokens, completion_tokens=usage.completion_tokens,
+                              total_tokens=usage.prompt_tokens + usage.completion_tokens) if usage else None,
+    )
+
+
+def _coerce_messages(messages: Any) -> list[dict[str, Any]]:
+    """graphrag passes messages as str | list[dict]. Normalize to list[dict]."""
+    if isinstance(messages, str):
+        return [{"role": "user", "content": messages}]
+    return list(messages or [])
