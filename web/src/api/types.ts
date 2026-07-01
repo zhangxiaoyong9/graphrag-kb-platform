@@ -63,11 +63,14 @@ export interface KbCreate {
   llm_profile_id: number;
   embedding_profile_id?: number | null;
   min_unit_success_ratio?: number;
+  llm_fallback_profile_ids?: number[];
 }
 export interface KbDetail extends KbOut {
   settings: Record<string, unknown>;
   llm_profile: ProfileRef | null;
   embedding_profile: ProfileRef | null;
+  llm_fallback_profile_ids?: number[];
+  llm_fallback_profiles?: ProfileRef[];
 }
 export interface DocumentCreate { title: string; text: string }
 
