@@ -21,6 +21,7 @@ from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from openai.types.chat.chat_completion_chunk import ChoiceDelta
 from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from openai.types.completion_usage import CompletionUsage
+from pydantic import BaseModel
 
 try:
     from graphrag_llm.completion.completion import LLMCompletion
@@ -118,7 +119,13 @@ class NativeCompletion(LLMCompletion):
             self._gateway = gateway
         else:
             import httpx
-            client = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0))
+            # Profiles in P1 share one KB -> one ssl_verify; use the first
+            # profile's setting (documented assumption). Self-signed endpoints
+            # set ssl_verify=False on every profile.
+            verify = profiles[0].ssl_verify if profiles else True
+            client = httpx.AsyncClient(
+                timeout=httpx.Timeout(120.0, connect=10.0), verify=verify
+            )
             self._gateway = FailoverGateway(
                 profiles=profiles, client=client, breakers={},
                 failure_threshold=kwargs.get("failure_threshold", 5),
@@ -180,8 +187,9 @@ class NativeCompletion(LLMCompletion):
     async def _non_stream(self, req: ChatRequest) -> ChatCompletion:
         res: GatewayResult = await self._gateway.collect(req)
         # LLMCompletionResponse subclasses ChatCompletion and adds the .content /
-        # .formatted_response graphrag reads (e.g. drift primer.model_response.content)
-        return LLMCompletionResponse(
+        # .formatted_response graphrag reads (e.g. drift primer.model_response.content
+        # and CommunityReportsExtractor's parsed CommunityReportResponse).
+        response = LLMCompletionResponse(
             id=f"chatcmpl-{uuid.uuid4().hex[:12]}",
             object="chat.completion",
             created=int(time.time()),
@@ -191,6 +199,19 @@ class NativeCompletion(LLMCompletion):
             usage=CompletionUsage(prompt_tokens=res.usage[0], completion_tokens=res.usage[1],
                                   total_tokens=sum(res.usage)),
         )
+        # When graphrag requested a Pydantic model class as response_format, parse
+        # the JSON content into that model so callers can read .formatted_response.
+        # (graphrag-llm's LiteLLMCompletion does this via structure_completion_response.)
+        # The streaming path does NOT support response_format (graphrag-llm rejects it).
+        rf = req.response_format
+        if isinstance(rf, type) and issubclass(rf, BaseModel):
+            from graphrag_llm.utils import structure_completion_response
+
+            try:
+                response.formatted_response = structure_completion_response(res.content, rf)
+            except Exception:  # noqa: BLE001 - graphrag tolerates None
+                response.formatted_response = None
+        return response
 
     async def _stream_chunks(self, req: ChatRequest) -> AsyncIterator[ChatCompletionChunk]:
         async for ev in self._gateway.astream(req):

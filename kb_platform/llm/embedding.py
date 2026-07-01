@@ -38,7 +38,12 @@ class NativeEmbedding:
         if client is not None:
             self._client = client
         else:
-            self._client = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0))
+            # NativeEmbedding is single-profile; honor that profile's ssl_verify
+            # (self-signed endpoints set ssl_verify=False).
+            self._client = httpx.AsyncClient(
+                timeout=httpx.Timeout(120.0, connect=10.0),
+                verify=self._profile.ssl_verify,
+            )
 
     def embedding(self, *, input: list[str], **_kwargs: Any) -> LLMEmbeddingResponse:
         import asyncio

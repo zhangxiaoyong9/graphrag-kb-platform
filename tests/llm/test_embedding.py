@@ -46,3 +46,25 @@ async def test_embedding_returns_vectors_in_order_and_batches():
     assert resp.embeddings[99] == [99.0, 99.0]
     assert resp.usage.total_tokens == 100
     await client.aclose()
+
+
+def test_embedding_ssl_verify_false_reaches_httpx(monkeypatch):
+    """I1: NativeEmbedding must pass the profile's ssl_verify to httpx.AsyncClient."""
+    captured: dict = {}
+    real_init = httpx.AsyncClient.__init__
+
+    def capturing_init(self, *args, **kwargs):
+        captured.update(kwargs)
+        real_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(httpx.AsyncClient, "__init__", capturing_init)
+
+    mc = ModelConfig(
+        type="kb_native", model_provider="openai", model="m", api_key="x",
+        kb_profiles=[{
+            "provider": "openai", "model": "m", "api_base": None,
+            "api_version": None, "keys": ["k"], "ssl_verify": False,
+        }],
+    )
+    NativeEmbedding(model_id="openai/m", model_config=mc)
+    assert captured.get("verify") is False

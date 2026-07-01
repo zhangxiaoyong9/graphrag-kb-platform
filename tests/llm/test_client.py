@@ -90,3 +90,74 @@ def await_via_await(obj):
     except StopIteration as si:
         return si.value
     raise AssertionError("__await__ should be a no-op returning self")
+
+
+@pytest.mark.asyncio
+async def test_non_stream_populates_formatted_response_for_pydantic_model():
+    """C1: when graphrag passes response_format=SomePydanticModel, the native
+    completion path must parse the JSON content and set .formatted_response."""
+    from pydantic import BaseModel
+
+    class ReportModel(BaseModel):
+        title: str
+        summary: str
+
+    payload = '{"title": "T", "summary": "S"}'
+    gw = _FakeGateway([TextDelta(payload), Usage(1, 2), Done()])
+    c = _make_completion(gw)
+    resp = await c.completion_async(
+        messages=[{"role": "user", "content": "hi"}],
+        response_format=ReportModel,
+        stream=False,
+    )
+    assert resp.content == payload
+    assert isinstance(resp.formatted_response, ReportModel)
+    assert resp.formatted_response.title == "T"
+    assert resp.formatted_response.summary == "S"
+
+
+@pytest.mark.asyncio
+async def test_non_stream_formatted_response_none_on_bad_json():
+    """C1: malformed JSON content -> formatted_response is None (graphrag tolerates None)."""
+    from pydantic import BaseModel
+
+    class ReportModel(BaseModel):
+        title: str
+
+    gw = _FakeGateway([TextDelta("not json"), Usage(1, 2), Done()])
+    c = _make_completion(gw)
+    resp = await c.completion_async(
+        messages=[{"role": "user", "content": "hi"}],
+        response_format=ReportModel,
+        stream=False,
+    )
+    assert resp.formatted_response is None
+
+
+def test_ssl_verify_false_reaches_httpx(monkeypatch):
+    """I1: ProviderConfig.ssl_verify=False must be passed as verify=False to httpx."""
+    import httpx
+
+    captured: dict = {}
+    real_init = httpx.AsyncClient.__init__
+
+    def capturing_init(self, *args, **kwargs):
+        captured.update(kwargs)
+        real_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(httpx.AsyncClient, "__init__", capturing_init)
+
+    from graphrag_llm.config import ModelConfig
+
+    mc = ModelConfig(
+        type="kb_native", model_provider="openai", model="m", api_key="x",
+        kb_profiles=[{
+            "provider": "openai", "model": "m", "api_base": None,
+            "api_version": None, "keys": ["k"], "ssl_verify": False,
+        }],
+    )
+    NativeCompletion(
+        model_id="openai/m", model_config=mc, tokenizer=None,
+        metrics_store=None,
+    )
+    assert captured.get("verify") is False

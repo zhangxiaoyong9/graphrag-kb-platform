@@ -7,6 +7,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from pydantic import BaseModel
+
 _DEFAULT_OPENAI_BASE = "https://api.openai.com/v1"
 _DEFAULT_OLLAMA_BASE = "http://localhost:11434/v1"
 
@@ -56,6 +58,26 @@ def _auth_headers(cfg: ProviderConfig) -> dict[str, str]:
     return {"Authorization": f"Bearer {cfg.key}"}
 
 
+def _normalize_response_format(rf: Any) -> Any:
+    """Coerce a ``response_format`` argument into OpenAI wire format.
+
+    graphrag passes a Pydantic model CLASS (e.g. ``CommunityReportResponse``);
+    the raw class is not JSON-serializable so we expand it to a json_schema body
+    here. A dict (already wire-format, e.g. a json_schema dict) passes through
+    unchanged. ``None`` stays ``None``.
+    """
+    if rf is None:
+        return None
+    if isinstance(rf, dict):
+        return rf
+    if isinstance(rf, type) and issubclass(rf, BaseModel):
+        return {
+            "type": "json_schema",
+            "json_schema": {"name": rf.__name__, "schema": rf.model_json_schema()},
+        }
+    return rf
+
+
 def build_chat_request(
     cfg: ProviderConfig,
     *,
@@ -69,7 +91,7 @@ def build_chat_request(
     if stream:
         body["stream_options"] = {"include_usage": True}
     if response_format is not None:
-        body["response_format"] = response_format
+        body["response_format"] = _normalize_response_format(response_format)
     return _chat_url(cfg), headers, body
 
 

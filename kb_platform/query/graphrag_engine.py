@@ -507,6 +507,14 @@ class GraphRagQueryEngine:
         """
         from graphrag.config.models.graph_rag_config import GraphRagConfig
 
+        # Defensive: ensure the kb_native completion/embedding types are
+        # registered even if the process did not run bootstrap() (e.g. a test
+        # or alt entrypoint constructing GraphRagQueryEngine directly).
+        # register_native() is idempotent.
+        from kb_platform.llm.registry import register_native
+
+        register_native()
+
         cfg = self._model_config
         if isinstance(cfg, GraphRagConfig):
             return cfg

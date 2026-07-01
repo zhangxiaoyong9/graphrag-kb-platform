@@ -59,6 +59,27 @@ def test_structured_output_passthrough():
     assert body["response_format"] == schema
 
 
+def test_structured_output_pydantic_model_normalized():
+    """A Pydantic model CLASS passed as response_format is expanded into the
+    OpenAI json_schema wire body (mirrors what litellm does internally)."""
+    from pydantic import BaseModel
+
+    class ReportModel(BaseModel):
+        title: str
+        summary: str
+
+    _, _, body = build_chat_request(
+        _cfg("openai"), messages=[], stream=False,
+        response_format=ReportModel, params={},
+    )
+    rf = body["response_format"]
+    assert rf["type"] == "json_schema"
+    assert rf["json_schema"]["name"] == "ReportModel"
+    schema = rf["json_schema"]["schema"]
+    assert schema["type"] == "object"
+    assert "title" in schema["properties"] and "summary" in schema["properties"]
+
+
 def test_embed_request_url_and_body():
     url, headers, body = build_embed_request(_cfg("openai"), inputs=["a", "b"])
     assert url == "https://api.openai.com/v1/embeddings"
