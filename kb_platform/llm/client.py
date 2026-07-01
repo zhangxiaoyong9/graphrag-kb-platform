@@ -93,7 +93,7 @@ class NativeCompletion(LLMCompletion):
         *,
         model_id: str,
         model_config: Any,
-        tokenizer: Any,
+        tokenizer: Any = None,
         metrics_store: Any = None,
         metrics_processor: Any = None,
         rate_limiter: Any = None,
@@ -103,8 +103,15 @@ class NativeCompletion(LLMCompletion):
         gateway: FailoverGateway | None = None,
         **kwargs: Any,
     ) -> None:
+        # graphrag-llm's LLMCompletion declares ``tokenizer`` / ``metrics_store``
+        # as abstract properties; store the factory-injected values and expose
+        # them via the property accessors below so create_completion() succeeds.
         self.model_id = model_id
-        self.tokenizer = tokenizer
+        self._tokenizer = tokenizer
+        self._metrics_store = metrics_store
+        self._metrics_processor = metrics_processor
+        self._cache = cache
+        self._cache_key_creator = cache_key_creator
         self._model_config = model_config
         profiles = _profile_configs(model_config)
         if gateway is not None:
@@ -118,10 +125,43 @@ class NativeCompletion(LLMCompletion):
                 open_seconds=kwargs.get("open_seconds", 30.0),
             )
 
+    # --- abstract property impls (LLMCompletion contract) ---
+    @property
+    def tokenizer(self) -> Any:  # noqa: D401 - LLMCompletion contract
+        return self._tokenizer
+
+    @property
+    def metrics_store(self) -> Any:
+        return self._metrics_store
+
+    @property
+    def metrics_processor(self) -> Any:
+        return self._metrics_processor
+
+    @property
+    def cache(self) -> Any:
+        return self._cache
+
+    @property
+    def cache_key_creator(self) -> Any:
+        return self._cache_key_creator
+
     # test-only constructor bypass (avoids graphrag-llm factory in unit tests)
     def _init_for_test(self, **kw) -> None:  # noqa: D401 - test seam
+        # Remap public attribute names to the underscore-prefixed backing fields
+        # so the @property accessors above return them (data descriptors shadow
+        # any same-named instance-dict entries).
         if "gateway" in kw:
             kw["_gateway"] = kw.pop("gateway")
+        for pub, priv in {
+            "tokenizer": "_tokenizer",
+            "metrics_store": "_metrics_store",
+            "metrics_processor": "_metrics_processor",
+            "cache": "_cache",
+            "cache_key_creator": "_cache_key_creator",
+        }.items():
+            if pub in kw:
+                kw[priv] = kw.pop(pub)
         self.__dict__.update(kw)
 
     # --- async ---

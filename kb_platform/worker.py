@@ -137,6 +137,13 @@ def run_worker(
     import signal
     import threading
 
+    # Register kb_native factories before any adapter is built (idempotent).
+    # Import is inside run_worker so unit tests that import the worker module
+    # don't pay the registry cost / trigger import-time side effects.
+    from kb_platform.llm.bootstrap import bootstrap as _bootstrap_llm
+
+    _bootstrap_llm()
+
     if stop_event is None:
         stop_event = threading.Event()
 
