@@ -126,12 +126,21 @@ class NativeCompletion(LLMCompletion):
             client = httpx.AsyncClient(
                 timeout=httpx.Timeout(120.0, connect=10.0), verify=verify
             )
-            from kb_platform.llm.circuit_breaker import CircuitBreaker
+            from kb_platform.llm.breaker_registry import breaker_for
             failure_threshold = kwargs.get("failure_threshold", 5)
             open_seconds = kwargs.get("open_seconds", 30.0)
-            breakers = {i: CircuitBreaker(failure_threshold=failure_threshold,
-                                          open_seconds=open_seconds)
-                        for i in range(len(profiles))}
+            # Shared (process-wide) breakers keyed by endpoint identity, so the
+            # background HealthProbe can drive the SAME breaker instances this
+            # gateway reads. Each lookup also refreshes the stored config so the
+            # probe always has fresh keys.
+            breakers = {
+                i: breaker_for(
+                    profiles[i],
+                    failure_threshold=failure_threshold,
+                    open_seconds=open_seconds,
+                )
+                for i in range(len(profiles))
+            }
             self._gateway = FailoverGateway(
                 profiles=profiles, client=client, breakers=breakers,
                 failure_threshold=failure_threshold, open_seconds=open_seconds,

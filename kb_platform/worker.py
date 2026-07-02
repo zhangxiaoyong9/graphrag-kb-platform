@@ -162,6 +162,14 @@ def run_worker(
         if stop_event.wait(poll_interval):
             break
 
+    # Stop the process-wide HealthProbe if one was started (best-effort; the
+    # probe runs in whatever asyncio loop the last run_worker_once spanned).
+    try:
+        from kb_platform.llm.bootstrap import stop_probe
+        asyncio.run(stop_probe())
+    except Exception:  # noqa: BLE001 - shutdown must not crash
+        logger.debug("probe stop on worker shutdown failed", exc_info=True)
+
 
 if __name__ == "__main__":
     import os

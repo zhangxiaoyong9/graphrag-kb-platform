@@ -55,6 +55,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         from kb_platform.api.realtime import RealtimeHub
+        from kb_platform.llm.bootstrap import stop_probe
 
         interval_ms = float(os.environ.get("KB_POLL_INTERVAL_MS", "500"))
         hub = RealtimeHub(repo=app.state.repo, interval=interval_ms / 1000.0)
@@ -64,6 +65,8 @@ def create_app(
             yield
         finally:
             await hub.stop()
+            # Stop the process-wide HealthProbe (started by bootstrap()).
+            await stop_probe()
 
     app = FastAPI(title="KB Platform", lifespan=lifespan)
     app.state.repo = repo
