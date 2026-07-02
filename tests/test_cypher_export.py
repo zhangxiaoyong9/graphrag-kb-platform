@@ -130,3 +130,56 @@ def test_numpy_scalars_become_native():
     row = json.loads(blocks[0])[0]
     assert row["frequency"] == 7 and isinstance(row["frequency"], int)
     assert row["degree"] == 3 and isinstance(row["degree"], int)
+
+
+def _text_units():
+    return pd.DataFrame(
+        [
+            {"id": "c1", "text": "hello world", "document_ids": np.array(["d1"]), "n_tokens": 5},
+            {"id": "c2", "text": "second chunk", "document_ids": np.array(["d1"]), "n_tokens": 2},
+        ]
+    )
+
+
+def test_text_unit_nodes_emitted_when_supplied():
+    s = write_cypher(_ents(), _rels(), text_units=_text_units())
+    assert "MERGE (t:TextUnit {id: row.id})" in s
+    assert "SET t += row" in s
+    blocks = _param_blocks(s)
+    tu_blocks = [b for b in blocks if '"id"' in b and '"text"' in b]
+    assert tu_blocks
+    row = json.loads(tu_blocks[0])[0]
+    for col in ("id", "text", "document_ids", "n_tokens"):
+        assert col in row
+    assert row["document_ids"] == ["d1"]  # ndarray -> JSON array
+
+
+def test_from_chunk_edges_connect_text_unit_to_entity():
+    # entity A has text_unit_ids = [c1, c2]; both exist in _text_units()
+    s = write_cypher(_ents(), _rels(), text_units=_text_units())
+    assert "MATCH (t:TextUnit {id: row.tu_id}), (e:Entity {title: row.entity_title})" in s
+    assert "MERGE (t)-[:FROM_CHUNK]->(e)" in s
+    # find the FROM_CHUNK param blocks and confirm both c1, c2 are wired to A
+    fc_blocks = [b for b in _param_blocks(s) if '"tu_id"' in b]
+    assert fc_blocks
+    pairs = [(r["tu_id"], r["entity_title"]) for b in fc_blocks for r in json.loads(b)]
+    assert ("c1", "A") in pairs
+    assert ("c2", "A") in pairs
+
+
+def test_from_chunk_orphans_dropped():
+    # entity references a text_unit id that is NOT in the text_units frame
+    ents = pd.DataFrame([{"title": "A", "type": "X", "text_unit_ids": np.array(["c1", "ghost"])}])
+    rels = pd.DataFrame(columns=["source", "target"])
+    tus = pd.DataFrame([{"id": "c1", "text": "only", "document_ids": np.array([]), "n_tokens": 1}])
+    s = write_cypher(ents, rels, text_units=tus)
+    fc_blocks = [b for b in _param_blocks(s) if '"tu_id"' in b]
+    pairs = [(r["tu_id"], r["entity_title"]) for b in fc_blocks for r in json.loads(b)]
+    assert ("c1", "A") in pairs
+    assert ("ghost", "A") not in pairs  # orphan dropped
+
+
+def test_no_text_unit_section_when_none():
+    s = write_cypher(_ents(), _rels())  # text_units default None
+    assert ":TextUnit" not in s
+    assert "FROM_CHUNK" not in s

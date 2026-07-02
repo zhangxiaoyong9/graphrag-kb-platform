@@ -88,7 +88,8 @@ def write_cypher(
     _emit_schema_preamble(lines)
     _emit_entities(lines, entities)
     _emit_relationships(lines, relationships)
-    # Task 2 fills these in; no-op stubs keep the signature stable across tasks.
+    # TextUnit nodes + FROM_CHUNK edges when supplied (Task 2).
+    # Vector indexes are still a stub (Task 3).
     if text_units is not None:
         _emit_text_units(lines, text_units, entities)
     if entity_embeddings:
@@ -102,7 +103,6 @@ def _emit_schema_preamble(lines: list[str]) -> None:
     lines.append("// 1. Schema preamble (idempotent)")
     lines.append("CREATE CONSTRAINT entity_title_unique IF NOT EXISTS FOR (e:Entity) REQUIRE e.title IS UNIQUE;")
     lines.append("CREATE INDEX entity_type IF NOT EXISTS FOR (e:Entity) ON (e.type);")
-    lines.append("CREATE CONSTRAINT text_unit_id_unique IF NOT EXISTS FOR (t:TextUnit) REQUIRE t.id IS UNIQUE;")
     lines.append("")
 
 
@@ -133,8 +133,40 @@ def _emit_relationships(lines: list[str], relationships: pd.DataFrame) -> None:
 
 
 # --- Stubs filled in by Tasks 2 and 3. ---------------------------------------
-def _emit_text_units(lines, text_units, entities):  # pragma: no cover - Task 2
-    raise NotImplementedError
+def _emit_text_units(lines: list[str], text_units: pd.DataFrame, entities: pd.DataFrame) -> None:
+    lines.append(f"// 4. Text units ({len(text_units)} rows)")
+    # The TextUnit uniqueness constraint lives with the TextUnit load so that
+    # scripts without text_units carry no :TextUnit artifacts at all.
+    lines.append(
+        "CREATE CONSTRAINT text_unit_id_unique IF NOT EXISTS FOR (t:TextUnit) REQUIRE t.id IS UNIQUE;"
+    )
+    valid_ids = set(text_units["id"].astype(str)) if "id" in text_units.columns else set()
+    rows = [_row_dict(row) for _, row in text_units.iterrows()] if len(text_units) else []
+    for batch in _batches(rows):
+        _emit_param_block(lines, batch)
+        lines.append("MERGE (t:TextUnit {id: row.id})")
+        lines.append("SET t += row;")
+    # FROM_CHUNK edges: (:TextUnit)-[:FROM_CHUNK]->(:Entity), derived from
+    # each entity's text_unit_ids. Orphans (text_unit id absent from the
+    # text_units set) are dropped at write time.
+    from_chunk: list[dict] = []
+    if "text_unit_ids" in entities.columns and "title" in entities.columns:
+        for _, ent in entities.iterrows():
+            title = _coerce(ent["title"])
+            ids = ent["text_unit_ids"]
+            if ids is None:
+                continue
+            id_list = ids.tolist() if hasattr(ids, "tolist") else list(ids)
+            for tu_id in id_list:
+                tu_id = str(tu_id)
+                if tu_id in valid_ids:
+                    from_chunk.append({"tu_id": tu_id, "entity_title": title})
+    lines.append(f"// 4b. FROM_CHUNK edges ({len(from_chunk)} rows)")
+    for batch in _batches(from_chunk):
+        _emit_param_block(lines, batch)
+        lines.append("MATCH (t:TextUnit {id: row.tu_id}), (e:Entity {title: row.entity_title})")
+        lines.append("MERGE (t)-[:FROM_CHUNK]->(e);")
+    lines.append("")
 
 
 def _emit_vector_index(lines, index_name, label, prop, key_col, embeddings):  # pragma: no cover - Task 3
