@@ -123,3 +123,34 @@ async def test_collect_records_failover_but_no_ttft(fresh_metrics: MetricsStore)
     assert snap["failover_recover_ms_p50"] is not None
     assert snap["failovers"] == 1
     await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_metrics_recorded_via_native_completion(fresh_metrics: MetricsStore):
+    """Regression (found via real-provider smoke): NativeCompletion stops consuming
+    the gateway once it sees Done (it returns after emitting its own finish chunk),
+    so the gateway MUST record success/failover BEFORE yielding Done. Driving the
+    gateway directly (the earlier tests) hides this because the direct consumer
+    resumes past Done. This test drives the real consumer."""
+    from unittest.mock import MagicMock
+
+    from kb_platform.llm.client import NativeCompletion
+
+    client = _build_streaming_client()
+    gw = _gateway(client)
+    obj = object.__new__(NativeCompletion)
+    NativeCompletion._init_for_test(
+        obj, model_id="openai/m", model_config=MagicMock(model_extra={}),
+        tokenizer=MagicMock(), gateway=gw,
+    )
+    it = await obj.completion_async(
+        messages=[{"role": "user", "content": "hi"}], stream=True)
+    chunks = []
+    async for chunk in it:
+        chunks.append(chunk.choices[0].delta.content or "" if chunk.choices else "")
+    assert "".join(chunks) == "ok"
+
+    snap = fresh_metrics.snapshot()
+    assert snap["failovers"] == 1, "streaming failover must record via NativeCompletion"
+    assert snap["successes"] >= 1, "streaming success must record via NativeCompletion"
+    await client.aclose()

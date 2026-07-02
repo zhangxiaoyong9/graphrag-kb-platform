@@ -122,9 +122,14 @@ class FailoverGateway:
                         if isinstance(ev, TextDelta) and not ttft_recorded:
                             METRICS.record_ttft((time.time() - t0) * 1000)
                             ttft_recorded = True
-                        yield ev
+                        # Record BEFORE yielding Done: NativeCompletion._stream_chunks
+                        # stops consuming the gateway once it sees Done (it returns after
+                        # emitting its own finish chunk), so post-yield code would never
+                        # run and streaming successes/failovers would go unrecorded.
                         if isinstance(ev, Done):
                             self._record_failover_and_success(t0, first_error_time)
+                        yield ev
+                        if isinstance(ev, Done):
                             return
                     else:
                         self._record_failover_and_success(t0, first_error_time)
