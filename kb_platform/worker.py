@@ -143,6 +143,20 @@ def run_worker(
     # Register kb_native factories before any adapter is built (idempotent).
     # Import is inside run_worker so unit tests that import the worker module
     # don't pay the registry cost / trigger import-time side effects.
+    #
+    # Note on the HealthProbe: bootstrap() also tries to start one long-lived
+    # HealthProbe per process, but that path is a no-op in the WORKER process.
+    # bootstrap() is invoked here from sync code (before any asyncio.run), so
+    # `_try_start_probe()` sees no running loop and defers; run_worker_once
+    # (which runs inside asyncio.run) never re-calls bootstrap(), so the
+    # deferred start never happens. The long-lived HealthProbe is hosted by
+    # the SERVER process only (uvicorn's single persistent loop). Worker
+    # breakers are therefore TRAFFIC-DRIVEN: real indexing calls go through
+    # NativeCompletion -> breaker_registry, advancing each breaker and
+    # triggering failover on failures — which provides indexing resilience
+    # without an idle probe. (breaker_registry is per-process / in-memory, so
+    # the server's probe does NOT warm the worker's breakers; each process
+    # holds its own.)
     from kb_platform.llm.bootstrap import bootstrap as _bootstrap_llm
 
     _bootstrap_llm()
@@ -162,8 +176,15 @@ def run_worker(
         if stop_event.wait(poll_interval):
             break
 
-    # Stop the process-wide HealthProbe if one was started (best-effort; the
-    # probe runs in whatever asyncio loop the last run_worker_once spanned).
+    # Defensive shutdown of the process-wide HealthProbe. In the WORKER process
+    # this is a NO-OP today: bootstrap() is called from sync code above (no
+    # running loop), and run_worker_once never re-calls bootstrap(), so no
+    # HealthProbe is ever started here — see the note on bootstrap() above.
+    # The long-lived probe lives in the SERVER process. Kept (rather than
+    # deleted) for symmetry with the server lifespan and so a future
+    # persistent-loop refactor of the worker starts/stops the probe
+    # correctly without re-plumbing shutdown. stop_probe() is itself a
+    # safe no-op when `_probe is None`.
     try:
         from kb_platform.llm.bootstrap import stop_probe
         asyncio.run(stop_probe())
