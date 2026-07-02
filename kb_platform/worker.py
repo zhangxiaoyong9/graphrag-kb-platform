@@ -41,6 +41,7 @@ class _SettingsKb:
     data_root: str
     llm_profile_id: int | None = None
     embedding_profile_id: int | None = None
+    llm_fallback_profile_ids: str | None = None
 
 
 async def run_worker_once(
@@ -78,6 +79,7 @@ async def run_worker_once(
             settings_json = kb.settings_json
             llm_profile_id = kb.llm_profile_id
             embedding_profile_id = kb.embedding_profile_id
+            llm_fallback_profile_ids = kb.llm_fallback_profile_ids
 
         adapter = adapter_factory(
             _SettingsKb(
@@ -85,6 +87,7 @@ async def run_worker_once(
                 data_root=data_root,
                 llm_profile_id=llm_profile_id,
                 embedding_profile_id=embedding_profile_id,
+                llm_fallback_profile_ids=llm_fallback_profile_ids,
             )
         )
         orch = Orchestrator(
@@ -137,6 +140,27 @@ def run_worker(
     import signal
     import threading
 
+    # Register kb_native factories before any adapter is built (idempotent).
+    # Import is inside run_worker so unit tests that import the worker module
+    # don't pay the registry cost / trigger import-time side effects.
+    #
+    # Note on the HealthProbe: bootstrap() also tries to start one long-lived
+    # HealthProbe per process, but that path is a no-op in the WORKER process.
+    # bootstrap() is invoked here from sync code (before any asyncio.run), so
+    # `_try_start_probe()` sees no running loop and defers; run_worker_once
+    # (which runs inside asyncio.run) never re-calls bootstrap(), so the
+    # deferred start never happens. The long-lived HealthProbe is hosted by
+    # the SERVER process only (uvicorn's single persistent loop). Worker
+    # breakers are therefore TRAFFIC-DRIVEN: real indexing calls go through
+    # NativeCompletion -> breaker_registry, advancing each breaker and
+    # triggering failover on failures — which provides indexing resilience
+    # without an idle probe. (breaker_registry is per-process / in-memory, so
+    # the server's probe does NOT warm the worker's breakers; each process
+    # holds its own.)
+    from kb_platform.llm.bootstrap import bootstrap as _bootstrap_llm
+
+    _bootstrap_llm()
+
     if stop_event is None:
         stop_event = threading.Event()
 
@@ -151,6 +175,22 @@ def run_worker(
         asyncio.run(run_worker_once(repo=repo, adapter_factory=adapter_factory, recover=True, **kw))
         if stop_event.wait(poll_interval):
             break
+
+    # Defensive shutdown of the process-wide HealthProbe. In the WORKER process
+    # this is a NO-OP today: bootstrap() is called from sync code above (no
+    # running loop), and run_worker_once never re-calls bootstrap(), so no
+    # HealthProbe is ever started here — see the note on bootstrap() above.
+    # The long-lived probe lives in the SERVER process. Kept (rather than
+    # deleted) for symmetry with the server lifespan and so a future
+    # persistent-loop refactor of the worker starts/stops the probe
+    # correctly without re-plumbing shutdown. stop_probe() is itself a
+    # safe no-op when `_probe is None`.
+    try:
+        from kb_platform.llm.bootstrap import close_clients, stop_probe
+        asyncio.run(stop_probe())
+        asyncio.run(close_clients())
+    except Exception:  # noqa: BLE001 - shutdown must not crash
+        logger.debug("probe/client stop on worker shutdown failed", exc_info=True)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { http, HttpResponse } from "msw";
@@ -220,4 +220,104 @@ test("edit mode pre-selects the kb LLM profile and PATCHes its id", async () => 
   expect(last.name).toBe("kb");
   expect(last.method).toBe("fast");
   expect(last.llm_profile_id).toBe(2);
+});
+
+// --- 故障转移 LLM Profile 多选（按顺序）-------------------------------------
+
+test("fallback list: selecting profiles appends in order and excludes the primary", async () => {
+  const onCreated = renderForm();
+  await screen.findByLabelText(/LLM 配置/);
+  // pick primary = OpenAI (id 2)
+  await userEvent.selectOptions(screen.getByLabelText(/LLM 配置/), "2");
+
+  // add the other LLM profile (DS, id 1) as fallback
+  const addSelect = screen.getByLabelText(/添加故障转移 LLM Profile/);
+  // primary (id 2) must NOT be present in the add-options
+  expect(
+    Array.from(addSelect.querySelectorAll("option")).map((o) => o.value),
+  ).not.toContain("2");
+  await userEvent.selectOptions(addSelect, "1");
+  await userEvent.click(screen.getByRole("button", { name: /^添加$/ }));
+
+  // ordered list now shows "1. DS · deepseek-chat" — scope to the list because
+  // the LLM <select> also contains an option with the same text.
+  expect(
+    within(screen.getByTestId("llm-fallback-list")).getByText(/DS · deepseek-chat/),
+  ).toBeInTheDocument();
+
+  // submit carries llm_fallback_profile_ids: [1]
+  await userEvent.type(screen.getByPlaceholderText(/请输入知识库名称/), "fb-kb");
+  await userEvent.click(screen.getByRole("button", { name: /创建知识库/ }));
+  await waitFor(() => expect(onCreated).toHaveBeenCalled());
+  const last = captured[captured.length - 1]?.body as {
+    llm_fallback_profile_ids: number[];
+  };
+  expect(last.llm_fallback_profile_ids).toEqual([1]);
+});
+
+test("fallback list: reorder with up/down and remove", async () => {
+  renderForm();
+  await screen.findByLabelText(/LLM 配置/);
+  const addSelect = screen.getByLabelText(/添加故障转移 LLM Profile/);
+  // add id 1 then id 2 (in that order)
+  await userEvent.selectOptions(addSelect, "1");
+  await userEvent.click(screen.getByRole("button", { name: /^添加$/ }));
+  await userEvent.selectOptions(addSelect, "2");
+  await userEvent.click(screen.getByRole("button", { name: /^添加$/ }));
+
+  // two rows, ordered 1 then 2
+  const list = screen.getByTestId("llm-fallback-list");
+  const rows = list.querySelectorAll("[class*='flex items-center']");
+  expect(rows).toHaveLength(2);
+
+  // move id 2 up -> order becomes [2, 1]
+  await userEvent.click(screen.getByRole("button", { name: /上移 OpenAI/ }));
+  // the add-select no longer offers 1 or 2 (both selected)
+  const remaining = Array.from(addSelect.querySelectorAll("option")).map(
+    (o) => o.value,
+  );
+  expect(remaining).toEqual([""]); // only the placeholder
+
+  // remove id 1 -> one row left
+  await userEvent.click(screen.getByRole("button", { name: /移除 DS/ }));
+  expect(list.querySelectorAll("[class*='flex items-center']")).toHaveLength(1);
+});
+
+test("edit mode pre-loads llm_fallback_profile_ids", async () => {
+  const patched: { url: string; body: unknown }[] = [];
+  server.use(
+    http.patch("/kbs/1", async ({ request }) => {
+      const b = (await request.json()) as Record<string, unknown>;
+      patched.push({ url: request.url, body: b });
+      return HttpResponse.json({ id: 1, name: "kb", method: "fast" });
+    }),
+  );
+  const onSaved = vi.fn();
+  render(
+    <MemoryRouter>
+      <KbForm
+        kb={
+          {
+            ...editKb,
+            llm_fallback_profile_ids: [1],
+          } as never
+        }
+        onSaved={onSaved}
+      />
+    </MemoryRouter>,
+  );
+
+  // the fallback row renders the loaded profile (DS, id 1) — scope to the
+  // list because the LLM <select> also has a matching option.
+  await waitFor(() =>
+    expect(
+      within(screen.getByTestId("llm-fallback-list")).getByText(/DS · deepseek-chat/),
+    ).toBeInTheDocument(),
+  );
+  await userEvent.click(screen.getByRole("button", { name: /保存修改/ }));
+  await waitFor(() => expect(onSaved).toHaveBeenCalled());
+  const last = patched[patched.length - 1]?.body as {
+    llm_fallback_profile_ids: number[];
+  };
+  expect(last.llm_fallback_profile_ids).toEqual([1]);
 });

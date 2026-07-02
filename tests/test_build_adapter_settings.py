@@ -164,9 +164,11 @@ def test_build_adapter_passes_ssl_verify_to_llm_model_config(monkeypatch):
     assert captured["llm"].call_args["ssl_verify"] is False
 
 
-def test_build_default_adapter_extra_keys_inherit_call_args(monkeypatch):
-    """Multi-key round-robin ModelConfigs must inherit call_args (e.g. ssl_verify)
-    from the primary model_config — otherwise extra keys skip SSL verification."""
+def test_build_default_adapter_packs_keys_into_kb_profiles(monkeypatch):
+    """T10: all keys (primary + extras) round-robin INSIDE the gateway now; the
+    LoadBalancingCompletion multi-call branch is gone. ``create_completion`` is
+    called ONCE with a kb_native ModelConfig whose ``kb_profiles`` bundle carries
+    every key and inherits call_args (e.g. ssl_verify) from the primary config."""
     import graphrag_chunking.chunker_factory as cf
     import graphrag_llm.completion as comp_mod
     import graphrag_llm.embedding as emb_mod
@@ -190,9 +192,15 @@ def test_build_default_adapter_extra_keys_inherit_call_args(monkeypatch):
     build_default_adapter(
         data_root="/tmp/_x_", model_config=llm, extra_api_keys=["sk-2", "sk-3"])
 
-    assert len(captured) == 3  # primary + 2 extras
-    for mc in captured:
-        assert mc.call_args.get("ssl_verify") is False
+    # Single kb_native completion call (not one-per-key anymore).
+    assert len(captured) == 1
+    mc = captured[0]
+    assert mc.type == "kb_native"
+    profiles = mc.model_extra["kb_profiles"]
+    assert len(profiles) == 1
+    # Primary key first, then extras — all in the bundle, ssl_verify inherited.
+    assert profiles[0]["keys"] == ["sk-1", "sk-2", "sk-3"]
+    assert profiles[0]["ssl_verify"] is False
 
 
 def test_build_default_adapter_markdown_wires_markdown_chunker(monkeypatch):

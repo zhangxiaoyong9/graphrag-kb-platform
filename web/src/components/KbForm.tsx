@@ -59,6 +59,10 @@ export default function KbForm({
   const [embeddingProfileId, setEmbeddingProfileId] = useState<number | null>(
     kb?.embedding_profile?.id ?? null,
   );
+  const [llmFallbackIds, setLlmFallbackIds] = useState<number[]>(
+    kb?.llm_fallback_profile_ids ?? [],
+  );
+  const [fallbackAddId, setFallbackAddId] = useState<string>("");
   const [llmProfiles, setLlmProfiles] = useState<ProviderProfile[]>([]);
   const [embProfiles, setEmbProfiles] = useState<ProviderProfile[]>([]);
   const [busy, setBusy] = useState(false);
@@ -115,6 +119,7 @@ export default function KbForm({
           settings_yaml,
           llm_profile_id: llmProfileId,
           embedding_profile_id: embeddingProfileId,
+          llm_fallback_profile_ids: llmFallbackIds,
         });
         onSaved?.();
       } else {
@@ -125,6 +130,7 @@ export default function KbForm({
           llm_profile_id: llmProfileId,
           embedding_profile_id: embeddingProfileId,
           min_unit_success_ratio: parseFloat(s.minRatio),
+          llm_fallback_profile_ids: llmFallbackIds,
         });
         onCreated?.(created);
         setName("");
@@ -221,6 +227,111 @@ export default function KbForm({
             </select>
           </Field>
         </div>
+
+        {/* 故障转移 LLM Profile（按顺序）—— ordered multi-select.
+            Primary (llmProfileId) is excluded from the add-options; the order
+            of selection is preserved and submitted as llm_fallback_profile_ids. */}
+        <Field
+          label="故障转移 LLM Profile（按顺序）"
+          hint="主 Profile 失败（报错/限流）时，按此顺序自动切换到下一个。可不选。"
+        >
+          <div className="space-y-2" data-testid="llm-fallback-list">
+            {llmFallbackIds.length === 0 && (
+              <p className="text-[12px] text-muted">未配置故障转移</p>
+            )}
+            {llmFallbackIds.map((pid, idx) => {
+              const p = llmProfiles.find((x) => x.id === pid);
+              return (
+                <div
+                  key={pid}
+                  className="flex items-center gap-2 rounded-lg border border-line bg-surface px-3 py-1.5 text-[13px]"
+                >
+                  <span className="font-mono text-muted">{idx + 1}.</span>
+                  <span className="flex-1 truncate">
+                    {p ? `${p.name} · ${p.model}` : `#${pid}（未加载）`}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={`上移 ${p?.name ?? pid}`}
+                    disabled={idx === 0}
+                    className="rounded px-1.5 py-0.5 text-muted hover:bg-surface-2 disabled:opacity-30"
+                    onClick={() =>
+                      setLlmFallbackIds((arr) => {
+                        if (idx === 0) return arr;
+                        const next = [...arr];
+                        [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
+                        return next;
+                      })
+                    }
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`下移 ${p?.name ?? pid}`}
+                    disabled={idx === llmFallbackIds.length - 1}
+                    className="rounded px-1.5 py-0.5 text-muted hover:bg-surface-2 disabled:opacity-30"
+                    onClick={() =>
+                      setLlmFallbackIds((arr) => {
+                        if (idx === arr.length - 1) return arr;
+                        const next = [...arr];
+                        [next[idx + 1], next[idx]] = [next[idx], next[idx + 1]];
+                        return next;
+                      })
+                    }
+                  >
+                    ↓
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`移除 ${p?.name ?? pid}`}
+                    className="rounded px-1.5 py-0.5 text-danger hover:bg-surface-2"
+                    onClick={() =>
+                      setLlmFallbackIds((arr) => arr.filter((x) => x !== pid))
+                    }
+                  >
+                    ✕
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+          <div className="mt-2 flex items-center gap-2">
+            <select
+              className="select flex-1"
+              aria-label="添加故障转移 LLM Profile"
+              value={fallbackAddId}
+              onChange={(e) => setFallbackAddId(e.target.value)}
+            >
+              <option value="">＋ 添加 LLM Profile…</option>
+              {llmProfiles
+                .filter(
+                  (p) =>
+                    p.id !== llmProfileId && !llmFallbackIds.includes(p.id),
+                )
+                .map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} · {p.model}
+                  </option>
+                ))}
+            </select>
+            <button
+              type="button"
+              className="rounded-lg border border-line bg-surface px-3 py-1.5 text-[13px] text-body hover:bg-surface-2 disabled:opacity-40"
+              disabled={fallbackAddId === ""}
+              onClick={() => {
+                const id = Number(fallbackAddId);
+                if (!id) return;
+                setLlmFallbackIds((arr) =>
+                  arr.includes(id) ? arr : [...arr, id],
+                );
+                setFallbackAddId("");
+              }}
+            >
+              添加
+            </button>
+          </div>
+        </Field>
       </details>
 
       {/* 分块 */}

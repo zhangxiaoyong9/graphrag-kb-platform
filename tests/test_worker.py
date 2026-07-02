@@ -245,8 +245,11 @@ async def test_worker_carrier_carries_profile_ids(tmp_path, monkeypatch):
             data_root=kb.data_root,
             llm_profile_id=kb.llm_profile_id,
             embedding_profile_id=kb.embedding_profile_id,
+            llm_fallback_profile_ids=kb.llm_fallback_profile_ids,
         )
 
     assembled = assemble_kb_settings(carrier, repo)
     assert assembled["llm"]["model"] == "deepseek-chat"
     assert assembled["embedding"]["model"] == "nomic-embed-text"
+    # llm_fallback_profile_ids is NULL on this KB -> kb_profiles is primary-only.
+    assert len(assembled["llm"]["kb_profiles"]) == 1

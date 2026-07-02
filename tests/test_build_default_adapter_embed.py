@@ -35,8 +35,13 @@ def test_embed_model_config_is_used_for_embedder(monkeypatch):
     adapter = build_default_adapter(
         data_root="/tmp/_unused_", model_config=llm_cfg, embed_model_config=emb_cfg
     )
-    # completion still uses the LLM config; embedding uses the embed config
-    assert seen["completion"] is llm_cfg
+    # T10: completion is now built from a kb_native-wrapped config derived from
+    # llm_cfg (round-robin keys live inside the gateway), so it's NOT llm_cfg
+    # itself — but it carries llm_cfg's provider/model/api_base.
+    comp_mc = seen["completion"]
+    assert comp_mc.type == "kb_native"
+    assert comp_mc.model == "gpt-4o-mini"
+    # embedding still uses the embed config verbatim.
     assert seen["embedding"] is emb_cfg
     # the adapter's embed_factory yields the embedder built from emb_cfg
     assert isinstance(adapter._embed_factory(), _FakeEmbedder)

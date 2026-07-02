@@ -259,10 +259,13 @@ def _build_embed_model_config(settings: dict):
 
     Mirrors the LLM credential resolution in ``build_adapter_from_settings``.
     Providers without a key (ollama) get a placeholder api_key so graphrag-llm's
-    ApiKey validator passes (litellm ignores it for ollama). A keyed provider
-    whose key can't be resolved returns None -> embedding left unconfigured
-    (build_default_adapter then falls back to the LLM model_config, whose own
-    embedding creation is best-effort / optional).
+    ApiKey validator passes. A keyed provider whose key can't be resolved returns
+    None -> embedding left unconfigured (build_default_adapter then falls back to
+    the LLM model_config, whose own embedding creation is best-effort / optional).
+
+    Embeddings route through the native gateway too (T10 spec): ``type=kb_native``
+    + a single-element ``kb_profiles`` bundle so ``create_embedding`` returns a
+    ``NativeEmbedding`` with within-profile key round-robin.
     """
     emb = settings.get("embedding") or {}
     if not emb:
@@ -282,14 +285,29 @@ def _build_embed_model_config(settings: dict):
             resolved = "ollama"
         else:
             return None
+    # All embedding keys round-robin inside NativeEmbedding; api_keys is the
+    # full decrypted list (assemble_kb_settings packs it). Fall back to a
+    # single-element list from the resolved primary key for the env-var path.
+    emb_keys = list(emb.get("api_keys") or [resolved])
+    ssl_verify = emb.get("ssl_verify", True)
     return ModelConfig(
-        type=emb.get("type", "litellm"),
+        type="kb_native",
         model_provider=provider,
         model=emb.get("model", "text-embedding-3-small"),
         api_base=emb.get("api_base"),
         api_version=emb.get("api_version"),
-        api_key=resolved,
-        call_args={"ssl_verify": emb.get("ssl_verify", True)},
+        api_key=emb_keys[0],
+        call_args={"ssl_verify": ssl_verify},
+        kb_profiles=[
+            {
+                "provider": provider,
+                "model": emb.get("model", "text-embedding-3-small"),
+                "api_base": emb.get("api_base"),
+                "api_version": emb.get("api_version"),
+                "keys": emb_keys,
+                "ssl_verify": ssl_verify,
+            }
+        ],
     )
 
 
@@ -352,32 +370,62 @@ def build_default_adapter(
             encode=tokenizer.encode,
             decode=tokenizer.decode,
         )
-    completion = create_completion(model_config)
-
-    from kb_platform.graph.cost_capture import CostCapturingCompletion, LoadBalancingCompletion
+    from kb_platform.graph.cost_capture import CostCapturingCompletion
 
     model_id = model_config.model
-    wrapped = CostCapturingCompletion(completion, model_id=model_id)
 
-    # Multi-key load balancing: construct one completion per extra key + round-robin.
-    if extra_api_keys:
+    # Production configs (litellm/openai/kb_native) route through the native
+    # gateway: all keys round-robin INSIDE the gateway, so LoadBalancingCompletion
+    # is retired (T10). Test configs (type="mock") are passed through verbatim so
+    # graphrag's MockLLMCompletion keeps supplying deterministic responses.
+    if model_config.type in {"mock"}:
+        completion = create_completion(model_config)
+        completion = CostCapturingCompletion(completion, model_id=model_id)
+    else:
+        from kb_platform.llm.registry import register_native
+
+        register_native()
         from graphrag_llm.config import ModelConfig as _MC
 
-        wrappers = [wrapped]
-        for key in extra_api_keys:
-            extra_cfg = _MC(
-                type=model_config.type,
+        existing_extra = getattr(model_config, "model_extra", None) or {}
+        existing_profiles = existing_extra.get("kb_profiles")
+        if existing_profiles:
+            # Caller already packed a kb_profiles bundle (e.g. test fixture or a
+            # downstream caller that resolved profiles itself). Trust it verbatim.
+            kb_cfg = _MC(
+                type="kb_native",
                 model_provider=model_config.model_provider,
                 model=model_config.model,
                 api_base=model_config.api_base,
                 api_version=model_config.api_version,
-                api_key=key,
+                api_key=model_config.api_key,
                 call_args=dict(model_config.call_args or {}),
+                kb_profiles=list(existing_profiles),
             )
-            wrappers.append(CostCapturingCompletion(create_completion(extra_cfg), model_id=model_id))
-        wrapped = LoadBalancingCompletion(wrappers)
-
-    completion = wrapped
+        else:
+            # Primary key first, then extras; the gateway round-robins across all.
+            all_keys = [model_config.api_key, *list(extra_api_keys or [])]
+            kb_cfg = _MC(
+                type="kb_native",
+                model_provider=model_config.model_provider,
+                model=model_config.model,
+                api_base=model_config.api_base,
+                api_version=model_config.api_version,
+                api_key=all_keys[0],
+                call_args=dict(model_config.call_args or {}),
+                kb_profiles=[
+                    {
+                        "provider": model_config.model_provider,
+                        "model": model_config.model,
+                        "api_base": model_config.api_base,
+                        "api_version": model_config.api_version,
+                        "keys": all_keys,
+                        "ssl_verify": (model_config.call_args or {}).get("ssl_verify", True),
+                    }
+                ],
+            )
+        completion = create_completion(kb_cfg)
+        completion = CostCapturingCompletion(completion, model_id=model_id)
 
     def extractor_factory() -> GraphExtractor:
         return GraphExtractor(
@@ -432,11 +480,10 @@ def build_adapter_from_settings(
 ) -> GraphRagAdapter:
     """Parse KB settings_json (graphrag settings subset) -> ModelConfig -> real adapter.
 
-    Lenient: defaults to litellm/openai/gpt-4o-mini when keys are absent.
-
-    API keys come from ``llm.api_keys`` (a list of literals, decrypted from the
-    KB's LLM provider profile by ``assemble_kb_settings``). The first key is the
-    primary ModelConfig key; the rest round-robin via LoadBalancingCompletion.
+    The settings dict carries a ``kb_profiles`` bundle (packed by
+    ``assemble_kb_settings`` from the KB's provider profiles) that
+    ``build_default_adapter`` forwards verbatim into the native gateway — all
+    keys round-robin inside the gateway, so ``LoadBalancingCompletion`` is gone.
     Raises ValueError when no key is configured.
     """
     import json
@@ -447,8 +494,7 @@ def build_adapter_from_settings(
     llm = settings.get("llm", {}) or settings.get("completion", {})
     provider = llm.get("model_provider", "openai")
     # API keys come from the KB's LLM provider profile (frontend-entered,
-    # Fernet-encrypted, decrypted by assemble_kb_settings). The first key is
-    # the primary ModelConfig key; the rest round-robin via LoadBalancingCompletion.
+    # Fernet-encrypted, decrypted by assemble_kb_settings).
     api_keys = list(api_key and [api_key] or llm.get("api_keys") or [])
     if not api_keys:
         raise ValueError(
@@ -456,15 +502,25 @@ def build_adapter_from_settings(
             "Add keys to its LLM provider profile."
         )
     resolved_key = api_keys[0]
-    extra_keys = api_keys[1:]
+    kb_profiles = llm.get("kb_profiles") or [
+        {
+            "provider": provider,
+            "model": llm.get("model", "gpt-4o-mini"),
+            "api_base": llm.get("api_base"),
+            "api_version": llm.get("api_version"),
+            "keys": api_keys,
+            "ssl_verify": llm.get("ssl_verify", True),
+        }
+    ]
     model_config = ModelConfig(
-        type=llm.get("type", "litellm"),
+        type=llm.get("type", "kb_native"),
         model_provider=provider,
         model=llm.get("model", "gpt-4o-mini"),
         api_base=llm.get("api_base"),
         api_version=llm.get("api_version"),
         api_key=resolved_key,
         call_args={"ssl_verify": llm.get("ssl_verify", True)},
+        kb_profiles=kb_profiles,
     )
     chunking = settings.get("chunking") or {}
     cluster_graph = settings.get("cluster_graph") or {}
@@ -495,7 +551,6 @@ def build_adapter_from_settings(
         extract_prompt=extract_graph.get("prompt"),
         summarize_prompt=summarize.get("prompt"),
         community_report_prompt=reports.get("prompt"),
-        extra_api_keys=extra_keys or None,
     )
 
 
@@ -519,15 +574,51 @@ def assemble_kb_settings(kb, repo) -> dict:
         raise ValueError(f"LLM profile '{lp.name}' has no API keys.")
     content = json.loads(kb.settings_json or "{}")
     reports = content.get("community_reports") or {}
+
+    # Primary profile dict first, then one dict per declared fallback id, in
+    # failover order. The gateway (T14) consumes the whole list; downstream code
+    # still reads the PRIMARY keys from llm.api_keys. Missing profiles or empty
+    # keys raise ValueError rather than silently degrade.
+    primary_profile = {
+        "provider": lp.provider,
+        "model": lp.model,
+        "api_base": lp.api_base,
+        "api_version": lp.api_version,
+        "keys": api_keys,
+        "ssl_verify": lp.ssl_verify,
+    }
+    kb_profiles = [primary_profile]
+    fallback_ids = json.loads(kb.llm_fallback_profile_ids or "[]")
+    for fid in fallback_ids:
+        fp = repo.get_profile(fid)
+        if fp is None:
+            raise ValueError(
+                f"fallback provider profile {fid} not found (kb={kb.id})"
+            )
+        fk = decrypt_values(fp.api_keys_enc)
+        if not fk:
+            raise ValueError(
+                f"fallback provider profile '{fp.name}' (id={fid}) has no API keys"
+            )
+        kb_profiles.append({
+            "provider": fp.provider,
+            "model": fp.model,
+            "api_base": fp.api_base,
+            "api_version": fp.api_version,
+            "keys": fk,
+            "ssl_verify": fp.ssl_verify,
+        })
+
     assembled = {
         "llm": {
-            "type": "litellm",
+            "type": "kb_native",
             "model_provider": lp.provider,
             "model": lp.model,
             "api_base": lp.api_base,
             "api_version": lp.api_version,
             "api_keys": api_keys,
             "ssl_verify": lp.ssl_verify,
+            "kb_profiles": kb_profiles,
         },
         "chunking": content.get("chunking", {}),
         "extract_graph": content.get("extract_graph", {}),
@@ -546,13 +637,24 @@ def assemble_kb_settings(kb, repo) -> dict:
         ep = repo.get_profile(kb.embedding_profile_id)
         emb_keys = decrypt_values(ep.api_keys_enc)
         assembled["embedding"] = {
-            "type": "litellm",
+            "type": "kb_native",
             "model_provider": ep.provider,
             "model": ep.model,
             "api_base": ep.api_base,
             "api_version": ep.api_version,
             "api_key": emb_keys[0] if emb_keys else None,
+            "api_keys": emb_keys,
             "ssl_verify": ep.ssl_verify,
+            "kb_profiles": [
+                {
+                    "provider": ep.provider,
+                    "model": ep.model,
+                    "api_base": ep.api_base,
+                    "api_version": ep.api_version,
+                    "keys": emb_keys,
+                    "ssl_verify": ep.ssl_verify,
+                }
+            ],
         }
     return assembled
 
@@ -585,18 +687,35 @@ def build_chat_complete(settings: dict):
     from graphrag_llm.completion import create_completion
     from graphrag_llm.config import ModelConfig
 
+    from kb_platform.llm.registry import register_native
+
+    register_native()
     llm = (settings or {}).get("llm") or {}
     api_keys = list(llm.get("api_keys") or [])
     if not api_keys:
         raise ValueError("KB has no LLM API keys for the query rewriter.")
+    provider = llm.get("model_provider", "openai")
+    model = llm.get("model", "gpt-4o-mini")
+    ssl_verify = llm.get("ssl_verify", True)
+    kb_profiles = llm.get("kb_profiles") or [
+        {
+            "provider": provider,
+            "model": model,
+            "api_base": llm.get("api_base"),
+            "api_version": llm.get("api_version"),
+            "keys": api_keys,
+            "ssl_verify": ssl_verify,
+        }
+    ]
     model_config = ModelConfig(
-        type=llm.get("type", "litellm"),
-        model_provider=llm.get("model_provider", "openai"),
-        model=llm.get("model", "gpt-4o-mini"),
+        type="kb_native",
+        model_provider=provider,
+        model=model,
         api_base=llm.get("api_base"),
         api_version=llm.get("api_version"),
         api_key=api_keys[0],
-        call_args={"ssl_verify": llm.get("ssl_verify", True)},
+        call_args={"ssl_verify": ssl_verify},
+        kb_profiles=kb_profiles,
     )
     completion = create_completion(model_config)
 

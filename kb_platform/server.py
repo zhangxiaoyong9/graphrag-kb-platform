@@ -26,6 +26,11 @@ def main() -> None:
     from kb_platform.api.app import create_app
     from kb_platform.db.engine import create_engine
     from kb_platform.db.repository import Repository
+    from kb_platform.llm.bootstrap import bootstrap as _bootstrap_llm
+
+    # Register kb_native completion/embedding factories before any adapter is
+    # built (idempotent). Import is inside main() to keep module import clean.
+    _bootstrap_llm()
 
     db = sys.argv[1] if len(sys.argv) > 1 else "kb.db"
     os.environ.setdefault("KB_DB_URL", f"sqlite:///{db}")

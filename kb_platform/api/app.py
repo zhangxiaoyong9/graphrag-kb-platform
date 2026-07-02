@@ -22,6 +22,7 @@ from kb_platform.api.routes_graph import router as graph_router
 from kb_platform.api.routes_health import router as health_router
 from kb_platform.api.routes_jobs import router as jobs_router
 from kb_platform.api.routes_kbs import router
+from kb_platform.api.routes_llm_health import router as llm_health_router
 from kb_platform.api.routes_profiles import router as profiles_router
 from kb_platform.api.routes_presets import router as presets_router
 from kb_platform.api.routes_query import router as query_router
@@ -55,6 +56,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         from kb_platform.api.realtime import RealtimeHub
+        from kb_platform.llm.bootstrap import close_clients, stop_probe
 
         interval_ms = float(os.environ.get("KB_POLL_INTERVAL_MS", "500"))
         hub = RealtimeHub(repo=app.state.repo, interval=interval_ms / 1000.0)
@@ -64,6 +66,10 @@ def create_app(
             yield
         finally:
             await hub.stop()
+            # Stop the process-wide HealthProbe (started by bootstrap()).
+            await stop_probe()
+            # Close the shared httpx client pool.
+            await close_clients()
 
     app = FastAPI(title="KB Platform", lifespan=lifespan)
     app.state.repo = repo
@@ -85,6 +91,7 @@ def create_app(
     app.include_router(profiles_router)
     app.include_router(presets_router)
     app.include_router(realtime_router)
+    app.include_router(llm_health_router)
 
     dist = Path(WEB_DIST)
     if dist.exists():

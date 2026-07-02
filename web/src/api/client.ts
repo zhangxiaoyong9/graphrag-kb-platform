@@ -10,7 +10,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 export const listKbs = () => req<KbOut[]>("/kbs");
 export const createKb = (b: KbCreate) => req<KbOut>("/kbs", { method: "POST", body: JSON.stringify(b) });
 export const getKb = (id: number) => req<KbDetail>(`/kbs/${id}`);
-export const updateKb = (id: number, body: { name: string; method: string; settings_yaml: string; llm_profile_id: number; embedding_profile_id?: number | null }) =>
+export const updateKb = (id: number, body: { name: string; method: string; settings_yaml: string; llm_profile_id: number; embedding_profile_id?: number | null; llm_fallback_profile_ids?: number[] }) =>
   req<KbOut>(`/kbs/${id}`, { method: "PATCH", body: JSON.stringify(body) });
 export const listProfiles = (kind?: "llm" | "embedding") =>
   req<ProviderProfile[]>(`/provider-profiles${kind ? `?kind=${kind}` : ""}`);

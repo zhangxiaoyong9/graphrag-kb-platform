@@ -417,6 +417,7 @@ class Repository:
     def update_kb(
         self, kb_id: int, *, name: str, method: str, settings_json: str,
         llm_profile_id: int | None = None, embedding_profile_id: int | None = None,
+        llm_fallback_profile_ids: str | None = None,
     ) -> KnowledgeBase | None:
         """Full-replace name/method/settings_json/profiles. Returns the KB or None if missing."""
         with session_scope(self.engine) as s:
@@ -428,6 +429,7 @@ class Repository:
             kb.settings_json = settings_json
             kb.llm_profile_id = llm_profile_id
             kb.embedding_profile_id = embedding_profile_id
+            kb.llm_fallback_profile_ids = llm_fallback_profile_ids
             return kb
 
     # ---- knowledge base (read) ----
