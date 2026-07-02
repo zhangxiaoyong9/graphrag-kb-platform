@@ -22,6 +22,7 @@ from kb_platform.api.routes_graph import router as graph_router
 from kb_platform.api.routes_health import router as health_router
 from kb_platform.api.routes_jobs import router as jobs_router
 from kb_platform.api.routes_kbs import router
+from kb_platform.api.routes_llm_health import router as llm_health_router
 from kb_platform.api.routes_profiles import router as profiles_router
 from kb_platform.api.routes_presets import router as presets_router
 from kb_platform.api.routes_query import router as query_router
@@ -88,6 +89,7 @@ def create_app(
     app.include_router(profiles_router)
     app.include_router(presets_router)
     app.include_router(realtime_router)
+    app.include_router(llm_health_router)
 
     dist = Path(WEB_DIST)
     if dist.exists():
