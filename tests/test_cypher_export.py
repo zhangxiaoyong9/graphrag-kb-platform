@@ -183,3 +183,47 @@ def test_no_text_unit_section_when_none():
     s = write_cypher(_ents(), _rels())  # text_units default None
     assert ":TextUnit" not in s
     assert "FROM_CHUNK" not in s
+
+
+def test_entity_vector_index_created_when_embeddings_present():
+    emb = {"A": [0.1, 0.2, 0.3], "B": [0.4, 0.5, 0.6]}  # dim 3
+    s = write_cypher(_ents(), _rels(), entity_embeddings=emb)
+    assert "CREATE VECTOR INDEX entity_description_vec IF NOT EXISTS" in s
+    assert "FOR (e:Entity) ON (e.entity_description)" in s
+    assert "`vector.dimensions`: 3" in s
+    assert '"cosine"' in s
+    assert 'CALL db.create.setNodeVectorProperty(e, "entity_description", row.vec)' in s
+    # the vec values land in param blocks as JSON arrays
+    blocks = [b for b in _param_blocks(s) if '"vec"' in b]
+    assert blocks
+    parsed = json.loads(blocks[0])
+    titles = {row["title"] for row in parsed}
+    assert titles == {"A", "B"}
+
+
+def test_text_unit_vector_index_uses_id_key():
+    emb = {"c1": [0.1, 0.2]}
+    s = write_cypher(_ents(), _rels(), text_unit_embeddings=emb)
+    assert "CREATE VECTOR INDEX text_unit_text_vec IF NOT EXISTS" in s
+    assert "FOR (t:TextUnit) ON (t.text_unit_text)" in s
+    assert "`vector.dimensions`: 2" in s
+    assert 'CALL db.create.setNodeVectorProperty(t, "text_unit_text", row.vec)' in s
+    assert "MATCH (t:TextUnit {id: row.tu_id})" in s
+
+
+def test_vector_section_skipped_when_embeddings_empty():
+    s = write_cypher(_ents(), _rels(), entity_embeddings={}, text_unit_embeddings={})
+    assert "CREATE VECTOR INDEX" not in s
+    assert "setNodeVectorProperty" not in s
+
+
+def test_vector_section_skipped_when_none():
+    s = write_cypher(_ents(), _rels())  # both default None
+    assert "CREATE VECTOR INDEX" not in s
+
+
+def test_each_vector_param_rhs_is_valid_json():
+    emb = {"A": [0.1, 0.2, 0.3]}
+    s = write_cypher(_ents(), _rels(), entity_embeddings=emb)
+    for rhs in _param_blocks(s):
+        json.loads(rhs)  # floats must serialize cleanly
