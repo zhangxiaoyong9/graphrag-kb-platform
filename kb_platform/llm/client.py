@@ -118,14 +118,12 @@ class NativeCompletion(LLMCompletion):
         if gateway is not None:
             self._gateway = gateway
         else:
-            import httpx
             # Profiles in P1 share one KB -> one ssl_verify; use the first
-            # profile's setting (documented assumption). Self-signed endpoints
-            # set ssl_verify=False on every profile.
+            # profile's setting. Self-signed endpoints set ssl_verify=False on
+            # every profile. The client is process-wide/shared (see http_client).
             verify = profiles[0].ssl_verify if profiles else True
-            client = httpx.AsyncClient(
-                timeout=httpx.Timeout(120.0, connect=10.0), verify=verify
-            )
+            from kb_platform.llm.http_client import get_client
+            client = get_client(verify)
             from kb_platform.llm.breaker_registry import breaker_for
             failure_threshold = kwargs.get("failure_threshold", 5)
             open_seconds = kwargs.get("open_seconds", 30.0)

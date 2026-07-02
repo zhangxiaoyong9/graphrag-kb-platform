@@ -6,14 +6,17 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _reset_breaker_registry() -> None:
-    """Clear the process-wide breaker registry before each test.
+def _reset_process_singletons() -> None:
+    """Clear the process-wide singletons before each test.
 
-    The registry is a singleton that accumulates endpoints across tests; without
-    this reset a test's breaker state would leak into the next. The registry
-    itself (breaker_for / snapshot) is module-level so this fixture touches only
-    test isolation, not production behavior.
+    - breaker_registry: accumulates endpoints across tests; a test's breaker
+      state would leak into the next.
+    - http_client: pools shared httpx clients; clear so tests don't accumulate
+      clients. (Tests inject their own MockTransport clients for any live path,
+      so the pooled clients are never used for real network here.)
+    Both modules are module-level singletons; this touches only test isolation.
     """
-    from kb_platform.llm import breaker_registry
+    from kb_platform.llm import breaker_registry, http_client
 
     breaker_registry._reset_for_test()
+    http_client._reset_for_test()

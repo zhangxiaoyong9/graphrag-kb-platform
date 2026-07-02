@@ -61,4 +61,11 @@ async def stop_probe() -> None:
         _probe = None
 
 
-__all__ = ["bootstrap", "stop_probe"]
+async def close_clients() -> None:
+    """Close the shared httpx client pool (shutdown hook)."""
+    from kb_platform.llm.http_client import close_all
+
+    await close_all()
+
+
+__all__ = ["bootstrap", "stop_probe", "close_clients"]

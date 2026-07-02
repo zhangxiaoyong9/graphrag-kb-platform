@@ -186,10 +186,11 @@ def run_worker(
     # correctly without re-plumbing shutdown. stop_probe() is itself a
     # safe no-op when `_probe is None`.
     try:
-        from kb_platform.llm.bootstrap import stop_probe
+        from kb_platform.llm.bootstrap import close_clients, stop_probe
         asyncio.run(stop_probe())
+        asyncio.run(close_clients())
     except Exception:  # noqa: BLE001 - shutdown must not crash
-        logger.debug("probe stop on worker shutdown failed", exc_info=True)
+        logger.debug("probe/client stop on worker shutdown failed", exc_info=True)
 
 
 if __name__ == "__main__":
