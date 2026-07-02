@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Iterator
 from typing import Any
 
 import pandas as pd
@@ -55,7 +56,7 @@ def _row_dict(row: pd.Series) -> dict:
     return {col: _coerce(val) for col, val in row.items()}
 
 
-def _batches(rows: list[dict], size: int = _BATCH):
+def _batches(rows: list[dict], size: int = _BATCH) -> Iterator[list[dict]]:
     for i in range(0, len(rows), size):
         yield rows[i : i + size]
 
@@ -89,7 +90,7 @@ def write_cypher(
     _emit_entities(lines, entities)
     _emit_relationships(lines, relationships)
     # TextUnit nodes + FROM_CHUNK edges when supplied (Task 2).
-    # Vector indexes are still a stub (Task 3).
+    # Vector indexes + vector properties when supplied (Task 3).
     if text_units is not None:
         _emit_text_units(lines, text_units, entities)
     if entity_embeddings:
