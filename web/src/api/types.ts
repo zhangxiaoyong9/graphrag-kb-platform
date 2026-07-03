@@ -127,6 +127,8 @@ export interface ChatMessage {
   output_tokens?: number | null;
   elapsed_ms?: number | null;
   error?: string | null;
+  cypher?: string | null;
+  truncated?: boolean;
 }
 
 export interface Conversation {

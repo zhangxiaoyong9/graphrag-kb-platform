@@ -139,6 +139,13 @@ export default function ChatPage() {
               ),
             );
           }
+          if (ev.data.cypher) {
+            setMessages((m) =>
+              m.map((msg) =>
+                msg.id === pendingId ? { ...msg, cypher: ev.data.cypher } : msg,
+              ),
+            );
+          }
         } else if (ev.event === "delta") {
           setMessages((m) =>
             m.map((msg) =>
@@ -363,6 +370,8 @@ function ChatBubble({ m }: { m: ChatMessage }) {
               prompt_tokens: m.prompt_tokens ?? undefined,
               output_tokens: m.output_tokens ?? undefined,
               sources: m.sources as SourceRef[] | undefined,
+              cypher: m.cypher,
+              truncated: m.truncated,
             }}
           />
         )}
