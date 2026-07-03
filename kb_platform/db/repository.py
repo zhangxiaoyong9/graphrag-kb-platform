@@ -645,7 +645,8 @@ class Repository:
         with session_scope(self.engine) as s:
             rows = s.scalars(select(KnowledgeBase).where(
                 or_(KnowledgeBase.llm_profile_id == profile_id,
-                    KnowledgeBase.embedding_profile_id == profile_id)
+                    KnowledgeBase.embedding_profile_id == profile_id,
+                    KnowledgeBase.neo4j_profile_id == profile_id)
             ))
             return [k.id for k in rows]
 
