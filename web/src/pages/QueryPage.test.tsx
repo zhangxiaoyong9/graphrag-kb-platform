@@ -112,3 +112,13 @@ test("selecting a preset fills the knobs", async () => {
   // preset also switched the method to global: top_k only renders for local/basic
   expect(screen.queryByLabelText("top_k")).not.toBeInTheDocument();
 });
+
+test("renders cypher and hybrid method buttons", async () => {
+  render(
+    <KbContext.Provider value={kbCtx}>
+      <QueryPage />
+    </KbContext.Provider>,
+  );
+  expect(await screen.findByText("cypher")).toBeInTheDocument();
+  expect(await screen.findByText("hybrid")).toBeInTheDocument();
+});

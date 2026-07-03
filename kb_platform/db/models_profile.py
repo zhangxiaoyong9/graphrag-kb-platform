@@ -19,3 +19,5 @@ class ProviderProfile(Base):
     api_keys_enc: Mapped[str] = mapped_column(Text, default="[]")
     structured_output: Mapped[bool] = mapped_column(Boolean, default=True)
     ssl_verify: Mapped[bool] = mapped_column(Boolean, default=True)
+    # neo4j kind only: the DB user. Unused for llm/embedding profiles (NULL).
+    username: Mapped[str | None] = mapped_column(String, nullable=True)

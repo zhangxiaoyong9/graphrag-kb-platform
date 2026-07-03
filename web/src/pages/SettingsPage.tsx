@@ -62,8 +62,10 @@ const SECTIONS: ConfigSection[] = [
       { k: "global", v: "全量社区报告 map-reduce（需社区报告）" },
       { k: "drift", v: "密集检索优先搜索（需社区报告）" },
       { k: "basic", v: "仅文本单元向量搜索（最快，无需社区报告）" },
+      { k: "cypher", v: "Text2Cypher：LLM 将问题翻译为 Cypher 查询（需 Neo4j 配置）" },
+      { k: "hybrid", v: "向量召回 + Cypher 多跳遍历（需 Neo4j 配置 + 嵌入模型）" },
     ],
-    note: "global / drift 依赖社区报告；DeepSeek 需在 KB 设置中开启 community_reports.structured_output: false。",
+    note: "global / drift 依赖社区报告；DeepSeek 需在 KB 设置中开启 community_reports.structured_output: false；cypher / hybrid 需要 KB 启用 Neo4j 图导出。",
   },
 ];
 

@@ -85,6 +85,7 @@ export interface QueryResult {
   output_tokens?: number;
   llm_calls?: number;
   sources?: SourceRef[];
+  truncated?: boolean;
 }
 
 export interface CostItem { model: string; prompt_tokens: number; completion_tokens: number; usd: number | null }
@@ -145,6 +146,8 @@ export interface QueryParams {
   top_k?: number;
   temperature?: number;
   system_prompt?: string;
+  hops?: number;
+  cypher_timeout_ms?: number;
 }
 
 export interface QueryPreset {
@@ -157,5 +160,6 @@ export interface QueryPreset {
   top_k?: number | null;
   temperature?: number | null;
   system_prompt?: string | null;
+  hops?: number | null;
   is_builtin: boolean;
 }

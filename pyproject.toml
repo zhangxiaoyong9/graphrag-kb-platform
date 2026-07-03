@@ -20,6 +20,8 @@ dependencies = [
 [project.optional-dependencies]
 # MCP query server: `python -m kb_platform.mcp` (stdio, thin HTTP proxy to the API server).
 mcp = ["mcp>=1.2"]
+# Neo4j read side: cypher/hybrid query methods (POST /kbs/{id}/query?method=cypher|hybrid).
+neo4j = ["neo4j>=5.20"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",

@@ -8,7 +8,7 @@ from kb_platform.api.models import QueryRequest, QueryResultOut, SourceOut
 from kb_platform.api.sse import format_sse
 from kb_platform.db.engine import session_scope
 from kb_platform.db.models import KnowledgeBase
-from kb_platform.query.engine import QueryParams, StreamDelta
+from kb_platform.query.engine import QueryParams, StreamDelta, StreamMeta
 from kb_platform.query.params import resolve_query_params
 
 router = APIRouter()
@@ -31,10 +31,10 @@ async def query_kb(kb_id: int, payload: QueryRequest, request: Request):
         )
         resolved: QueryParams | None = None
         if local_engine is None:
-            from kb_platform.graph.graphrag_adapter import assemble_kb_settings
-            from kb_platform.query.graphrag_engine import GraphRagQueryEngine
+            from kb_platform.query.factory import build_query_engine
 
-            repo = request.app.state.repo
+            app_state = request.app.state
+            repo = app_state.repo
             with session_scope(repo.engine) as s:
                 kb = s.scalar(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))
                 if kb is None:
@@ -43,13 +43,8 @@ async def query_kb(kb_id: int, payload: QueryRequest, request: Request):
                 data_root = kb.data_root
                 kb_settings = json.loads(kb.settings_json or "{}")
                 resolved = resolve_query_params(kb_settings, per_query)
-                try:
-                    model_config = assemble_kb_settings(kb, repo)
-                except Exception as exc:  # noqa: BLE001 - graceful, never 500
-                    yield format_sse("error", {"message": f"settings resolution failed: {exc}"})
-                    return
             try:
-                local_engine = GraphRagQueryEngine(data_root=data_root, model_config=model_config)
+                local_engine = build_query_engine(payload.method, kb, repo, app_state)
             except Exception as exc:  # noqa: BLE001 - graceful, never 500
                 yield format_sse("error", {"message": f"engine build failed: {exc}"})
                 return
@@ -62,9 +57,16 @@ async def query_kb(kb_id: int, payload: QueryRequest, request: Request):
         async for ev in local_engine.stream_search(
             payload.method, payload.query, data_root, params=resolved
         ):
-            if isinstance(ev, StreamDelta):
+            if isinstance(ev, StreamMeta):
+                # L3 transparency: a cypher/hybrid engine reveals the generated
+                # Cypher. graphrag/Fake engines never yield a StreamMeta, so they
+                # emit only the leading meta{method} above.
+                yield format_sse(
+                    "meta", {"method": payload.method, "cypher": ev.cypher}
+                )
+            elif isinstance(ev, StreamDelta):
                 yield format_sse("delta", {"text": ev.text})
-            else:  # StreamDone — unchanged QueryResultOut construction
+            else:  # StreamDone — carries truncated for cypher/hybrid row-cap
                 yield format_sse(
                     "done",
                     {
@@ -75,6 +77,7 @@ async def query_kb(kb_id: int, payload: QueryRequest, request: Request):
                             elapsed_ms=ev.elapsed_ms,
                             prompt_tokens=ev.prompt_tokens,
                             output_tokens=ev.output_tokens,
+                            truncated=getattr(ev, "truncated", False),
                             sources=[
                                 SourceOut(kind=s.kind, name=s.name, text=s.text)
                                 for s in ev.sources

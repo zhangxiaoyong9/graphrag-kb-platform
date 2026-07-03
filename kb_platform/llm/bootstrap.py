@@ -62,10 +62,19 @@ async def stop_probe() -> None:
 
 
 async def close_clients() -> None:
-    """Close the shared httpx client pool (shutdown hook)."""
+    """Close the shared httpx client pool + the Neo4j driver pool (shutdown hook)."""
     from kb_platform.llm.http_client import close_all
 
     await close_all()
+    # Neo4j driver pool is lazy: only present when the [neo4j] extra is installed
+    # and a cypher/hybrid query has run. Swallow ImportError so this is a no-op
+    # for installs without the extra.
+    try:
+        from kb_platform.neo4j import driver_pool  # noqa: PLC0415
+
+        await driver_pool.close_all()
+    except Exception:  # noqa: BLE001 - shutdown must not raise
+        logger.debug("neo4j driver_pool close skipped (extra absent or empty)")
 
 
 __all__ = ["bootstrap", "stop_probe", "close_clients"]

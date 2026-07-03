@@ -31,6 +31,11 @@ class KnowledgeBase(Base):
     (or ``"[]"``) and behave exactly as today — no fallback. Consumed by the
     cross-profile failover gateway (T14).
     """
+    neo4j_profile_id: Mapped[int | None] = mapped_column(
+        ForeignKey("provider_profile.id"), nullable=True
+    )
+    """Optional Neo4j profile enabling the cypher/hybrid query methods. None
+    means the KB stays on the four graphrag methods (local/global/drift/basic)."""
     documents: Mapped[list["Document"]] = relationship(back_populates="kb")
 
 

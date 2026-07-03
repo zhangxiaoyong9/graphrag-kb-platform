@@ -127,7 +127,7 @@ async def send_message(conv_id: int, payload: MessageSend, request: Request):
                 return
             from kb_platform.conversation.rewriter import LlmRewriter
             from kb_platform.graph.graphrag_adapter import assemble_kb_settings, build_chat_complete
-            from kb_platform.query.graphrag_engine import GraphRagQueryEngine
+            from kb_platform.query.factory import build_query_engine
 
             try:
                 settings = assemble_kb_settings(kb, repo)
@@ -137,7 +137,11 @@ async def send_message(conv_id: int, payload: MessageSend, request: Request):
                 yield format_sse("error", {"message": f"settings resolution failed: {exc}"})
                 return
             try:
-                local_engine = GraphRagQueryEngine(data_root=kb.data_root, model_config=settings)
+                # method defaults to "local" (MessageSend.method is optional);
+                # build_query_engine dispatches to Neo4j for cypher/hybrid when the
+                # KB has a neo4j_profile_id, else graphrag.
+                method = payload.method or "local"
+                local_engine = build_query_engine(method, kb, repo, request.app.state)
                 try:
                     local_rewriter = LlmRewriter(build_chat_complete(settings))
                 except Exception:  # noqa: BLE001 - rewriter optional

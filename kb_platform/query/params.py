@@ -7,7 +7,15 @@ overrides the method's primary answer-prompt slot).
 """
 from kb_platform.query.engine import QueryParams
 
-_FIELDS = ("community_level", "response_type", "top_k", "temperature", "system_prompt")
+_FIELDS = (
+    "community_level",
+    "response_type",
+    "top_k",
+    "temperature",
+    "system_prompt",
+    "hops",
+    "cypher_timeout_ms",
+)
 
 
 def resolve_query_params(kb_settings: dict | None, per_query: QueryParams | None) -> QueryParams:

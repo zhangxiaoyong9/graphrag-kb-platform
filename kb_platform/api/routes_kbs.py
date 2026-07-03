@@ -151,6 +151,8 @@ def create_kb(payload: KbCreate, request: Request) -> KbOut:
     _require_profile(repo, payload.llm_profile_id, "llm")
     if payload.embedding_profile_id is not None:
         _require_profile(repo, payload.embedding_profile_id, "embedding")
+    if payload.neo4j_profile_id is not None:
+        _require_profile(repo, payload.neo4j_profile_id, "neo4j")
     fallback_ids = _validate_fallback_ids(repo, payload.llm_fallback_profile_ids, payload.llm_profile_id)
     settings = _parse_settings(payload.settings_yaml)
     with session_scope(repo.engine) as s:
@@ -162,6 +164,7 @@ def create_kb(payload: KbCreate, request: Request) -> KbOut:
             llm_profile_id=payload.llm_profile_id,
             embedding_profile_id=payload.embedding_profile_id,
             llm_fallback_profile_ids=json.dumps(fallback_ids) if fallback_ids else None,
+            neo4j_profile_id=payload.neo4j_profile_id,
         )
         s.add(kb)
         s.flush()
@@ -192,6 +195,7 @@ def get_kb(kb_id: int, request: Request) -> KbDetailOut:
             embedding_profile=_profileref(repo, kb.embedding_profile_id),
             llm_fallback_profile_ids=fallback_ids,
             llm_fallback_profiles=[r for r in (_profileref(repo, i) for i in fallback_ids) if r],
+            neo4j_profile=_profileref(repo, kb.neo4j_profile_id),
         )
 
 
@@ -218,6 +222,8 @@ def update_kb(kb_id: int, payload: KbUpdate, request: Request) -> KbDetailOut:
     _require_profile(repo, payload.llm_profile_id, "llm")
     if payload.embedding_profile_id is not None:
         _require_profile(repo, payload.embedding_profile_id, "embedding")
+    if payload.neo4j_profile_id is not None:
+        _require_profile(repo, payload.neo4j_profile_id, "neo4j")
     fallback_ids = _validate_fallback_ids(repo, payload.llm_fallback_profile_ids, payload.llm_profile_id)
     settings = _parse_settings(payload.settings_yaml)
     kb = repo.update_kb(
@@ -225,6 +231,7 @@ def update_kb(kb_id: int, payload: KbUpdate, request: Request) -> KbDetailOut:
         llm_profile_id=payload.llm_profile_id,
         embedding_profile_id=payload.embedding_profile_id,
         llm_fallback_profile_ids=json.dumps(fallback_ids) if fallback_ids else None,
+        neo4j_profile_id=payload.neo4j_profile_id,
     )
     if kb is None:
         raise HTTPException(404)
@@ -236,6 +243,7 @@ def update_kb(kb_id: int, payload: KbUpdate, request: Request) -> KbDetailOut:
         embedding_profile=_profileref(repo, kb.embedding_profile_id),
         llm_fallback_profile_ids=fallback_ids,
         llm_fallback_profiles=[r for r in (_profileref(repo, i) for i in fallback_ids) if r],
+        neo4j_profile=_profileref(repo, kb.neo4j_profile_id),
     )
 
 
