@@ -90,7 +90,7 @@ class QueryEngine(Protocol):
         query: str,
         kb_data_root: str,
         params: "QueryParams | None" = None,
-    ) -> AsyncIterator["StreamDelta | StreamDone"]: ...
+    ) -> AsyncIterator["StreamDelta | StreamDone | StreamMeta"]: ...
 
 
 class FakeQueryEngine:
