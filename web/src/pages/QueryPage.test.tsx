@@ -9,6 +9,11 @@ import { KbContext, type KbCtx } from "./kb-context";
 // Real parsing is unit-tested in src/lib/sse.test.ts. Yield each event on its own
 // macrotask so React flushes each setResult commit independently (mirrors real SSE
 // framing and keeps the test deterministic regardless of vitest worker load).
+//
+// The factory reads the module-level `doneResult` variable so individual tests can
+// override the done payload (e.g. to surface truncated:true) without inventing a new
+// mock mechanism — they reuse this same generator + KB-loading pattern verbatim.
+const doneResult: any = { answer: "Hi", method: "local", error: null, sources: [] };
 vi.mock("../lib/sse", () => ({
   parseSse: async function* () {
     await Promise.resolve();
@@ -19,7 +24,7 @@ vi.mock("../lib/sse", () => ({
     yield {
       event: "done",
       data: {
-        result: { answer: "Hi", method: "local", error: null, sources: [] },
+        result: { ...doneResult },
       },
     };
   },
@@ -122,3 +127,51 @@ test("renders cypher and hybrid method buttons", async () => {
   expect(await screen.findByText("cypher")).toBeInTheDocument();
   expect(await screen.findByText("hybrid")).toBeInTheDocument();
 });
+
+test("cypher method sends cypher_timeout_ms in request params", async () => {
+  const captured: any[] = [];
+  server.use(
+    http.post("/kbs/:id/query", async ({ request }) => {
+      captured.push(await request.json());
+      return new HttpResponse("event: done\n", {
+        headers: { "content-type": "text/event-stream" },
+      });
+    }),
+  );
+  render(
+    <KbContext.Provider value={kbCtx}>
+      <QueryPage />
+    </KbContext.Provider>,
+  );
+  const ta = await screen.findByRole("textbox");
+  // select cypher method
+  fireEvent.click(screen.getByText("cypher").closest("button")!);
+  // open tuning panel and fill cypher_timeout_ms
+  fireEvent.click(screen.getByRole("button", { name: /调参/ }));
+  fireEvent.change(screen.getByLabelText("cypher_timeout_ms"), { target: { value: "8000" } });
+  // submit
+  fireEvent.change(ta, { target: { value: "hi" } });
+  fireEvent.click(screen.getByRole("button", { name: /提问/ }));
+  await waitFor(() => expect(captured.length).toBe(1));
+  expect(captured[0].params?.cypher_timeout_ms).toBe(8000);
+});
+
+test(
+  "shows the truncated notice when the done result is truncated",
+  async () => {
+    // Override only the done-payload result object: truncated:true now flows through
+    // the existing parseSse mock + KB-loading path verbatim — no new mock mechanism.
+    doneResult.truncated = true;
+    render(
+      <KbContext.Provider value={kbCtx}>
+        <QueryPage />
+      </KbContext.Provider>,
+    );
+    const ta = await screen.findByRole("textbox");
+    fireEvent.change(ta, { target: { value: "hi" } });
+    fireEvent.click(screen.getByRole("button", { name: /提问/ }));
+    expect(await screen.findByText(/结果已达行数上限/, undefined, { timeout: 15000 })).toBeInTheDocument();
+    doneResult.truncated = false;
+  },
+  20000,
+);

@@ -59,6 +59,8 @@ def _message_out(m) -> MessageOut:
         output_tokens=m.output_tokens,
         elapsed_ms=m.elapsed_ms,
         error=m.error,
+        cypher=m.cypher,
+        truncated=m.truncated,
     )
 
 

@@ -86,6 +86,7 @@ export interface QueryResult {
   llm_calls?: number;
   sources?: SourceRef[];
   truncated?: boolean;
+  cypher?: string | null;
 }
 
 export interface CostItem { model: string; prompt_tokens: number; completion_tokens: number; usd: number | null }
@@ -126,6 +127,8 @@ export interface ChatMessage {
   output_tokens?: number | null;
   elapsed_ms?: number | null;
   error?: string | null;
+  cypher?: string | null;
+  truncated?: boolean;
 }
 
 export interface Conversation {
@@ -161,5 +164,6 @@ export interface QueryPreset {
   temperature?: number | null;
   system_prompt?: string | null;
   hops?: number | null;
+  cypher_timeout_ms?: number | null;
   is_builtin: boolean;
 }

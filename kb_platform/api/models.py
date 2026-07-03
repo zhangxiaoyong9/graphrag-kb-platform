@@ -320,6 +320,8 @@ class MessageOut(BaseModel):
     output_tokens: int | None = None
     elapsed_ms: float | None = None
     error: str | None = None
+    cypher: str | None = None
+    truncated: bool = False
 
 
 class MessageSend(BaseModel):
@@ -340,6 +342,8 @@ class QueryPresetIn(BaseModel):
     top_k: int | None = None
     temperature: float | None = None
     system_prompt: str | None = None
+    hops: int | None = None
+    cypher_timeout_ms: int | None = None
 
 
 class QueryPresetUpdate(BaseModel):
@@ -351,6 +355,8 @@ class QueryPresetUpdate(BaseModel):
     top_k: int | None = None
     temperature: float | None = None
     system_prompt: str | None = None
+    hops: int | None = None
+    cypher_timeout_ms: int | None = None
 
 
 class QueryPresetOut(BaseModel):
@@ -363,4 +369,6 @@ class QueryPresetOut(BaseModel):
     top_k: int | None = None
     temperature: float | None = None
     system_prompt: str | None = None
+    hops: int | None = None
+    cypher_timeout_ms: int | None = None
     is_builtin: bool
