@@ -75,14 +75,14 @@ CREATE CONSTRAINT entity_title_unique IF NOT EXISTS FOR (e:Entity) REQUIRE e.tit
 CREATE INDEX entity_type IF NOT EXISTS FOR (e:Entity) ON (e.type);
 
 // 2. Entity batches (~500 rows per block)
-:param rows => <JSON array>;
-UNWIND $rows AS row
+WITH [{title: "A", type: "ORG", description: "...", text_unit_ids: ["c1"], ...}, ...] AS rows
+UNWIND rows AS row
 MERGE (e:Entity {title: row.title})
 SET e += row;
 
 // 3. Relationship batches (~500 rows per block)
-:param rows => <JSON array>;
-UNWIND $rows AS row
+WITH [{source: "A", target: "B", _p: {description: "...", weight: 1.0, ...}}, ...] AS rows
+UNWIND rows AS row
 MATCH (s:Entity {title: row.source}), (t:Entity {title: row.target})
 MERGE (s)-[r:RELATED]->(t)
 SET r += row._p;
@@ -103,31 +103,34 @@ Key behaviors:
 - **Orphan edges are dropped.** A relationship whose endpoint entity is absent from the
   entities set yields no `MATCH` and is silently skipped — no dangling edges. (graphrag's
   merged parquet should not produce these, but the writer is defensive.)
-- **Batch size ≈ 500 rows** per `:param`/`UNWIND` block, keeping each param block parseable
+- **Batch size ≈ 500 rows** per `WITH`/`UNWIND` block, keeping each statement parseable
   and memory-bounded. 378 entities → 1 block; 1030 relationships → 3 blocks (current KB).
 
 ## Serialization
 
-The right-hand side of `:param rows =>` is JSON (cypher-shell and Neo4j Browser both
-parse `:param` values as JSON). The writer therefore serializes each batch with
-`json.dumps(rows, ensure_ascii=False)` rather than hand-rolling Cypher string escaping.
+Row data is emitted INLINE as Cypher-native literals —
+`WITH [{title: "A", ...}, ...] AS rows UNWIND rows AS row ...` — NOT via
+cypher-shell's `:param` directive. **Cypher 5 rejects `:param` for object lists**:
+cypher-shell wraps `:param x => <value>` in `RETURN {x: <value>} AS result` to
+evaluate it, and Cypher 5 no longer parses a JSON-style map literal (quoted
+keys `{"title": ...}`) in expression position. The previously shipped
+`:param rows => <JSON>` format therefore never loaded into Neo4j 5.x (caught by
+the real-load test added with this fix, `tests/test_cypher_export_load.py`).
 
-This gives a clean, testable invariant: **every `:param` line's RHS is valid JSON**
-(`json.loads` must not raise).
+`_cypher_literal(value)` is the single serializer:
 
-Coercion rules applied while building each row dict (before `json.dumps`):
-
-| Cell value                              | JSON output              |
+| Cell value                              | Cypher output            |
 |-----------------------------------------|--------------------------|
 | `None` / `pd.NA` / `NaN` / `NaT`        | `null`                   |
 | numpy scalar (`int64`, `float64`, …)    | native Python int/float  |
-| `ndarray` / list / tuple / `Series`     | JSON array (recursively) |
-| `str`                                   | JSON string (escaped)    |
+| `ndarray` / list / tuple / `Series`     | Cypher list (recursively)|
+| `str`                                   | Cypher string (JSON-escaped via `json.dumps` — a valid Cypher string escape; `ensure_ascii=False`) |
 | bool                                    | `true` / `false`         |
+| dict                                    | `{key: value, ...}` with **identifier (unquoted) keys** when the key is a valid Cypher identifier, else backtick-quoted |
 
 Neo4j property arrays must be homogeneous; graphrag's list columns (`text_unit_ids`,
-`description` after merge) are homogeneous string arrays, so this holds. No nested
-maps/arrays-of-objects are emitted.
+`description` after merge) are homogeneous string arrays, so this holds. The one
+deliberate nested map is the relationship `_p` (properties split from endpoints).
 
 ## Files
 
@@ -146,9 +149,13 @@ maps/arrays-of-objects are emitted.
 - **Every** entity column appears as a property in `SET e += row` (whitelist regression — `text_unit_ids`, `frequency`, etc. all present).
 - **Every** relationship column except `source`/`target` appears in `row._p`.
 - List columns serialize to JSON arrays (`"text_unit_ids":["c1","c2"]`), **not** flattened strings — assert the raw `['c1' 'c2']` repr is absent.
-- Strings containing `"`, `\`, and newlines are correctly JSON-escaped.
-- Each `:param rows =>` line's RHS parses with `json.loads` (valid-JSON invariant).
+- Strings containing `"`, `\`, and newlines are correctly JSON-escaped (inside a Cypher string literal).
+- **No `:param` / `$rows` anywhere**; each data block is `WITH <list> AS rows` + `UNWIND rows AS row` with identifier (unquoted) keys and bracket-balanced literals.
 - Empty entity / relationship DataFrames do not crash; preamble still emitted.
+
+The script must LOAD into Neo4j 5.x — `tests/test_cypher_export_load.py` boots a
+testcontainer, executes every statement via the driver, and asserts the graph
+(the regression the original `:param` format needed and lacked).
 
 Orphan-edge dropping is a **runtime** consequence of the `MATCH` (it executes at load
 time in Neo4j, not at write time), so the writer always emits every relationship row into
@@ -163,6 +170,6 @@ its param block; it is documented behavior, not a writer-level unit test.
 ## Risks / notes
 
 - **Relationship dedup.** `MERGE (s)-[:RELATED]->(t)` collapses any duplicate `(source, target)` pairs in the parquet into a single edge (last row's properties win). graphrag's `merge_extractions` already merges same-pair relationships into one row with an aggregated `description` list and summed `weight`, so this should be a no-op in practice; documented for safety.
-- **`cypher-shell` `:param` support.** `:param name => <json>` is supported by `cypher-shell` and Neo4j Browser. Older Neo4j versions (< 4.4) lack `IF NOT EXISTS` on constraints; the script targets Neo4j ≥ 5.11 (documented in the header comment).
+- **Inline `WITH` (not `:param`).** The script uses inline `WITH [<rows>] AS rows UNWIND rows AS row` because cypher-shell 5's `:param x => <value>` evaluates via `RETURN {x: <value>}`, which Cypher 5 rejects for object payloads (quoted-key map literals are not parseable in expression position). Both `cypher-shell -f` and the Neo4j Browser accept the inline form. Older Neo4j versions (< 4.4) lack `IF NOT EXISTS` on constraints; the script targets Neo4j ≥ 5.11 (documented in the header comment).
 - **Neo4j ≥ 5.11** is now required (was 5.0) for `CREATE VECTOR INDEX` + `db.create.setNodeVectorProperty`. The header comment documents this.
 - **No APOC dependency.** Everything uses built-in Cypher (`MERGE`, `UNWIND`, `SET +=`, `CREATE CONSTRAINT … IF NOT EXISTS`, `CREATE VECTOR INDEX`, `db.create.setNodeVectorProperty`).

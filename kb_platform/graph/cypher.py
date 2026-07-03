@@ -5,21 +5,29 @@ LanceDB vectors and hands them in. Output is an idempotent Cypher script that
 MERGE-upserts entities, relationships, text units, and (when supplied) vector
 indexes + vector properties into Neo4j >= 5.11.
 
-Every `:param rows => <JSON>` line's right-hand side is valid JSON
-(``json.loads`` must not raise) — the writer therefore serializes with
-``json.dumps(rows, ensure_ascii=False)`` and never hand-rolls Cypher escaping.
+Row data is emitted inline as Cypher-native literals
+(``WITH [{title: "A", type: "ORG", ...}, ...] AS rows UNWIND rows AS row ...``),
+NOT via cypher-shell's ``:param`` directive. Cypher 5 rejects map literals with
+JSON-style quoted keys (``{"title": "A"}``) in expression position and cypher-shell
+wraps ``:param x => <value>`` in such a map to evaluate it, so a JSON payload of
+objects cannot be loaded through ``:param`` / ``$rows``. Inline ``WITH`` with
+identifier-key maps is the form neo4j 5.x's cypher-shell and the browser both
+accept. ``_cypher_literal`` is the single serializer; strings reuse
+``json.dumps`` (its escaping is a valid Cypher string literal).
 """
 
 from __future__ import annotations
 
 import json
 import math
+import re
 from collections.abc import Iterator
 from typing import Any
 
 import pandas as pd
 
 _BATCH = 500
+_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def _coerce(value: Any) -> Any:
@@ -61,9 +69,58 @@ def _batches(rows: list[dict], size: int = _BATCH) -> Iterator[list[dict]]:
         yield rows[i : i + size]
 
 
-def _emit_param_block(lines: list[str], rows: list[dict]) -> None:
-    lines.append(f":param rows => {json.dumps(rows, ensure_ascii=False)};")
-    lines.append("UNWIND $rows AS row")
+def _cypher_literal(value: Any) -> str:
+    """Render a Python value as a Cypher literal (NOT JSON).
+
+    - dict  -> ``{key: value, ...}`` with IDENTIFIER (unquoted) keys when the
+      key is a valid Cypher identifier, else backtick-quoted (`` `weird key` ``).
+    - list/tuple -> ``[v, ...]``
+    - str   -> a Cypher string literal (``"..."``); json.dumps escaping is a
+      valid Cypher string escape (``\\"``, ``\\\\``, ``\\n``, …) and keeps
+      non-ASCII (``ensure_ascii=False``).
+    - bool  -> ``true`` / ``false`` (lowercase; checked before int — bool is int)
+    - int   -> ``str(value)``
+    - float -> ``repr(value)`` (``1.0`` stays ``1.0``); non-finite -> ``null``
+    - None  -> ``null``
+    """
+    if value is None:
+        return "null"
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, int):  # bool already handled above
+        return str(value)
+    if isinstance(value, float):
+        return repr(value) if math.isfinite(value) else "null"
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_cypher_literal(v) for v in value) + "]"
+    if isinstance(value, dict):
+        parts = []
+        for k, v in value.items():
+            ks = k if _IDENT_RE.match(str(k)) else "`" + str(k).replace("`", "``") + "`"
+            parts.append(f"{ks}: {_cypher_literal(v)}")
+        return "{" + ", ".join(parts) + "}"
+    # Fallback: any numpy-/pandas-flavored scalar exposing .item(), else stringify.
+    if hasattr(value, "item"):
+        try:
+            return _cypher_literal(value.item())  # type: ignore[arg-type]
+        except Exception:  # noqa: BLE001 - last-resort stringification
+            pass
+    return json.dumps(str(value), ensure_ascii=False)
+
+
+def _emit_with_block(lines: list[str], rows: list[dict]) -> None:
+    """Emit the inline data carrier for a batch.
+
+    ``WITH [{...}, ...] AS rows UNWIND rows AS row`` — Cypher-native, no
+    cypher-shell ``:param`` (which Cypher 5 cannot evaluate for object lists).
+    The following MERGE/SET/MATCH/CALL lines close the statement with ``;``.
+    """
+    lines.append(f"WITH {_cypher_literal(rows)} AS rows")
+    lines.append("UNWIND rows AS row")
 
 
 def write_cypher(
@@ -111,7 +168,7 @@ def _emit_entities(lines: list[str], entities: pd.DataFrame) -> None:
     lines.append(f"// 2. Entities ({len(entities)} rows)")
     rows = [_row_dict(row) for _, row in entities.iterrows()] if len(entities) else []
     for batch in _batches(rows):
-        _emit_param_block(lines, batch)
+        _emit_with_block(lines, batch)
         lines.append("MERGE (e:Entity {title: row.title})")
         lines.append("SET e += row;")
     lines.append("")
@@ -126,14 +183,13 @@ def _emit_relationships(lines: list[str], relationships: pd.DataFrame) -> None:
         target = d.pop("target", None)
         rows.append({"source": source, "target": target, "_p": d})
     for batch in _batches(rows):
-        _emit_param_block(lines, batch)
+        _emit_with_block(lines, batch)
         lines.append("MATCH (s:Entity {title: row.source}), (t:Entity {title: row.target})")
         lines.append("MERGE (s)-[r:RELATED]->(t)")
         lines.append("SET r += row._p;")
     lines.append("")
 
 
-# --- Stubs filled in by Tasks 2 and 3. ---------------------------------------
 def _emit_text_units(lines: list[str], text_units: pd.DataFrame, entities: pd.DataFrame) -> None:
     lines.append(f"// 4. Text units ({len(text_units)} rows)")
     # The TextUnit uniqueness constraint lives with the TextUnit load so that
@@ -144,7 +200,7 @@ def _emit_text_units(lines: list[str], text_units: pd.DataFrame, entities: pd.Da
     valid_ids = set(text_units["id"].astype(str)) if "id" in text_units.columns else set()
     rows = [_row_dict(row) for _, row in text_units.iterrows()] if len(text_units) else []
     for batch in _batches(rows):
-        _emit_param_block(lines, batch)
+        _emit_with_block(lines, batch)
         lines.append("MERGE (t:TextUnit {id: row.id})")
         lines.append("SET t += row;")
     # FROM_CHUNK edges: (:TextUnit)-[:FROM_CHUNK]->(:Entity), derived from
@@ -164,7 +220,7 @@ def _emit_text_units(lines: list[str], text_units: pd.DataFrame, entities: pd.Da
                     from_chunk.append({"tu_id": tu_id, "entity_title": title})
     lines.append(f"// 4b. FROM_CHUNK edges ({len(from_chunk)} rows)")
     for batch in _batches(from_chunk):
-        _emit_param_block(lines, batch)
+        _emit_with_block(lines, batch)
         lines.append("MATCH (t:TextUnit {id: row.tu_id}), (e:Entity {title: row.entity_title})")
         lines.append("MERGE (t)-[:FROM_CHUNK]->(e);")
     lines.append("")
@@ -181,9 +237,9 @@ def _emit_vector_index(
     """Emit CREATE VECTOR INDEX + batched setNodeVectorProperty.
 
     ``key_col`` is the node's identity property name used in the MATCH
-    ("title" for Entity, "id" for TextUnit); the param-row key is always
-    renamed to the Cypher bind variable expected by the MATCH. Dimensions
-    are detected from the first vector; similarity is cosine.
+    ("title" for Entity, "id" for TextUnit); the row key is always renamed to
+    the Cypher bind variable expected by the MATCH. Dimensions are detected
+    from the first vector; similarity is cosine.
     """
     sample = next(iter(embeddings.values()), None)
     if not sample:
@@ -200,7 +256,7 @@ def _emit_vector_index(
     )
     rows = [{key_in_row: k, "vec": [float(x) for x in v]} for k, v in embeddings.items()]
     for batch in _batches(rows):
-        _emit_param_block(lines, batch)
+        _emit_with_block(lines, batch)
         match_key = "row.title" if key_col == "title" else "row.tu_id"
         lines.append(f"MATCH ({var}:{label} {{{key_col}: {match_key}}})")
         lines.append(f'CALL db.create.setNodeVectorProperty({var}, "{prop}", row.vec);')
