@@ -417,7 +417,7 @@ class Repository:
     def update_kb(
         self, kb_id: int, *, name: str, method: str, settings_json: str,
         llm_profile_id: int | None = None, embedding_profile_id: int | None = None,
-        llm_fallback_profile_ids: str | None = None,
+        llm_fallback_profile_ids: str | None = None, neo4j_profile_id: int | None = None,
     ) -> KnowledgeBase | None:
         """Full-replace name/method/settings_json/profiles. Returns the KB or None if missing."""
         with session_scope(self.engine) as s:
@@ -430,6 +430,7 @@ class Repository:
             kb.llm_profile_id = llm_profile_id
             kb.embedding_profile_id = embedding_profile_id
             kb.llm_fallback_profile_ids = llm_fallback_profile_ids
+            kb.neo4j_profile_id = neo4j_profile_id
             return kb
 
     # ---- knowledge base (read) ----
@@ -596,13 +597,13 @@ class Repository:
 
     def create_profile(self, *, name, kind, provider, model, api_base=None,
                        api_version=None, api_keys=None, structured_output=True,
-                       ssl_verify=True) -> ProviderProfile:
+                       ssl_verify=True, username=None) -> ProviderProfile:
         with session_scope(self.engine) as s:
             p = ProviderProfile(name=name, kind=kind, provider=provider, model=model,
                                 api_base=api_base, api_version=api_version,
                                 api_keys_enc=encrypt_values(api_keys or []),
                                 structured_output=structured_output,
-                                ssl_verify=ssl_verify)
+                                ssl_verify=ssl_verify, username=username)
             s.add(p)
             s.flush()
             return p

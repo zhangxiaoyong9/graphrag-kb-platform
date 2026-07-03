@@ -24,6 +24,7 @@ class KbCreate(BaseModel):
     embedding_profile_id: int | None = None
     min_unit_success_ratio: float | None = None
     llm_fallback_profile_ids: list[int] | None = None
+    neo4j_profile_id: int | None = None
 
 
 class KbUpdate(BaseModel):
@@ -39,6 +40,7 @@ class KbUpdate(BaseModel):
     llm_profile_id: int
     embedding_profile_id: int | None = None
     llm_fallback_profile_ids: list[int] | None = None
+    neo4j_profile_id: int | None = None
 
 
 class KbOut(BaseModel):
@@ -62,6 +64,7 @@ class KbDetailOut(KbOut):
     embedding_profile: ProfileRef | None = None
     llm_fallback_profile_ids: list[int] = []
     llm_fallback_profiles: list[ProfileRef] = []
+    neo4j_profile: ProfileRef | None = None
 
 
 # --- Document ------------------------------------------------------------
@@ -246,14 +249,15 @@ class KbStatsOut(BaseModel):
 # --- provider profiles --------------------------------------------------
 class ProfileCreate(BaseModel):
     name: str
-    kind: Literal["llm", "embedding"]
+    kind: Literal["llm", "embedding", "neo4j"]
     provider: str
-    model: str
+    model: str = ""
     api_base: str | None = None
     api_version: str | None = None
     api_keys: list[str] = []
     structured_output: bool = True
     ssl_verify: bool = True
+    username: str | None = None  # neo4j kind only
 
 
 class ProfileUpdate(BaseModel):
@@ -265,6 +269,7 @@ class ProfileUpdate(BaseModel):
     api_keys: list[str] | None = None  # None=unchanged, []=clear
     structured_output: bool | None = None
     ssl_verify: bool | None = None  # None=unchanged
+    username: str | None = None  # None=unchanged
 
 
 class ProfileOut(BaseModel):
@@ -278,6 +283,7 @@ class ProfileOut(BaseModel):
     structured_output: bool
     ssl_verify: bool
     api_keys_count: int
+    username: str | None = None
 
 
 # --- Conversations -------------------------------------------------------

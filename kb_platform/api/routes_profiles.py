@@ -18,6 +18,7 @@ def _out(repo, p) -> ProfileOut:
         api_base=p.api_base, api_version=p.api_version,
         structured_output=p.structured_output, ssl_verify=p.ssl_verify,
         api_keys_count=repo.profile_key_count(p.id),
+        username=p.username,
     )
 
 
