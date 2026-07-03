@@ -11,7 +11,6 @@ GraphRagQueryEngine, mirroring what routes_query.py does today.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
@@ -94,10 +93,11 @@ def _build_neo4j_engine(method, kb, repo, data_root):
         native_embed = build_native_embedding(emb_model, emb_profile)
 
         async def embed(text: str) -> list[float]:
-            # NativeEmbedding.embedding() is sync (uses asyncio.run); run it in a
-            # worker thread so it does not deadlock the event loop.
-            resp = await asyncio.to_thread(native_embed.embedding, input=[text])
-            return resp.embeddings[0]
+            # Await the async entry directly (NOT asyncio.to_thread(native_embed.embedding)):
+            # .embedding() is sync and calls asyncio.run, which spins up a throwaway
+            # loop that binds the shared httpx.AsyncClient to it, breaking the
+            # subsequent streaming synthesis ("bound to a different event loop").
+            return await native_embed.embed_async(text)
 
     return Neo4jQueryEngine(
         uri=uri, username=username, password=password,

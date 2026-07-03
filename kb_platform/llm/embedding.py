@@ -47,6 +47,20 @@ class NativeEmbedding:
         import asyncio
         return asyncio.run(self._embedding_async(input))
 
+    async def embed_async(self, text: str) -> list[float]:
+        """Embed a single text in the CALLER's event loop.
+
+        Use this (not the sync ``embedding()``) from any async caller that shares
+        the process-wide httpx client pool with other async code. ``embedding()``
+        uses ``asyncio.run``, which spins up a throwaway loop; if the shared
+        ``httpx.AsyncClient`` is first exercised there it binds to that loop, and
+        any later async use (e.g. the Neo4j query engine's streaming synthesis)
+        raises ``... bound to a different event loop``. Awaiting
+        ``_embedding_async`` directly keeps everything on the caller's loop.
+        """
+        resp = await self._embedding_async([text])
+        return resp.embeddings[0]
+
     async def _embedding_async(self, inputs: list[str]) -> LLMEmbeddingResponse:
         from dataclasses import replace
 
