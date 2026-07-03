@@ -145,10 +145,6 @@ test(
       () => expect(screen.getByText(/结果已达行数上限/)).toBeInTheDocument(),
       { timeout: 15000, interval: 50 },
     );
-    await waitFor(
-      () => expect(screen.getByText(/结果已达行数上限/)).toBeInTheDocument(),
-      { timeout: 15000, interval: 50 },
-    );
   },
   20000,
 );
