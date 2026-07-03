@@ -342,6 +342,8 @@ class QueryPresetIn(BaseModel):
     top_k: int | None = None
     temperature: float | None = None
     system_prompt: str | None = None
+    hops: int | None = None
+    cypher_timeout_ms: int | None = None
 
 
 class QueryPresetUpdate(BaseModel):
@@ -353,6 +355,8 @@ class QueryPresetUpdate(BaseModel):
     top_k: int | None = None
     temperature: float | None = None
     system_prompt: str | None = None
+    hops: int | None = None
+    cypher_timeout_ms: int | None = None
 
 
 class QueryPresetOut(BaseModel):
@@ -365,4 +369,6 @@ class QueryPresetOut(BaseModel):
     top_k: int | None = None
     temperature: float | None = None
     system_prompt: str | None = None
+    hops: int | None = None
+    cypher_timeout_ms: int | None = None
     is_builtin: bool

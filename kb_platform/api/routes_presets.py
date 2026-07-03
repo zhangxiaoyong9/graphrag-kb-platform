@@ -12,7 +12,8 @@ def _out(p) -> QueryPresetOut:
     return QueryPresetOut(
         id=p.id, name=p.name, description=p.description, method=p.method,
         community_level=p.community_level, response_type=p.response_type, top_k=p.top_k,
-        temperature=p.temperature, system_prompt=p.system_prompt, is_builtin=p.is_builtin,
+        temperature=p.temperature, system_prompt=p.system_prompt,
+        hops=p.hops, cypher_timeout_ms=p.cypher_timeout_ms, is_builtin=p.is_builtin,
     )
 
 

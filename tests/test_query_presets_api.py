@@ -39,3 +39,28 @@ def test_duplicate_name_conflicts(tmp_path):
     c = _client(tmp_path)
     r = c.post("/query-presets", json={"name": "默认", "method": "local"})
     assert r.status_code in (409, 422)
+
+
+def test_preset_round_trips_hops_and_cypher_timeout(tmp_path):
+    c = _client(tmp_path)
+    body = {
+        "name": "hyb3",
+        "description": "",
+        "method": "hybrid",
+        "hops": 3,
+        "cypher_timeout_ms": None,
+    }
+    r = c.post("/query-presets", json=body)
+    assert r.status_code == 201, r.text
+    created = r.json()
+    assert created["hops"] == 3 and created["cypher_timeout_ms"] is None
+
+    # GET list reflects it
+    match = [p for p in c.get("/query-presets").json() if p["name"] == "hyb3"][0]
+    assert match["hops"] == 3 and match["cypher_timeout_ms"] is None
+
+    # PATCH updates cypher_timeout_ms; hops carries through unchanged
+    pid = created["id"]
+    upd = c.patch(f"/query-presets/{pid}", json={"cypher_timeout_ms": 8000})
+    assert upd.status_code == 200, upd.text
+    assert upd.json()["cypher_timeout_ms"] == 8000 and upd.json()["hops"] == 3
