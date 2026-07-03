@@ -1,6 +1,6 @@
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
-import { createKb, deleteConversation, deleteDocument, getDocumentDetail, getDocumentEvidence, listKbs, retryUnit, createConversation, sendMessage, query } from "./client";
+import { createKb, deleteConversation, deleteDocument, getDocumentDetail, getDocumentEvidence, listKbs, retryUnit, createConversation, sendMessage, query, getLlmHealth } from "./client";
 
 const server = setupServer(
   http.get("/kbs", () => HttpResponse.json([{ id: 1, name: "kb1", method: "standard" }])),
@@ -37,6 +37,15 @@ const server = setupServer(
       `event: done\ndata: {"message":{"id":10,"role":"assistant","content":"A:${b.content}","method":"${b.method}","rewrite_fell_back":false,"sources":[]}}\n\n`;
     return new HttpResponse(body, { headers: { "content-type": "text/event-stream" } });
   }),
+  http.get("/llm/health", () =>
+    HttpResponse.json({
+      profiles: [
+        { provider: "openai", model: "gpt-4o-mini", api_base: null, state: "closed" },
+        { provider: "deepseek", model: "deepseek-chat", api_base: "https://api.deepseek.com", state: "open" },
+      ],
+      metrics: { ttft_ms_p50: 123.4, failover_detect_ms_p50: null, failover_recover_ms_p50: null, failovers: 2, successes: 40 },
+    }),
+  ),
 );
 beforeAll(() => server.listen());
 afterEach(() => server.resetHandlers());
@@ -120,4 +129,13 @@ test("query omits params when undefined", async () => {
   );
   await query(1, "local", "q");
   expect((captured as { params?: unknown }).params).toBeUndefined();
+});
+
+test("getLlmHealth returns profiles + metrics", async () => {
+  const out = await getLlmHealth();
+  expect(out.profiles).toHaveLength(2);
+  expect(out.profiles[0]).toEqual({ provider: "openai", model: "gpt-4o-mini", api_base: null, state: "closed" });
+  expect(out.metrics.failovers).toBe(2);
+  expect(out.metrics.ttft_ms_p50).toBe(123.4);
+  expect(out.metrics.failover_detect_ms_p50).toBeNull();
 });
