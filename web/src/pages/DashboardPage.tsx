@@ -36,7 +36,7 @@ export default function DashboardPage() {
             <p className="text-[13px] text-white/80">知识库平台 · GraphRAG</p>
             <h1 className="mt-1 text-2xl font-semibold">从非结构化文本到可检索的知识图谱</h1>
             <p className="mt-2 max-w-xl text-[13px] text-white/85">
-              创建知识库、追踪每一步与每个分块、监控成本，并用 local / global / drift / basic 四种方式检索问答。
+              创建知识库、追踪每一步与每个分块、监控成本，并用 local / global / drift / basic / cypher / hybrid 六种方式检索问答。
             </p>
           </div>
           <div className="flex items-center gap-2">
