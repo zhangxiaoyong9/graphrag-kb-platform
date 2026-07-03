@@ -45,6 +45,15 @@
 | `query_preset` | `hops` | `INTEGER NULL` | hybrid 专属 |
 | `query_preset` | `cypher_timeout_ms` | `INTEGER NULL` | cypher 专属 |
 
+### 共享前端集成点：`QueryResultView`（计划阶段发现，据此简化）
+
+`web/src/components/QueryResultView.tsx` 是三个结果页面（`QueryPage` / `QueryTestPage` / `ChatPage`）共用的"结果元数据"组件（渲染 method/elapsed/tokens/sources/error，**不**渲染答案正文）。因此：
+
+- `<TruncatedNotice />` 与 cypher 折叠区**都落进 `QueryResultView` 内**（条件渲染），三页自动继承，无需各页单独插入。
+- `QueryResult` 类型加一个可选 `cypher?: string | null`（`truncated` 已存在）。
+- `ChatPage` 把持久化 Message 的 `cypher` / `truncated` 喂进传给 `QueryResultView` 的合成 `result` 对象即可。
+- 单发查询（`QueryPage` / `QueryTestPage`）的 `result` 已自带 `truncated`（后端 done 负载携带），无需改动即显示截断；cypher 不在单发查询的显示范围（M1 范围外）。
+
 ### M1 — 多轮对话 Cypher + 截断透明度
 
 **事件契约（对齐单发查询的双 meta 模式）**
@@ -77,7 +86,7 @@
 - `ChatPage.tsx`：
   - `meta` 分支：除现有 `rewritten_query` 外，读 `ev.data.cypher` 写到 pending 消息。
   - `done` 分支：`ev.data.message` 已自带两字段，现有 `{...persisted}` 合并自动带上。
-  - 渲染：**保留**现有 inline 的 `rewritten_query` / `rewrite_fell_back`（行 334 / 341-343，**不动**）；在助手消息下新增一个可折叠 `<details>检索详情</details>`，仅当 `cypher` 非空 **或** `truncated === true` 时出现，内含 cypher 的 `<pre>` 等宽块 + 截断小标记。
+  - 渲染：**保留**现有 inline 的 `rewritten_query` / `rewrite_fell_back`（行 334 / 341-343，**不动**）。cypher 与截断的呈现交给 `QueryResultView`（见上"共享前端集成点"）：`ChatPage` 传给 `QueryResultView` 的合成 `result` 补上 `cypher: m.cypher` 与 `truncated: m.truncated` 即可，**ChatPage 自身不新增 `<details>`**。
 
 **M1 不改单发查询路径**（`routes_query.py` / `QueryPage` 已正确）。
 
@@ -108,16 +117,17 @@
 ### M3 — `truncated` 的 UI 渲染
 
 - 新建共享组件 `web/src/components/TruncatedNotice.tsx`：琥珀色（`warning-soft`，与"需社区报告"标记同色系）小条，文案固定 **"结果已达行数上限，已截断。可缩小范围或调整上限。"**（不带数字，与 `ROW_CAP` 解耦）。
-- `QueryPage.tsx`：`result.truncated` 为真时，在答案正文上方插入 `<TruncatedNotice />`。
-- `QueryTestPage.tsx`：解析 `done` 的 result 后同样判断、同样插入。
-- `ChatPage.tsx`：走 M1 的"检索详情"折叠区里的小标记（**不**升格为横幅 —— 聊天是连续阅读场景，横幅打断），文案复用同一句。
+- **在 `QueryResultView` 内顶部（method 徽标行之前）渲染 `<TruncatedNotice />`，条件 `result.truncated`**。三页（`QueryPage` / `QueryTestPage` / `ChatPage`）共用 `QueryResultView`，一处接入三处生效：
+  - `QueryPage` / `QueryTestPage`：`result` 已自带 `truncated`（后端 done 负载携带），无需改动。
+  - `ChatPage`：合成 `result` 补 `truncated`（见 M1）。
+- cypher 折叠区也落进 `QueryResultView`（条件 `result.cypher`，仅 ChatPage 喂入），与 `<TruncatedNotice />` 同组件内分区呈现。
 
 ## 契约小结
 
 - **SSE（多轮对话）**：`meta{method, [rewritten_query], [rewrite_fell_back]}` →（可选）`meta{method, cypher}` → `delta{text}`* → `done{message: {…, cypher, truncated}}`。
 - **Message 行**：`cypher NULL` + `truncated NOT NULL DEFAULT 0`。
 - **QueryPreset 行**：`hops NULL` + `cypher_timeout_ms NULL`。
-- **前端类型**：`ChatMessage` / `QueryPreset` 各加对应可选字段；`QueryResult.truncated` 已存在，直接消费。
+- **前端类型**：`ChatMessage` / `QueryPreset` 各加对应可选字段；`QueryResult` 加 `cypher?: string | null`（`truncated` 已存在，直接消费）。
 
 ## 测试策略
 
