@@ -9,6 +9,20 @@ its completion / embed clients + driver pool by injection.
 from __future__ import annotations
 
 import json
+import logging
+import re
+import time
+
+from kb_platform.neo4j.safety import is_readonly_cypher, truncate_rows
+from kb_platform.query.engine import (
+    QueryResult,
+    SourceRef,
+    StreamDelta,
+    StreamDone,
+    StreamMeta,
+)
+
+logger = logging.getLogger(__name__)
 
 # --- Canonical graph schema (ours, stable; emitted by the cypher export) ------
 _SCHEMA = """\
@@ -121,3 +135,213 @@ def _render(value) -> object:
     if isinstance(value, dict):
         return {k: _render(v) for k, v in value.items()}
     return value
+
+
+# --- Neo4jQueryEngine (Task 7) ----------------------------------------------
+ROW_CAP = 1000
+_DEFAULT_HOPS = 2
+_DEFAULT_TIMEOUT_MS = 10_000
+_FENCE_RE = re.compile(r"^```(?:cypher)?\s*\n?|\n?```\s*$", re.IGNORECASE)
+
+
+def _strip_fences(text: str) -> str:
+    """Strip a single wrapping ``` / ```cypher fence the LLM sometimes adds."""
+    return _FENCE_RE.sub("", text.strip()).strip()
+
+
+def _format_hybrid_context(record: dict) -> str:
+    """Render the three bags (entities/relationships/chunks) as synthesis context."""
+    if not record:
+        return ""
+    parts: list[str] = []
+    ents = record.get("entities") or []
+    if ents:
+        parts.append("Entities:\n" + "\n".join(f"- {_render(e)}" for e in ents))
+    rels = record.get("relationships") or []
+    if rels:
+        parts.append("Relationships:\n" + "\n".join(f"- {_render(r)}" for r in rels))
+    chunks = record.get("chunks") or []
+    if chunks:
+        parts.append("Text units:\n" + "\n".join(f"- {_render(c)}" for c in chunks))
+    return "\n\n".join(parts)
+
+
+def _hybrid_sources(record: dict, limit: int = 8) -> list[SourceRef]:
+    """Top entity titles + text-unit ids as citation sources."""
+    out: list[SourceRef] = []
+    for e in (record.get("entities") or [])[:limit]:
+        title = e.get("title") if isinstance(e, dict) else None
+        if title:
+            out.append(SourceRef(kind="entity", name=str(title), text=str(e.get("description", ""))[:200]))
+    for c in (record.get("chunks") or [])[:limit]:
+        cid = c.get("id") if isinstance(c, dict) else None
+        if cid:
+            out.append(SourceRef(kind="text_unit", name=str(cid), text=str(c.get("text", ""))[:200]))
+    return out
+
+
+def _rows_sources(rows: list[dict], limit: int = 8) -> list[SourceRef]:
+    """Entity titles from flat Text2Cypher rows as citation sources."""
+    out: list[SourceRef] = []
+    for row in rows:
+        title = row.get("title") if isinstance(row, dict) else None
+        if title:
+            out.append(SourceRef(kind="entity", name=str(title), text=str(row.get("description", ""))[:200]))
+        if len(out) >= limit:
+            break
+    return out
+
+
+class Neo4jQueryEngine:
+    """QueryEngine backed by a live Neo4j graph store.
+
+    Receives its driver pool, LLM completion, and (for hybrid) an embed callable
+    by injection — this module imports neither graphrag nor graphrag_llm. The
+    factory (build_query_engine) resolves the KB's profiles and constructs the
+    clients; this class only runs retrieval + synthesis.
+
+    Supports method ∈ {cypher, hybrid}. Any other method yields a terminal
+    StreamDone(error=...); the factory routes only cypher/hybrid here.
+    """
+
+    def __init__(self, *, uri, username, password, driver_pool, completion, embed, model_id,
+                 database: str = "neo4j") -> None:
+        self._uri = uri
+        self._username = username
+        self._password = password
+        self._pool = driver_pool
+        self._completion = completion
+        self._embed = embed
+        self._model_id = model_id
+        self._database = database
+
+    async def search(self, method, query, kb_data_root, params=None) -> QueryResult:
+        answer = ""
+        async for ev in self.stream_search(method, query, kb_data_root, params):
+            if isinstance(ev, StreamDelta):
+                answer += ev.text
+            elif isinstance(ev, StreamDone):
+                return QueryResult(
+                    answer=ev.answer or answer,
+                    method=method,
+                    error=ev.error,
+                    elapsed_ms=ev.elapsed_ms,
+                    prompt_tokens=ev.prompt_tokens,
+                    output_tokens=ev.output_tokens,
+                    sources=ev.sources,
+                )
+        return QueryResult(answer=answer, method=method)
+
+    async def stream_search(self, method, query, kb_data_root, params=None):
+        if method not in ("cypher", "hybrid"):
+            yield StreamDone(method=method, answer="", error=f"neo4j engine does not support method '{method}'")
+            return
+        try:
+            if method == "cypher":
+                async for ev in self._cypher(query, params):
+                    yield ev
+            else:
+                async for ev in self._hybrid(query, params):
+                    yield ev
+        except Exception as e:  # noqa: BLE001 - SSE error, never raise
+            logger.exception("neo4j stream_search failed for method=%s", method)
+            yield StreamDone(method=method, answer="", error=str(e))
+
+    # --- Text2Cypher ---------------------------------------------------------
+    async def _cypher(self, query, params):
+        messages = build_text2cypher_messages(query)
+        resp = await self._completion.completion_async(messages=messages, stream=False)
+        cypher = _strip_fences(_message_content(resp))
+        yield StreamMeta(cypher=cypher)
+
+        if not is_readonly_cypher(cypher):
+            yield StreamDone(method="cypher", answer="", error="generated Cypher is not read-only; refused")
+            return
+
+        timeout_s = _timeout_seconds(params)
+        rows, truncated = await self._execute(cypher, {}, timeout_s, ROW_CAP)
+        context = format_rows_as_context(rows)
+        sources = _rows_sources(rows)
+        async for ev in self._synthesize("cypher", query, context, sources, truncated, _usage(resp)):
+            yield ev
+
+    # --- Vector+Cypher hybrid ------------------------------------------------
+    async def _hybrid(self, query, params):
+        if self._embed is None:
+            yield StreamDone(method="hybrid", answer="", error="hybrid needs an embedding profile; configure one on the KB")
+            return
+        vector = await self._embed(query)
+        top_k = (params.top_k if params and params.top_k is not None else None) or 10
+        hops = (params.hops if params and params.hops is not None else None) or _DEFAULT_HOPS
+        cypher = build_hybrid_cypher(top_k, hops)
+        yield StreamMeta(cypher=cypher)
+
+        timeout_s = _timeout_seconds(params)
+        rows, truncated = await self._execute(cypher, {"vector": vector}, timeout_s, ROW_CAP)
+        record = rows[0] if rows else {}
+        context = _format_hybrid_context(record)
+        sources = _hybrid_sources(record)
+        async for ev in self._synthesize("hybrid", query, context, sources, truncated, None):
+            yield ev
+
+    # --- shared --------------------------------------------------------------
+    async def _execute(self, cypher, parameters, timeout_s, cap):
+        driver = self._pool.get_driver(self._uri, self._username, self._password)
+        session = driver.session(database=self._database)
+        try:
+            result = await session.run(cypher, parameters, timeout=timeout_s)
+            rows = [r.data() async for r in result]
+        finally:
+            await session.close()
+        return truncate_rows(rows, cap)
+
+    async def _synthesize(self, method, query, context, sources, truncated, gen_usage):
+        system = (
+            "Answer the user's question using only the graph query results below. "
+            "If the results are empty, say so plainly. Cite entities by title."
+        )
+        user = f"Graph query results:\n{context or '(none)'}\n\nQuestion: {query}"
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+        start = time.time()
+        accumulated = ""
+        prompt_tokens = output_tokens = 0
+        if gen_usage is not None:
+            prompt_tokens += int(getattr(gen_usage, "prompt_tokens", 0) or 0)
+            output_tokens += int(getattr(gen_usage, "completion_tokens", 0) or 0)
+        async for chunk in await self._completion.completion_async(messages=messages, stream=True):
+            delta = None
+            choices = getattr(chunk, "choices", None)
+            if choices:
+                delta = getattr(choices[0].delta, "content", None)
+            if delta:
+                accumulated += delta
+                yield StreamDelta(text=delta)
+            usage = getattr(chunk, "usage", None)
+            if usage is not None:
+                prompt_tokens += int(getattr(usage, "prompt_tokens", 0) or 0)
+                output_tokens += int(getattr(usage, "completion_tokens", 0) or 0)
+        yield StreamDone(
+            answer=accumulated,
+            method=method,
+            elapsed_ms=round((time.time() - start) * 1000, 1),
+            prompt_tokens=prompt_tokens or None,
+            output_tokens=output_tokens or None,
+            sources=sources or None,
+            truncated=truncated,
+        )
+
+
+def _timeout_seconds(params) -> float:
+    ms = (params.cypher_timeout_ms if params and params.cypher_timeout_ms is not None else _DEFAULT_TIMEOUT_MS)
+    return ms / 1000.0
+
+
+def _message_content(resp) -> str:
+    choices = getattr(resp, "choices", None) or []
+    if not choices:
+        return ""
+    return getattr(choices[0].message, "content", "") or ""
+
+
+def _usage(resp):
+    return getattr(resp, "usage", None)
