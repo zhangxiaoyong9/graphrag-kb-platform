@@ -1,7 +1,7 @@
 # Neo4j Graph Query — Design
 
 **Date:** 2026-07-03
-**Status:** Approved (pending implementation plan)
+**Status:** Approved (implementation plan: `docs/superpowers/plans/2026-07-03-neo4j-graph-query.md`)
 **Goal owner:** user wants the KB graph queryable in Neo4j as a complete, portable
 GraphRAG backend — answering structural / multi-hop questions the existing
 local/global/drift/basic modes handle poorly.
