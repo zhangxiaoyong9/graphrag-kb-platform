@@ -105,3 +105,48 @@ def test_neo4j_extra_missing_raises_clear_error(tmp_path, monkeypatch):
     monkeypatch.setattr(F, "_ensure_neo4j_available", _missing)
     with pytest.raises(RuntimeError, match="uv sync --extra neo4j"):
         F.build_query_engine("cypher", kb, repo, app_state=_app_state())
+
+
+async def test_factory_embed_wrapper_uses_embed_async(tmp_path, monkeypatch):
+    """The hybrid embed wrapper must call ``native_embed.embed_async`` — NOT the
+    sync ``.embedding()`` via ``asyncio.to_thread`` (which binds the shared
+    httpx.AsyncClient to a throwaway loop and breaks the subsequent streaming
+    synthesis with "bound to a different event loop").
+    """
+    import types
+    from unittest.mock import AsyncMock
+
+    from kb_platform.llm import native_builders
+    from kb_platform.query import factory as F
+
+    fake_embed_async = AsyncMock(return_value=[0.1, 0.2, 0.3])
+    fake_native_embed = types.SimpleNamespace(embed_async=fake_embed_async)
+
+    monkeypatch.setattr(F, "_ensure_neo4j_available", lambda: None)
+    monkeypatch.setattr(F, "_assemble_kb_settings", lambda kb, repo: {
+        "llm": {"model": "gpt-4o-mini", "kb_profiles": [{
+            "provider": "openai", "model": "gpt-4o-mini", "keys": ["k"],
+        }]},
+        "embedding": {"model": "text-embedding-3-small", "kb_profiles": [{
+            "provider": "openai", "model": "text-embedding-3-small", "keys": ["k"],
+        }]},
+    })
+    # build_native_completion is also imported inside _build_neo4j_engine; stub it
+    # so the test stays focused on the embed wrapper (no real gateway/breakers).
+    monkeypatch.setattr(native_builders, "build_native_completion", lambda *a, **kw: object())
+    monkeypatch.setattr(native_builders, "build_native_embedding", lambda *a, **kw: fake_native_embed)
+
+    repo, kb = _repo_with_kb(tmp_path)
+    neo = repo.create_profile(
+        name="neo", kind="neo4j", provider="neo4j", model="",
+        api_base="bolt://localhost:7687", username="neo4j", api_keys=["pw"],
+    )
+    kb.neo4j_profile_id = neo.id
+
+    eng = F.build_query_engine("hybrid", kb, repo, app_state=_app_state())
+    assert eng._embed is not None, "embedding profile set -> embed callable should be wired"
+
+    result = await eng._embed("a question")
+    assert result == [0.1, 0.2, 0.3]
+    fake_embed_async.assert_awaited_once_with("a question")
+
