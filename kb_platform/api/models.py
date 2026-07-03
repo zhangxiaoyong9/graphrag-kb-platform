@@ -320,6 +320,8 @@ class MessageOut(BaseModel):
     output_tokens: int | None = None
     elapsed_ms: float | None = None
     error: str | None = None
+    cypher: str | None = None
+    truncated: bool = False
 
 
 class MessageSend(BaseModel):

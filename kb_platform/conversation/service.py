@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from kb_platform.conversation.rewriter import HistoryTurn, Rewriter
-from kb_platform.query.engine import SourceRef, StreamDone, StreamDelta
+from kb_platform.query.engine import SourceRef, StreamDone, StreamDelta, StreamMeta
 
 logger = logging.getLogger(__name__)
 
@@ -128,12 +128,16 @@ class ConversationService:
 
         accumulated = ""
         done: StreamDone | None = None
+        cypher: str | None = None
         async for ev in self._engine.stream_search(
             chosen_method, standalone, self._data_root, params=params
         ):
             if isinstance(ev, StreamDelta):
                 accumulated += ev.text
                 yield StreamEvent("delta", {"text": ev.text})
+            elif isinstance(ev, StreamMeta):
+                cypher = ev.cypher
+                yield StreamEvent("meta", {"method": chosen_method, "cypher": ev.cypher})
             else:  # StreamDone
                 done = ev
         if done is None:  # engine misbehaved; synthesize an error terminal
@@ -153,6 +157,8 @@ class ConversationService:
             output_tokens=_merge_tokens(rw_ot, done.output_tokens),
             elapsed_ms=done.elapsed_ms,
             error=done.error,
+            cypher=cypher,
+            truncated=bool(done.truncated),
         )
         self._repo.touch_conversation(conversation_id)
         if not conv.title:

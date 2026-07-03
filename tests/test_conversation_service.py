@@ -199,3 +199,49 @@ def test_query_preset_orm_carries_hops_and_timeout(tmp_path):
     assert p.hops == 3 and p.cypher_timeout_ms is None
     again = repo.get_query_preset(p.id)
     assert again is not None and again.hops == 3 and again.cypher_timeout_ms is None
+
+
+async def test_send_streaming_emits_meta_cypher_and_persists(tmp_path):
+    """When the engine yields StreamMeta, the service emits meta{cypher} and
+    persists cypher + truncated on the assistant Message (carried in done.message)."""
+    from kb_platform.query.engine import StreamDelta, StreamDone, StreamMeta
+
+    repo = _setup(tmp_path)
+    cid = repo.create_conversation(1).id
+
+    class _CypherEngine:
+        async def stream_search(self, method, query, kb_data_root, params=None):
+            yield StreamMeta(cypher="MATCH (n) RETURN count(n)")
+            yield StreamDelta(text="one ")
+            yield StreamDelta(text="two")
+            yield StreamDone(answer="one two", method=method, truncated=True)
+
+    svc = ConversationService(repo, _CypherEngine(), None, data_root=".")
+    events = await _drain(svc.send_streaming(cid, "how many?", "cypher"))
+
+    metas = [e for e in events if e.type == "meta"]
+    assert len(metas) == 2
+    assert metas[0].data["method"] == "cypher"  # leading meta unchanged
+    assert metas[1].data == {"method": "cypher", "cypher": "MATCH (n) RETURN count(n)"}
+
+    done = next(e for e in events if e.type == "done")
+    assert done.message.cypher == "MATCH (n) RETURN count(n)"
+    assert done.message.truncated is True
+
+    rows = repo.get_messages(cid)
+    assistant = [r for r in rows if r.role == "assistant"][0]
+    assert assistant.cypher == "MATCH (n) RETURN count(n)"
+    assert assistant.truncated is True
+
+
+async def test_send_streaming_without_meta_omits_cypher_and_not_truncated(tmp_path):
+    """Engines that never yield StreamMeta (graphrag/Fake) emit only the leading
+    meta, and the persisted row has cypher=None / truncated=False."""
+    repo = _setup(tmp_path)
+    cid = repo.create_conversation(1).id
+    svc = ConversationService(repo, FakeQueryEngine(), None, data_root=".")
+    events = await _drain(svc.send_streaming(cid, "hi", "local"))
+    metas = [e for e in events if e.type == "meta"]
+    assert len(metas) == 1 and "cypher" not in metas[0].data
+    done = next(e for e in events if e.type == "done")
+    assert done.message.cypher is None and done.message.truncated is False
