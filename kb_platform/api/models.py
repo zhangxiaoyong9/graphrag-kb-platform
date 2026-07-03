@@ -182,6 +182,8 @@ class QueryParamsIn(BaseModel):
     top_k: int | None = None
     temperature: float | None = None
     system_prompt: str | None = None
+    hops: int | None = None
+    cypher_timeout_ms: int | None = None
 
 
 class QueryRequest(BaseModel):
@@ -205,6 +207,7 @@ class QueryResultOut(BaseModel):
     output_tokens: int | None = None
     llm_calls: int | None = None
     sources: list[SourceOut] | None = None
+    truncated: bool = False
 
 
 # --- Cost -----------------------------------------------------------------

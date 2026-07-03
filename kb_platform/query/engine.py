@@ -50,6 +50,7 @@ class StreamDone:
     output_tokens: int | None = None
     sources: list[SourceRef] | None = None
     error: str | None = None
+    truncated: bool = False  # L2 row-cap indicator (cypher/hybrid)
 
 
 @dataclass
@@ -65,6 +66,17 @@ class QueryParams:
     top_k: int | None = None
     temperature: float | None = None
     system_prompt: str | None = None
+    hops: int | None = None  # hybrid :RELATED traversal depth (default 2 when None)
+    cypher_timeout_ms: int | None = None  # Text2Cypher exec timeout (default 10000)
+
+
+@dataclass
+class StreamMeta:
+    """Mid-stream metadata emitted by an engine before the answer deltas.
+    For cypher/hybrid, carries the generated/templated Cypher (L3 transparency).
+    Engines that have nothing to add simply do not yield one."""
+
+    cypher: str | None = None
 
 
 class QueryEngine(Protocol):
