@@ -53,6 +53,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: "/analytics", label: "分析报表", icon: IconChart },
       { to: "/jobs", label: "任务管理", icon: IconTask },
       { to: "/cost", label: "成本统计", icon: IconCost },
+      { to: "/llm-health", label: "LLM 健康", icon: IconPulse },
     ],
   },
   {

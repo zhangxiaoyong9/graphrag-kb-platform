@@ -48,3 +48,17 @@ test("renders document detail route", async () => {
   expect(await screen.findByText("alpha.md")).toBeInTheDocument();
   expect(screen.getByText(/Alpha body/)).toBeInTheDocument();
 });
+
+test("renders the LLM health nav item", async () => {
+  server.use(
+    http.get("/llm/health", () =>
+      HttpResponse.json({ profiles: [], metrics: { ttft_ms_p50: null, failover_detect_ms_p50: null, failover_recover_ms_p50: null, failovers: 0, successes: 0 } }),
+    ),
+  );
+  render(
+    <MemoryRouter>
+      <App />
+    </MemoryRouter>,
+  );
+  expect(await screen.findByText("LLM 健康")).toBeInTheDocument();
+});

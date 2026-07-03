@@ -134,6 +134,7 @@ const TITLES: Record<string, string> = {
   "/analytics": "分析报表",
   "/jobs": "任务管理",
   "/cost": "成本统计",
+  "/llm-health": "LLM 健康",
   "/system": "系统状态",
   "/settings": "系统设置",
   "/api-keys": "API Keys",
