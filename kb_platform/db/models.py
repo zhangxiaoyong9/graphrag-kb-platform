@@ -133,6 +133,8 @@ class QueryPreset(Base):
     top_k: Mapped[int | None] = mapped_column(Integer, nullable=True)
     temperature: Mapped[float | None] = mapped_column(Float, nullable=True)
     system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    hops: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cypher_timeout_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_builtin: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

@@ -730,6 +730,8 @@ class Repository:
         output_tokens: int | None = None,
         elapsed_ms: float | None = None,
         error: str | None = None,
+        cypher: str | None = None,
+        truncated: bool = False,
     ) -> Message:
         with session_scope(self.engine) as s:
             cur = s.scalar(
@@ -749,6 +751,8 @@ class Repository:
                 output_tokens=output_tokens,
                 elapsed_ms=elapsed_ms,
                 error=error,
+                cypher=cypher,
+                truncated=truncated,
             )
             s.add(m)
             s.flush()

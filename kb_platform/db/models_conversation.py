@@ -40,4 +40,6 @@ class Message(Base):
     output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     elapsed_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cypher: Mapped[str | None] = mapped_column(Text, nullable=True)
+    truncated: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
