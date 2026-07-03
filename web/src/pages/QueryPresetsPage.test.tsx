@@ -56,3 +56,24 @@ test("create failure surfaces an error message", async () => {
   await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
   expect(screen.getByRole("alert").textContent).toMatch(/保存失败/);
 });
+
+test("saving a hybrid preset sends hops", async () => {
+  const captured: any[] = [];
+  server.use(
+    http.get("/query-presets", () => HttpResponse.json([BUILTIN])),
+    http.post("/query-presets", async ({ request }) => {
+      captured.push(await request.json());
+      return HttpResponse.json({ id: 9, is_builtin: false, ...(captured[0]) });
+    }),
+  );
+  render(<QueryPresetsPage />);
+  await screen.findByPlaceholderText("名称");
+  fireEvent.change(screen.getByPlaceholderText("名称"), { target: { value: "hyb" } });
+  // select hybrid method so the hops input renders
+  fireEvent.change(screen.getByDisplayValue("local"), { target: { value: "hybrid" } });
+  fireEvent.change(screen.getByPlaceholderText("hops(可空,hybrid)"), { target: { value: "3" } });
+  fireEvent.click(screen.getByRole("button", { name: /新建/ }));
+  await waitFor(() => expect(captured.length).toBe(1));
+  expect(captured[0].method).toBe("hybrid");
+  expect(captured[0].hops).toBe(3);
+});

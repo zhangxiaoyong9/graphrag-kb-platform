@@ -164,5 +164,6 @@ export interface QueryPreset {
   temperature?: number | null;
   system_prompt?: string | null;
   hops?: number | null;
+  cypher_timeout_ms?: number | null;
   is_builtin: boolean;
 }

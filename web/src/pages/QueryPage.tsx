@@ -25,6 +25,7 @@ export default function QueryPage() {
   const [rt, setRt] = useState("");
   const [topK, setTopK] = useState("");
   const [hops, setHops] = useState("");
+  const [cypherTimeoutMs, setCypherTimeoutMs] = useState("");
   const [temp, setTemp] = useState("");
   const [sysPrompt, setSysPrompt] = useState("");
 
@@ -39,10 +40,11 @@ export default function QueryPage() {
     if (rt.trim()) p.response_type = rt;
     if (topK.trim()) p.top_k = Number(topK);
     if (hops.trim()) p.hops = Number(hops);
+    if (cypherTimeoutMs.trim()) p.cypher_timeout_ms = Number(cypherTimeoutMs);
     if (temp.trim()) p.temperature = Number(temp);
     if (sysPrompt.trim()) p.system_prompt = sysPrompt;
     return Object.keys(p).length ? p : undefined;
-  }, [cl, rt, topK, hops, temp, sysPrompt]);
+  }, [cl, rt, topK, hops, cypherTimeoutMs, temp, sysPrompt]);
 
   const applyPreset = (p: QueryPreset | undefined) => {
     if (!p) return;
@@ -51,6 +53,7 @@ export default function QueryPage() {
     setRt(p.response_type ?? "");
     setTopK(p.top_k != null ? String(p.top_k) : "");
     setHops(p.hops != null ? String(p.hops) : "");
+    setCypherTimeoutMs(p.cypher_timeout_ms != null ? String(p.cypher_timeout_ms) : "");
     setTemp(p.temperature != null ? String(p.temperature) : "");
     setSysPrompt(p.system_prompt ?? "");
   };
@@ -65,6 +68,8 @@ export default function QueryPage() {
       top_k: topK ? Number(topK) : null,
       temperature: temp ? Number(temp) : null,
       system_prompt: sysPrompt || null,
+      hops: hops ? Number(hops) : null,
+      cypher_timeout_ms: cypherTimeoutMs ? Number(cypherTimeoutMs) : null,
     });
     try {
       setPresets(await listQueryPresets());
@@ -177,6 +182,13 @@ export default function QueryPage() {
                     <label className="text-[12px] text-muted">hops
                       <input className="input mt-1" type="number" min={1} max={5} value={hops}
                         aria-label="hops" onChange={(e) => setHops(e.target.value)} placeholder="留空=2" />
+                    </label>
+                  )}
+                  {method === "cypher" && (
+                    <label className="text-[12px] text-muted">cypher_timeout_ms
+                      <input className="input mt-1" type="number" min={1000} value={cypherTimeoutMs}
+                        aria-label="cypher_timeout_ms"
+                        onChange={(e) => setCypherTimeoutMs(e.target.value)} placeholder="留空=10000" />
                     </label>
                   )}
                   <label className="text-[12px] text-muted">temperature

@@ -19,6 +19,8 @@ const BLANK: Draft = {
   top_k: null,
   temperature: null,
   system_prompt: null,
+  hops: null,
+  cypher_timeout_ms: null,
 };
 
 const toDraft = (p: QueryPreset): Draft => ({
@@ -30,6 +32,8 @@ const toDraft = (p: QueryPreset): Draft => ({
   top_k: p.top_k,
   temperature: p.temperature,
   system_prompt: p.system_prompt,
+  hops: p.hops,
+  cypher_timeout_ms: p.cypher_timeout_ms,
 });
 
 /** 检索预设:全局跨 KB 的查询配置库;内置只读,自定义可新建/编辑/删除。 */
@@ -121,6 +125,7 @@ export default function QueryPresetsPage() {
                   <th>response_type</th>
                   <th>top_k</th>
                   <th>temperature</th>
+                  <th>方法旋钮</th>
                   <th></th>
                 </tr>
               </thead>
@@ -139,6 +144,13 @@ export default function QueryPresetsPage() {
                     <td>{p.response_type ?? "—"}</td>
                     <td>{p.top_k ?? "—"}</td>
                     <td>{p.temperature ?? "—"}</td>
+                    <td className="font-mono text-[12px] text-muted">
+                      {p.method === "hybrid" && p.hops != null
+                        ? `hops=${p.hops}`
+                        : p.method === "cypher" && p.cypher_timeout_ms != null
+                        ? `timeout=${p.cypher_timeout_ms}ms`
+                        : "—"}
+                    </td>
                     <td className="space-x-2 whitespace-nowrap">
                       {!p.is_builtin && (
                         <>
@@ -197,6 +209,8 @@ export default function QueryPresetsPage() {
               <option value="global">global</option>
               <option value="drift">drift</option>
               <option value="basic">basic</option>
+              <option value="hybrid">hybrid</option>
+              <option value="cypher">cypher</option>
             </select>
             <input
               className="input"
@@ -240,6 +254,34 @@ export default function QueryPresetsPage() {
                 setDraft({ ...draft, temperature: e.target.value ? Number(e.target.value) : null })
               }
             />
+            {draft.method === "hybrid" && (
+              <input
+                className="input"
+                type="number"
+                min={1}
+                max={5}
+                placeholder="hops(可空,hybrid)"
+                value={draft.hops ?? ""}
+                onChange={(e) =>
+                  setDraft({ ...draft, hops: e.target.value ? Number(e.target.value) : null })
+                }
+              />
+            )}
+            {draft.method === "cypher" && (
+              <input
+                className="input"
+                type="number"
+                min={1000}
+                placeholder="cypher_timeout_ms(可空,cypher)"
+                value={draft.cypher_timeout_ms ?? ""}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    cypher_timeout_ms: e.target.value ? Number(e.target.value) : null,
+                  })
+                }
+              />
+            )}
           </div>
           <textarea
             className="textarea h-20 font-mono text-[12px]"

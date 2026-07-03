@@ -128,6 +128,34 @@ test("renders cypher and hybrid method buttons", async () => {
   expect(await screen.findByText("hybrid")).toBeInTheDocument();
 });
 
+test("cypher method sends cypher_timeout_ms in request params", async () => {
+  const captured: any[] = [];
+  server.use(
+    http.post("/kbs/:id/query", async ({ request }) => {
+      captured.push(await request.json());
+      return new HttpResponse("event: done\n", {
+        headers: { "content-type": "text/event-stream" },
+      });
+    }),
+  );
+  render(
+    <KbContext.Provider value={kbCtx}>
+      <QueryPage />
+    </KbContext.Provider>,
+  );
+  const ta = await screen.findByRole("textbox");
+  // select cypher method
+  fireEvent.click(screen.getByText("cypher").closest("button")!);
+  // open tuning panel and fill cypher_timeout_ms
+  fireEvent.click(screen.getByRole("button", { name: /调参/ }));
+  fireEvent.change(screen.getByLabelText("cypher_timeout_ms"), { target: { value: "8000" } });
+  // submit
+  fireEvent.change(ta, { target: { value: "hi" } });
+  fireEvent.click(screen.getByRole("button", { name: /提问/ }));
+  await waitFor(() => expect(captured.length).toBe(1));
+  expect(captured[0].params?.cypher_timeout_ms).toBe(8000);
+});
+
 test(
   "shows the truncated notice when the done result is truncated",
   async () => {
