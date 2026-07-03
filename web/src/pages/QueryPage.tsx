@@ -24,6 +24,7 @@ export default function QueryPage() {
   const [cl, setCl] = useState("");
   const [rt, setRt] = useState("");
   const [topK, setTopK] = useState("");
+  const [hops, setHops] = useState("");
   const [temp, setTemp] = useState("");
   const [sysPrompt, setSysPrompt] = useState("");
 
@@ -37,10 +38,11 @@ export default function QueryPage() {
     if (cl.trim()) p.community_level = Number(cl);
     if (rt.trim()) p.response_type = rt;
     if (topK.trim()) p.top_k = Number(topK);
+    if (hops.trim()) p.hops = Number(hops);
     if (temp.trim()) p.temperature = Number(temp);
     if (sysPrompt.trim()) p.system_prompt = sysPrompt;
     return Object.keys(p).length ? p : undefined;
-  }, [cl, rt, topK, temp, sysPrompt]);
+  }, [cl, rt, topK, hops, temp, sysPrompt]);
 
   const applyPreset = (p: QueryPreset | undefined) => {
     if (!p) return;
@@ -48,6 +50,7 @@ export default function QueryPage() {
     setCl(p.community_level != null ? String(p.community_level) : "");
     setRt(p.response_type ?? "");
     setTopK(p.top_k != null ? String(p.top_k) : "");
+    setHops(p.hops != null ? String(p.hops) : "");
     setTemp(p.temperature != null ? String(p.temperature) : "");
     setSysPrompt(p.system_prompt ?? "");
   };
@@ -103,7 +106,7 @@ export default function QueryPage() {
   return (
     <div className="space-y-5">
       <Card>
-        <CardHeader title="检索与问答" subtitle="基于知识图谱的四种检索方式" icon={<IconSparkle width={18} height={18} />} />
+        <CardHeader title="检索与问答" subtitle="基于知识图谱的六种检索方式" icon={<IconSparkle width={18} height={18} />} />
         <div className="mt-5 space-y-4">
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             {QUERY_METHODS.map((m) => (
@@ -168,6 +171,12 @@ export default function QueryPage() {
                     <label className="text-[12px] text-muted">top_k
                       <input className="input mt-1" type="number" min={1} value={topK}
                         aria-label="top_k" onChange={(e) => setTopK(e.target.value)} placeholder="留空=默认" />
+                    </label>
+                  )}
+                  {method === "hybrid" && (
+                    <label className="text-[12px] text-muted">hops
+                      <input className="input mt-1" type="number" min={1} max={5} value={hops}
+                        aria-label="hops" onChange={(e) => setHops(e.target.value)} placeholder="留空=2" />
                     </label>
                   )}
                   <label className="text-[12px] text-muted">temperature
