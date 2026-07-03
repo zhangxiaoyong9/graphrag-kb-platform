@@ -1,6 +1,7 @@
 import type { QueryResult, SourceRef } from "../api/types";
 import { Badge } from "./ui";
 import { IconClock, IconWarn } from "./icons";
+import { TruncatedNotice } from "./TruncatedNotice";
 
 /** Render query metadata (method/elapsed/tokens), real sources, and errors.
  * Does NOT render the answer body — callers present that in their own layout. */
@@ -24,6 +25,8 @@ export function QueryResultView({
           <span>{result.error}</span>
         </div>
       )}
+
+      {result.truncated && <TruncatedNotice />}
 
       <div className="flex flex-wrap items-center gap-2 text-[12px] text-muted">
         <Badge tone="brand">{result.method}</Badge>
@@ -63,6 +66,15 @@ export function QueryResultView({
             </ul>
           )}
         </div>
+      )}
+
+      {result.cypher && (
+        <details className="rounded-lg border border-line bg-surface-2/60 px-3 py-2">
+          <summary className="cursor-pointer text-[12px] font-medium text-body">生成的 Cypher</summary>
+          <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-ink/80">
+            {result.cypher}
+          </pre>
+        </details>
       )}
     </div>
   );

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { QueryResultView } from "./QueryResultView";
 import type { QueryResult } from "../api/types";
@@ -31,4 +31,28 @@ test("renders sources, tokens and server elapsed", () => {
 test("hides sources section when none", () => {
   render(<MemoryRouter><QueryResultView result={{ ...r, sources: undefined }} /></MemoryRouter>);
   expect(screen.queryByText("引用与来源")).not.toBeInTheDocument();
+});
+
+test("renders the truncated notice when result.truncated is true", () => {
+  render(<MemoryRouter><QueryResultView result={{ ...r, truncated: true }} /></MemoryRouter>);
+  expect(screen.getByText(/结果已达行数上限/)).toBeInTheDocument();
+});
+
+test("omits the truncated notice when result.truncated is falsy", () => {
+  render(<MemoryRouter><QueryResultView result={r} /></MemoryRouter>);
+  expect(screen.queryByText(/结果已达行数上限/)).not.toBeInTheDocument();
+});
+
+test("renders Cypher in a collapsible details when result.cypher is set", () => {
+  render(<MemoryRouter><QueryResultView result={{ ...r, cypher: "MATCH (n) RETURN n" }} /></MemoryRouter>);
+  // <summary> is always visible — proves the section rendered because cypher was set.
+  expect(screen.getByText("生成的 Cypher")).toBeInTheDocument();
+  // expand and confirm the cypher body is present
+  fireEvent.click(screen.getByText("生成的 Cypher"));
+  expect(screen.getByText("MATCH (n) RETURN n")).toBeInTheDocument();
+});
+
+test("omits the Cypher section when result.cypher is absent", () => {
+  render(<MemoryRouter><QueryResultView result={r} /></MemoryRouter>);
+  expect(screen.queryByText("生成的 Cypher")).not.toBeInTheDocument();
 });

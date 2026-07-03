@@ -86,6 +86,7 @@ export interface QueryResult {
   llm_calls?: number;
   sources?: SourceRef[];
   truncated?: boolean;
+  cypher?: string | null;
 }
 
 export interface CostItem { model: string; prompt_tokens: number; completion_tokens: number; usd: number | null }
