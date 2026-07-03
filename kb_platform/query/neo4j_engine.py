@@ -286,11 +286,24 @@ class Neo4jQueryEngine:
 
     # --- shared --------------------------------------------------------------
     async def _execute(self, cypher, parameters, timeout_s, cap):
+        # Use an explicit transaction with the timeout: AsyncSession.run's
+        # `timeout=` kwarg folds into Cypher parameters ($timeout) rather than
+        # setting a transaction timeout, so the L2 safety bound would be silently
+        # inert. begin_transaction(timeout=...) is the real mechanism — the
+        # database terminates transactions that run longer than the configured
+        # timeout. Params are passed positionally (NOT as kwargs) for the same
+        # reason: kwargs merge into Cypher parameters.
         driver = self._pool.get_driver(self._uri, self._username, self._password)
         session = driver.session(database=self._database)
         try:
-            result = await session.run(cypher, parameters, timeout=timeout_s)
-            rows = [r.data() async for r in result]
+            tx = await session.begin_transaction(timeout=timeout_s)
+            try:
+                result = await tx.run(cypher, parameters)
+                rows = [r.data() async for r in result]
+                await tx.commit()
+            except Exception:
+                await tx.rollback()
+                raise
         finally:
             await session.close()
         return truncate_rows(rows, cap)

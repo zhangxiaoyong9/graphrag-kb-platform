@@ -130,12 +130,43 @@ class _FakeResult:
         return _g()
 
 
-class _FakeSession:
+class _FakeTx:
+    """Mimics AsyncTransaction. Records the (cypher, parameters) it was run with."""
+
     def __init__(self, rows):
         self._rows = rows
+        self.last_cypher = None
+        self.last_parameters = None
+        self.committed = False
+        self.rolled_back = False
 
-    async def run(self, cypher, parameters=None, timeout=None):
+    async def run(self, cypher, parameters=None):
+        self.last_cypher = cypher
+        self.last_parameters = parameters
         return _FakeResult(self._rows)
+
+    async def commit(self):
+        self.committed = True
+
+    async def rollback(self):
+        self.rolled_back = True
+
+
+class _FakeSession:
+    """Mimics AsyncSession. Records the timeout passed to begin_transaction so a
+    test can assert the engine routes cypher_timeout_ms through to the real
+    transaction-timeout mechanism (NOT to AsyncSession.run's kwargs, which the
+    driver folds into Cypher params and silently ignores)."""
+
+    def __init__(self, rows):
+        self._rows = rows
+        self.last_timeout = None
+        self.last_tx = None
+
+    async def begin_transaction(self, metadata=None, timeout=None):
+        self.last_timeout = timeout
+        self.last_tx = _FakeTx(self._rows)
+        return self.last_tx
 
     async def close(self):
         pass
@@ -144,9 +175,11 @@ class _FakeSession:
 class _FakeDriver:
     def __init__(self, rows):
         self._rows = rows
+        self.last_session = None
 
     def session(self, database=None):
-        return _FakeSession(self._rows)
+        self.last_session = _FakeSession(self._rows)
+        return self.last_session
 
 
 async def _events(engine, method, query, rows, words=None, cypher_text=None):
@@ -247,3 +280,35 @@ async def test_search_accumulates_stream():
     res = await eng.search("cypher", "how many", "/tmp/none")
     assert res.method == "cypher"
     assert res.answer == "A B "
+
+
+async def test_cypher_timeout_routed_to_transaction():
+    """L2 safety proof: cypher_timeout_ms reaches begin_transaction(timeout=...),
+    NOT AsyncSession.run's kwargs (which the driver folds into Cypher params and
+    silently ignores). Without an explicit transaction the timeout would be
+    inert — this test pins the real mechanism."""
+    from kb_platform.query.engine import QueryParams
+
+    eng = _engine()
+    fake_driver = _FakeDriver([{"title": "A"}])
+    eng._pool = SimpleNamespace(get_driver=lambda *a, **kw: fake_driver)
+
+    # consume the stream so _execute runs
+    async for _ in eng.stream_search(
+        "cypher", "list entities", "/tmp/none",
+        params=QueryParams(cypher_timeout_ms=7000),
+    ):
+        pass
+
+    session = fake_driver.last_session
+    assert session is not None, "engine did not open a session"
+    assert session.last_timeout == 7.0, (
+        f"timeout not routed to begin_transaction; got {session.last_timeout!r}"
+    )
+    # the transaction was committed and the cypher was the LLM-generated one
+    assert session.last_tx is not None
+    assert session.last_tx.committed is True
+    assert session.last_tx.rolled_back is False
+    assert "MATCH" in (session.last_tx.last_cypher or "")
+    # params are passed as the parameters dict, NOT folded into kwargs
+    assert session.last_tx.last_parameters == {}
