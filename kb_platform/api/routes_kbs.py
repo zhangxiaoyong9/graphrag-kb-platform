@@ -5,6 +5,7 @@
 """KB + document endpoints."""
 
 import json
+import logging
 import os
 from pathlib import Path
 
@@ -34,6 +35,8 @@ from kb_platform.db.models import KnowledgeBase
 from kb_platform.input.doc_reader import read_document
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_settings(settings_yaml: str | None) -> str:
@@ -189,6 +192,10 @@ def create_kb(payload: KbCreate, request: Request) -> KbOut:
         # fail a create over a path we may not be able to provision (e.g. a NAS).
         if payload.data_root is None:
             Path(kb.data_root).mkdir(parents=True, exist_ok=True)
+        logger.info(
+            "KB created id=%s name=%r method=%s llm_profile=%s",
+            kb.id, payload.name, payload.method, payload.llm_profile_id,
+        )
         return KbOut(id=kb.id, name=kb.name, method=kb.method)
 
 
@@ -258,6 +265,7 @@ def update_kb(kb_id: int, payload: KbUpdate, request: Request) -> KbDetailOut:
     if kb is None:
         raise HTTPException(404)
     fallback_ids = _fallback_ids_from_kb(kb)
+    logger.info("KB updated id=%s name=%r", kb_id, payload.name)
     return KbDetailOut(
         id=kb.id, name=kb.name, method=kb.method,
         settings=_redact(kb.settings_json),
@@ -295,6 +303,10 @@ async def add_document(kb_id: int, request: Request) -> DocumentOut:
         doc = repo.add_document(kb_id=kb_id, title=title or upload.filename, text=text)
     else:
         raise HTTPException(400, "provide 'text' or 'file'")
+    logger.info(
+        "doc uploaded kb=%s id=%s title=%r bytes=%s",
+        kb_id, doc.id, doc.title, doc.bytes,
+    )
     return DocumentOut(
         id=doc.id, title=doc.title, status=doc.status, bytes=doc.bytes, chunk_count=0
     )
@@ -394,6 +406,7 @@ def delete_document(kb_id: int, doc_id: int, request: Request, response: Respons
     if not repo.delete_document(kb_id, doc_id):
         raise HTTPException(404)
     job = _maybe_create_shrink_job(repo, kb_id)
+    logger.info("doc deleted kb=%s doc=%s; shrink_job=%s", kb_id, doc_id, job.id if job else None)
     if job is not None:
         response.status_code = 202
         return JobCreated(id=job.id, status=job.status)

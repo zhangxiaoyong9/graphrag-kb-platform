@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import zipfile
 from pathlib import Path
 
@@ -13,6 +14,8 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 # Parquet artifacts bundled into the zip export (in priority order).
 _PARQUET_ARTIFACTS = (
@@ -93,6 +96,8 @@ def export(kb_id: int, request: Request, format: str = "zip") -> Response:
     - ``format=zip``: parquet artifacts plus ``graph.graphml`` and ``graph.cypher``.
     """
     root = _data_root(request, kb_id)
+
+    logger.info("export requested kb=%s format=%s", kb_id, format)
 
     if format == "graphml":
         from kb_platform.graph.graphml import write_graphml

@@ -1,11 +1,15 @@
 # Copyright (c) 2024 Microsoft Corporation.
 # Licensed under the MIT License.
 """Query-preset CRUD: global, cross-KB retrieval presets (A3)."""
+import logging
+
 from fastapi import APIRouter, HTTPException, Request
 
 from kb_platform.api.models import QueryPresetIn, QueryPresetOut, QueryPresetUpdate
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 
 def _out(p) -> QueryPresetOut:
@@ -36,6 +40,7 @@ def create_preset(payload: QueryPresetIn, request: Request):
         p = repo.create_query_preset(is_builtin=False, **payload.model_dump())
     except Exception as exc:  # noqa: BLE001 - IntegrityError on duplicate name
         raise HTTPException(409, f"preset name already exists: {exc}") from exc
+    logger.info("preset created id=%s name=%r", p.id, payload.name)
     return _out(p)
 
 
@@ -45,6 +50,7 @@ def update_preset(pid: int, payload: QueryPresetUpdate, request: Request):
     p = repo.get_query_preset(pid)
     _require_custom(p)
     updated = repo.update_query_preset(pid, **payload.model_dump(exclude_unset=True))
+    logger.info("preset updated id=%s", pid)
     return _out(updated)
 
 
@@ -54,3 +60,4 @@ def delete_preset(pid: int, request: Request):
     p = repo.get_query_preset(pid)
     _require_custom(p)
     repo.delete_query_preset(pid)
+    logger.info("preset deleted id=%s", pid)

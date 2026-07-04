@@ -508,3 +508,56 @@ def test_query_route_no_first_token_when_engine_errors(tmp_path, monkeypatch, ca
     err2 = capsys.readouterr().err
     assert "query start" in err2  # start always fires
     assert "query first token" not in err2, err2  # no delta ever yielded
+
+
+# --- Task 8: API mutation audit logs --------------------------------------
+
+
+def test_api_audit_logs(tmp_path, monkeypatch, capsys):
+    """Mutating endpoints each emit one INFO audit line carrying request_id."""
+    monkeypatch.setenv("KB_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setenv("KB_LOG_CONSOLE", "true")
+    setup_logging("server")
+
+    engine = _create_engine(f"sqlite:///{tmp_path / 't.db'}")
+    Base.metadata.create_all(engine)
+    client = TestClient(create_app(Repository(engine), data_root=str(tmp_path / "data")))
+
+    # Drive a real sequence of mutations across the audited route files.
+    seed_profile(client, name="P1", provider="openai", model="gpt-4o-mini")
+    client.post(
+        "/kbs",
+        json={
+            "name": "audit-kb",
+            "method": "standard",
+            "settings_yaml": "{}",
+            "llm_profile_id": 1,
+        },
+    )
+    client.post("/kbs/1/documents", json={"title": "d1", "text": "hello world"})
+    client.post("/kbs/1/jobs", json={"method": "standard", "type": "full"})
+    client.post(
+        "/query-presets",
+        json={
+            "name": "audit-preset",
+            "method": "global",
+            "community_level": 0,
+            "response_type": "multiple paragraphs",
+            "top_k": 10,
+            "temperature": 0.0,
+        },
+    )
+
+    err = capsys.readouterr().err
+    for needle in (
+        "profile created",
+        "KB created",
+        "doc uploaded",
+        "job created",
+        "preset created",
+    ):
+        assert needle in err, f"missing audit log: {needle}\n{err}"
+    # request_id (correlation id) flows onto every audit line via ContextVarFilter.
+    # The formatter renders request_id with the short alias "request" (see
+    # logging_config._CONTEXT_ALIASES), so assert on that form.
+    assert "request=" in err, err

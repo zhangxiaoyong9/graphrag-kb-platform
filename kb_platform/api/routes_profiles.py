@@ -37,6 +37,10 @@ def create_profile(payload: ProfileCreate, request: Request):
         raise HTTPException(409, f"profile name already exists: {exc}") from exc
     if not p.ssl_verify:
         logger.warning("provider profile '%s' has SSL verification disabled", p.name)
+    logger.info(
+        "profile created id=%s name=%r provider=%s model=%s",
+        p.id, p.name, p.provider, p.model,
+    )
     return _out(repo, p)
 
 
@@ -48,6 +52,7 @@ def update_profile(pid: int, payload: ProfileUpdate, request: Request):
         raise HTTPException(404)
     if not p.ssl_verify:
         logger.warning("provider profile '%s' has SSL verification disabled", p.name)
+    logger.info("profile updated id=%s", pid)
     return _out(repo, p)
 
 
@@ -59,3 +64,4 @@ def delete_profile(pid: int, request: Request):
         raise HTTPException(409, detail={"referencing_kbs": refs})
     if not repo.delete_profile(pid):
         raise HTTPException(404)
+    logger.info("profile deleted id=%s", pid)

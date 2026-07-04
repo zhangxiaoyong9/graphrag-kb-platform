@@ -1,5 +1,7 @@
 """Job / step / unit status + retry endpoints."""
 
+import logging
+
 from fastapi import APIRouter, HTTPException, Request
 
 from kb_platform.api.models import (
@@ -13,6 +15,8 @@ from kb_platform.api.models import (
 )
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 
 def _step_out(repo, s) -> StepOut:
@@ -42,6 +46,7 @@ def trigger_job(kb_id: int, payload: JobCreate, request: Request) -> JobCreated:
         if s.get(KnowledgeBase, kb_id) is None:
             raise HTTPException(404, f"kb {kb_id} not found")
     job = repo.create_job_pending(kb_id=kb_id, method=payload.method, type=payload.type)
+    logger.info("job created id=%s kb=%s type=%s", job.id, kb_id, payload.type)
     return JobCreated(id=job.id, status=job.status)
 
 
@@ -98,6 +103,7 @@ def retry_unit(unit_id: int, request: Request):
     repo.reset_unit_to_pending(unit_id)
     repo.reset_step_if_succeeded_for_unit(unit_id)  # SUCCEEDED→PARTIALLY_FAILED so orchestrator re-runs
     repo.reactivate_job_for_unit(unit_id)  # re-queue so the worker re-claims it
+    logger.info("unit retried id=%s", unit_id)
     return {"ok": True}
 
 
@@ -106,4 +112,5 @@ def retry_step(step_id: int, request: Request):
     repo = request.app.state.repo
     n = repo.reset_failed_units_to_pending(step_id)
     repo.reactivate_job_for_step(step_id)  # re-queue so the worker re-claims it
+    logger.info("step retried id=%s; reset=%s", step_id, n)
     return {"reset": n}
