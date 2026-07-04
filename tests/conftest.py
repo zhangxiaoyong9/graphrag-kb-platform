@@ -37,13 +37,25 @@ def _isolate_logging():
     Also detaches any pre-existing handlers (e.g. pytest's ``_LiveLoggingNullHandler``
     FileHandler pointed at /dev/null) during the test so the suite sees a truly clean
     root logger; they are restored on teardown.
+
+    Snapshot the levels of ALL existing loggers (not just a fixed noisy-lib list) so
+    arbitrary per-logger overrides applied by ``setup_logging`` (via
+    ``KB_LOG_LEVELS=foo.bar=WARNING``) cannot leak across tests. Loggers that didn't
+    exist before the test (e.g. created when setup_logging applies KB_LOG_LEVELS to
+    a fresh name) are reset to NOTSET on teardown so they inherit the root level.
+    Without this, test order would matter: ``test_per_logger_override`` lowers
+    arbitrary loggers, then later lifecycle tests would have to locally reset those
+    names to see their logs.
     """
     root = logging.getLogger()
     snap_handlers = list(root.handlers)
     snap_level = root.level
+    # Logger.manager.loggerDict holds both Logger instances and PlaceHolder objects;
+    # only actual Loggers carry a mutable level worth snapshotting.
     snap_levels = {
-        n: logging.getLogger(n).level
-        for n in ("httpx", "httpcore", "urllib3", "sqlalchemy", "uvicorn", "uvicorn.access")
+        name: logger.level
+        for name, logger in logging.Logger.manager.loggerDict.items()
+        if isinstance(logger, logging.Logger)
     }
     for h in snap_handlers:
         root.removeHandler(h)
@@ -59,5 +71,17 @@ def _isolate_logging():
         for h in snap_handlers:
             root.addHandler(h)
         root.setLevel(snap_level)
-        for n, lv in snap_levels.items():
-            logging.getLogger(n).setLevel(lv)
+        # Restore known loggers to their pre-test level. Loggers created during
+        # the test (e.g. by setup_logging applying KB_LOG_LEVELS to a name that
+        # didn't exist before) are reset to NOTSET so they inherit the root
+        # level instead of leaking an override into later tests.
+        for name, logger in list(logging.Logger.manager.loggerDict.items()):
+            try:
+                if not isinstance(logger, logging.Logger):
+                    continue
+                if name in snap_levels:
+                    logger.setLevel(snap_levels[name])
+                else:
+                    logger.setLevel(logging.NOTSET)
+            except Exception:  # noqa: BLE001
+                pass

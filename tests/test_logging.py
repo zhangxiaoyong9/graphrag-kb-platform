@@ -289,16 +289,11 @@ async def test_worker_logs_job_claim_and_done(tmp_path, monkeypatch, caplog):
     """
     monkeypatch.setenv("KB_LOG_DIR", str(tmp_path))
     setup_logging("worker")
-    # Prior tests in this module (test_per_logger_override) may have lowered
-    # the per-logger level on kb_platform.engine.unit_worker / orchestrator and
-    # that state is process-global. Reset to NOTSET so they inherit the root
-    # INFO level set by setup_logging, letting caplog see the lifecycle logs.
-    for name in (
-        "kb_platform.engine.unit_worker",
-        "kb_platform.engine.orchestrator",
-        "kb_platform.worker",
-    ):
-        logging.getLogger(name).setLevel(logging.NOTSET)
+    # The autouse _isolate_logging fixture (tests/conftest.py) snapshots and
+    # restores the levels of all existing loggers between tests, so any
+    # per-logger overrides applied by an earlier test (e.g.
+    # test_per_logger_override via KB_LOG_LEVELS) are rolled back here and the
+    # loggers inherit setup_logging's root INFO level naturally.
     repo, job_id = _seed_pending_job(tmp_path)
 
     with caplog.at_level(logging.INFO):
