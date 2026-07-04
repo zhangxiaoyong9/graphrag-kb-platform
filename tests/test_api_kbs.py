@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -208,3 +210,49 @@ def test_get_kb_stats_empty_when_no_snapshot(tmp_path):
         "entity_count": None, "relationship_count": None,
         "community_count": None, "community_report_count": None, "text_unit_count": None,
     }
+
+
+def test_create_kb_default_data_root_is_per_kb_isolated(client, tmp_path):
+    """Omitting data_root -> {global_resolve}/{kb.id} (per-KB isolation)."""
+    r = client.post("/kbs", json={"name": "kb1", "method": "standard",
+                                  "settings_yaml": "{}", "llm_profile_id": 1})
+    assert r.status_code == 201
+    kid = r.json()["id"]
+    detail = client.get(f"/kbs/{kid}").json()
+    expected = str(Path(str(tmp_path)).resolve() / str(kid))
+    assert detail["data_root"] == expected
+
+
+def test_create_kb_custom_data_root_used_verbatim(client):
+    r = client.post("/kbs", json={"name": "kb1", "method": "standard", "settings_yaml": "{}",
+                                  "llm_profile_id": 1, "data_root": "/abs/some/kb-dir"})
+    assert r.status_code == 201
+    detail = client.get(f"/kbs/{r.json()['id']}").json()
+    assert detail["data_root"] == "/abs/some/kb-dir"
+
+
+def test_create_kb_rejects_relative_data_root(client):
+    r = client.post("/kbs", json={"name": "kb1", "method": "standard", "settings_yaml": "{}",
+                                  "llm_profile_id": 1, "data_root": "relative/path"})
+    assert r.status_code == 400
+    assert "绝对路径" in r.json()["detail"]
+
+
+def test_create_kb_rejects_traversal_data_root(client):
+    r = client.post("/kbs", json={"name": "kb1", "method": "standard", "settings_yaml": "{}",
+                                  "llm_profile_id": 1, "data_root": "/abs/../etc"})
+    assert r.status_code == 400
+    assert ".." in r.json()["detail"]
+
+
+def test_update_kb_ignores_data_root(client):
+    """data_root is create-only: a PATCH body carrying data_root is ignored."""
+    r = client.post("/kbs", json={"name": "kb1", "method": "standard",
+                                  "settings_yaml": "{}", "llm_profile_id": 1})
+    kid = r.json()["id"]
+    before = client.get(f"/kbs/{kid}").json()["data_root"]
+    # Mirror a valid PATCH body (see Note below); add data_root, which KbUpdate doesn't declare.
+    client.patch(f"/kbs/{kid}", json={"name": "kb1", "method": "standard", "settings_yaml": "{}",
+                                       "llm_profile_id": 1, "data_root": "/abs/other"})
+    after = client.get(f"/kbs/{kid}").json()["data_root"]
+    assert after == before

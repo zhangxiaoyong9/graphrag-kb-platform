@@ -6,6 +6,7 @@
 
 import json
 import os
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import ValidationError
@@ -145,6 +146,15 @@ def _redact(settings_json: str | None) -> dict:
     return _walk(data)
 
 
+def validate_data_root(path: str) -> None:
+    """A user-supplied data_root must be absolute and free of `..` traversal.
+    Raises HTTPException(400) otherwise. The path is used verbatim (no resolve)."""
+    if not os.path.isabs(path):
+        raise HTTPException(status_code=400, detail="data_root 必须为绝对路径")
+    if ".." in Path(path).parts:
+        raise HTTPException(status_code=400, detail="data_root 不得含 .. ")
+
+
 @router.post("/kbs", response_model=KbOut, status_code=201)
 def create_kb(payload: KbCreate, request: Request) -> KbOut:
     repo = request.app.state.repo
@@ -153,21 +163,32 @@ def create_kb(payload: KbCreate, request: Request) -> KbOut:
         _require_profile(repo, payload.embedding_profile_id, "embedding")
     if payload.neo4j_profile_id is not None:
         _require_profile(repo, payload.neo4j_profile_id, "neo4j")
+    if payload.data_root is not None:
+        validate_data_root(payload.data_root)
     fallback_ids = _validate_fallback_ids(repo, payload.llm_fallback_profile_ids, payload.llm_profile_id)
     settings = _parse_settings(payload.settings_yaml)
+    global_root = str(Path(request.app.state.data_root).resolve())
     with session_scope(repo.engine) as s:
         kb = KnowledgeBase(
             name=payload.name,
             method=payload.method,
             settings_json=settings,
-            data_root=request.app.state.data_root,
+            data_root=request.app.state.data_root,  # NOT NULL placeholder; overwritten once id is known
             llm_profile_id=payload.llm_profile_id,
             embedding_profile_id=payload.embedding_profile_id,
             llm_fallback_profile_ids=json.dumps(fallback_ids) if fallback_ids else None,
             neo4j_profile_id=payload.neo4j_profile_id,
         )
         s.add(kb)
+        s.flush()  # assigns kb.id
+        kb.data_root = payload.data_root if payload.data_root is not None else f"{global_root}/{kb.id}"
         s.flush()
+        # For the default per-KB directory (under the global root), create it now
+        # so the KB is immediately writable. A user-supplied custom path is used
+        # verbatim; the indexing strategies mkdir on demand, and we don't want to
+        # fail a create over a path we may not be able to provision (e.g. a NAS).
+        if payload.data_root is None:
+            Path(kb.data_root).mkdir(parents=True, exist_ok=True)
         return KbOut(id=kb.id, name=kb.name, method=kb.method)
 
 
@@ -191,6 +212,7 @@ def get_kb(kb_id: int, request: Request) -> KbDetailOut:
         return KbDetailOut(
             id=kb.id, name=kb.name, method=kb.method,
             settings=_redact(kb.settings_json),
+            data_root=kb.data_root,
             llm_profile=_profileref(repo, kb.llm_profile_id),
             embedding_profile=_profileref(repo, kb.embedding_profile_id),
             llm_fallback_profile_ids=fallback_ids,
@@ -239,6 +261,7 @@ def update_kb(kb_id: int, payload: KbUpdate, request: Request) -> KbDetailOut:
     return KbDetailOut(
         id=kb.id, name=kb.name, method=kb.method,
         settings=_redact(kb.settings_json),
+        data_root=kb.data_root,
         llm_profile=_profileref(repo, kb.llm_profile_id),
         embedding_profile=_profileref(repo, kb.embedding_profile_id),
         llm_fallback_profile_ids=fallback_ids,

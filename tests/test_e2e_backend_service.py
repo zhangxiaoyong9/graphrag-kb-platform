@@ -42,6 +42,7 @@ async def test_full_backend_service_with_fake_adapter(tmp_path):
     extract = [s for s in steps if s["name"] == "extract_graph"][0]
     units = client.get(f"/steps/{extract['id']}/units").json()["items"]
     assert len(units) >= 1 and all(u["status"] == "succeeded" for u in units)
-    # Four parquet outputs.
+    # Four parquet outputs land under the KB's per-KB data_root ({root}/{kb_id}).
+    kb_data_root = tmp_path / "1"
     for name in ("entities", "relationships", "communities", "community_reports"):
-        assert os.path.exists(f"{tmp_path}/{name}.parquet")
+        assert os.path.exists(f"{kb_data_root}/{name}.parquet")
