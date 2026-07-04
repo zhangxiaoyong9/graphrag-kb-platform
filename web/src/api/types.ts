@@ -64,9 +64,11 @@ export interface KbCreate {
   embedding_profile_id?: number | null;
   min_unit_success_ratio?: number;
   llm_fallback_profile_ids?: number[];
+  data_root?: string | null;
 }
 export interface KbDetail extends KbOut {
   settings: Record<string, unknown>;
+  data_root: string;
   llm_profile: ProfileRef | null;
   embedding_profile: ProfileRef | null;
   llm_fallback_profile_ids?: number[];

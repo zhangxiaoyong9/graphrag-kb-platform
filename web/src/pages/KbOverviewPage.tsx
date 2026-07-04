@@ -34,6 +34,10 @@ export default function KbOverviewPage() {
         <Stat label="索引方法" value={kb?.method ?? "—"} icon={<IconLayers width={18} height={18} />} />
       </div>
 
+      <div className="text-[12px] text-muted">
+        数据目录：<span className="font-mono text-ink/70">{kb?.data_root ?? "—"}</span>
+      </div>
+
       <Card>
         <CardHeader title="图谱规模" subtitle="最近一次索引后的实体 / 关系 / 社区计数" icon={<IconLayers width={18} height={18} />} />
         <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">

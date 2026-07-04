@@ -321,3 +321,33 @@ test("edit mode pre-loads llm_fallback_profile_ids", async () => {
   };
   expect(last.llm_fallback_profile_ids).toEqual([1]);
 });
+
+// --- data_root (create-only) -------------------------------------------
+
+test("create mode shows data_root input and sends it when filled", async () => {
+  const onCreated = renderForm();
+  await screen.findByLabelText(/LLM 配置/);
+  await userEvent.selectOptions(screen.getByLabelText(/LLM 配置/), "1");
+  await userEvent.type(screen.getByPlaceholderText(/请输入知识库名称/), "dr-kb");
+  const dr = await screen.findByPlaceholderText(/留空 = 自动按 KB 隔离/);
+  fireEvent.change(dr, { target: { value: "/abs/custom/dir" } });
+  await userEvent.click(screen.getByRole("button", { name: /创建知识库/ }));
+
+  await waitFor(() => expect(onCreated).toHaveBeenCalled());
+  const last = captured[captured.length - 1]?.body as {
+    data_root?: string | null;
+  };
+  expect(last.data_root).toBe("/abs/custom/dir");
+});
+
+test("edit mode does not show the data_root input", async () => {
+  render(
+    <MemoryRouter>
+      <KbForm kb={editKb as never} onSaved={vi.fn()} />
+    </MemoryRouter>,
+  );
+  await screen.findByDisplayValue(editKb.name);
+  expect(
+    screen.queryByPlaceholderText(/留空 = 自动按 KB 隔离/),
+  ).not.toBeInTheDocument();
+});

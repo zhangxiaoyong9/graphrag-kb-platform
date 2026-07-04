@@ -53,6 +53,7 @@ export default function KbForm({
         },
   );
   const [name, setName] = useState(kb?.name ?? "");
+  const [dataRoot, setDataRoot] = useState("");
   const [llmProfileId, setLlmProfileId] = useState<number | null>(
     kb?.llm_profile?.id ?? null,
   );
@@ -131,6 +132,7 @@ export default function KbForm({
           embedding_profile_id: embeddingProfileId,
           min_unit_success_ratio: parseFloat(s.minRatio),
           llm_fallback_profile_ids: llmFallbackIds,
+          ...(dataRoot.trim() ? { data_root: dataRoot.trim() } : {}),
         });
         onCreated?.(created);
         setName("");
@@ -154,6 +156,17 @@ export default function KbForm({
           required
         />
       </Field>
+      {!isEdit && (
+        <Field label="数据目录（可选）" hint="留空 = 自动按 KB 隔离">
+          <input
+            className="input"
+            placeholder="留空 = 自动按 KB 隔离"
+            value={dataRoot}
+            onChange={(e) => setDataRoot(e.target.value)}
+            aria-label="data_root"
+          />
+        </Field>
+      )}
       <div className="grid grid-cols-2 gap-3">
         <Field label="索引方法" hint="standard / fast">
           <select
