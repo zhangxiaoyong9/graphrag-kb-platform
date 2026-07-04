@@ -32,7 +32,9 @@ def _seed(client, tmp_path):
     )
     assert r.status_code == 201, r.text
     kb_id = r.json()["id"]
-    data_root = tmp_path
+    # data_root defaults to {global_resolve}/{kb_id} (per-KB isolation).
+    data_root = tmp_path / str(kb_id)
+    data_root.mkdir(parents=True, exist_ok=True)
 
     pd.DataFrame(
         [
@@ -154,14 +156,16 @@ def test_relationship_multichunk_description_does_not_crash(client, tmp_path):
         json={"name": "kb1", "method": "standard", "settings_yaml": "{}", "llm_profile_id": 1},
     )
     kb_id = r.json()["id"]
+    data_root = tmp_path / str(kb_id)
+    data_root.mkdir(parents=True, exist_ok=True)
 
     pd.DataFrame(
         [{"title": "Alpha", "type": "CONCEPT", "degree": 2, "description": "a"}]
-    ).to_parquet(tmp_path / "entities.parquet")
+    ).to_parquet(data_root / "entities.parquet")
     # description is a LIST (real merge_extractions shape) with >1 element.
     pd.DataFrame(
         [{"source": "Alpha", "target": "Alpha", "weight": 2.0, "description": ["d1", "d2"]}]
-    ).to_parquet(tmp_path / "relationships.parquet")
+    ).to_parquet(data_root / "relationships.parquet")
 
     r = client.get(f"/kbs/{kb_id}/graph")
     assert r.status_code == 200, r.text

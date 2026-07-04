@@ -25,6 +25,7 @@ class KbCreate(BaseModel):
     min_unit_success_ratio: float | None = None
     llm_fallback_profile_ids: list[int] | None = None
     neo4j_profile_id: int | None = None
+    data_root: str | None = None
 
 
 class KbUpdate(BaseModel):
@@ -60,6 +61,7 @@ class KbDetailOut(KbOut):
     """GET /kbs/{id}: adds the (redacted) parsed settings + resolved profiles."""
 
     settings: dict
+    data_root: str
     llm_profile: ProfileRef | None = None
     embedding_profile: ProfileRef | None = None
     llm_fallback_profile_ids: list[int] = []

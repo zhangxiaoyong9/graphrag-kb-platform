@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import KbOverviewPage from "./KbOverviewPage";
 import { KbContext } from "./kb-context";
 
-const kb = { id: 1, name: "kb1", method: "standard", settings: {}, llm_profile: null, embedding_profile: null };
+const kb = { id: 1, name: "kb1", method: "standard", settings: {}, data_root: "/data/kb-1", llm_profile: null, embedding_profile: null };
 
 const server = setupServer(
   http.get("/kbs/1/documents", () => HttpResponse.json([])),

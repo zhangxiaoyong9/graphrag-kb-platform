@@ -34,9 +34,9 @@ def _seed_kb_with_parquets(client, tmp_path):
     )
     assert r.status_code == 201, r.text
     kb_id = r.json()["id"]
-    # The KB's data_root is the app-level data_root (tmp_path), since the
-    # create_kb handler stores request.app.state.data_root verbatim.
-    data_root = tmp_path
+    # The KB's data_root defaults to {global_resolve}/{kb_id} (per-KB isolation).
+    data_root = tmp_path / str(kb_id)
+    data_root.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(
         [{"title": "Alpha&Beta", "type": "CONCEPT", "degree": 1, "description": "d"}]
     ).to_parquet(data_root / "entities.parquet")
@@ -103,7 +103,8 @@ def _stage_kb_with_parquet(tmp_path) -> tuple:
     )
     assert r.status_code == 201, r.text
     kb_id = r.json()["id"]
-    root = tmp_path
+    root = tmp_path / str(kb_id)
+    root.mkdir(parents=True, exist_ok=True)
 
     pd.DataFrame(
         [
@@ -154,7 +155,7 @@ def _stage_empty_kb(tmp_path) -> tuple:
         json={"name": "empty", "method": "standard", "settings_yaml": "{}", "llm_profile_id": 1},
     )
     assert r.status_code == 201, r.text
-    return c, r.json()["id"], tmp_path
+    return c, r.json()["id"], tmp_path / str(r.json()["id"])
 
 
 def test_export_cypher_returns_text_plain_with_preamble(tmp_path):
