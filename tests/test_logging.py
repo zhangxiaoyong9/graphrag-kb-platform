@@ -200,3 +200,45 @@ def test_mcp_never_logs_to_stdout(tmp_path, monkeypatch):
     for h in logging.getLogger().handlers:
         stream = getattr(h, "stream", None)
         assert stream is not sys.stdout, "MCP process must never log to stdout"
+
+
+# --- Task 4: FastAPI request_id middleware --------------------------------
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+from kb_platform.api.app import create_app  # noqa: E402
+from kb_platform.db.engine import create_engine as _create_engine  # noqa: E402
+from kb_platform.db.models import Base  # noqa: E402
+from kb_platform.db.repository import Repository  # noqa: E402
+
+
+def _middleware_app(tmp_path):
+    """Build an app + client like the existing tests/test_api_query.py::client fixture:
+    in-process SQLite with tables created via Base.metadata.create_all.
+    """
+    engine = _create_engine(f"sqlite:///{tmp_path}/t.db")
+    Base.metadata.create_all(engine)
+    return TestClient(create_app(Repository(engine), data_root=str(tmp_path)))
+
+
+def test_middleware_binds_request_id_and_sets_header(tmp_path, monkeypatch):
+    monkeypatch.setenv("KB_LOG_DIR", str(tmp_path))
+    monkeypatch.setenv("KB_LOG_CONSOLE", "true")
+    setup_logging("server")
+    with _middleware_app(tmp_path) as client:
+        r = client.get("/kbs")
+    headers_lower = {k.lower() for k in r.headers}
+    assert "x-request-id" in headers_lower
+    assert len(r.headers["x-request-id"]) == 12
+
+
+def test_middleware_logs_request_start_and_done(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("KB_LOG_DIR", str(tmp_path))
+    monkeypatch.setenv("KB_LOG_CONSOLE", "true")
+    setup_logging("server")
+    with _middleware_app(tmp_path) as client:
+        client.get("/kbs")
+    err = capsys.readouterr().err
+    assert "request start" in err
+    assert "request done" in err
+    assert "GET /kbs" in err
