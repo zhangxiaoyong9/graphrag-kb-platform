@@ -158,10 +158,16 @@ def create_app(
             ):
                 # no-store + Vary: Sec-Fetch-Mode: this URL also serves JSON to XHR,
                 # so the navigation HTML must neither be cached nor reused for a fetch.
-                return FileResponse(
-                    dist / "index.html",
-                    headers={"Cache-Control": "no-store", "Vary": "Sec-Fetch-Mode"},
-                )
+                # Forward X-Request-ID (stamped by the inner request_id_middleware)
+                # so end-to-end correlation survives the swap (spec §6.5).
+                nav_headers = {
+                    "Cache-Control": "no-store",
+                    "Vary": "Sec-Fetch-Mode",
+                }
+                request_id = response.headers.get("x-request-id")
+                if request_id:
+                    nav_headers["X-Request-ID"] = request_id
+                return FileResponse(dist / "index.html", headers=nav_headers)
             return response
 
     return app

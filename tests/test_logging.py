@@ -244,6 +244,37 @@ def test_middleware_logs_request_start_and_done(tmp_path, monkeypatch, capsys):
     assert "GET /kbs" in err
 
 
+def test_spa_nav_swap_preserves_request_id_header(tmp_path, monkeypatch):
+    """Regression (final-review I1): when the outermost spa_browser_nav_fallback
+    middleware swaps an API JSON response for index.html on a browser navigation
+    (Sec-Fetch-Mode: navigate), the X-Request-ID stamped by the inner
+    request_id_middleware must survive onto the swapped FileResponse — otherwise
+    refresh / deep-link on SPA pages whose path collides with a JSON API endpoint
+    (/kbs, /query-presets) returns no request id, breaking end-to-end correlation
+    (spec §6.5).
+
+    The SPA branch is driven end-to-end via TestClient: we point WEB_DIST at a
+    tmp dir with index.html + assets/ so spa_browser_nav_fallback registers.
+    """
+    web = tmp_path / "web"
+    (web / "assets").mkdir(parents=True)
+    (web / "index.html").write_text("<html><body>SPA</body></html>")
+    monkeypatch.setattr("kb_platform.api.app.WEB_DIST", str(web))
+
+    engine = _create_engine(f"sqlite:///{tmp_path}/t.db")
+    Base.metadata.create_all(engine)
+    client = TestClient(create_app(Repository(engine), data_root=str(tmp_path)))
+
+    r = client.get("/kbs", headers={"Sec-Fetch-Mode": "navigate"})
+    assert r.status_code == 200
+    assert "text/html" in r.headers["content-type"]
+    assert "SPA" in r.text  # the swap actually happened
+    # The swapped FileResponse must carry the same X-Request-ID shape as the
+    # inner middleware stamps (12-char hex).
+    assert "x-request-id" in {k.lower() for k in r.headers}, r.headers
+    assert len(r.headers["x-request-id"]) == 12
+
+
 # --- Task 5: job/step/unit lifecycle logs ----------------------------------
 
 from kb_platform.graph.adapter import FakeGraphAdapter  # noqa: E402
