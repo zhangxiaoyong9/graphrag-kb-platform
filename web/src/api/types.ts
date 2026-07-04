@@ -167,3 +167,25 @@ export interface QueryPreset {
   cypher_timeout_ms?: number | null;
   is_builtin: boolean;
 }
+
+export type LlmHealthState = "closed" | "open" | "half_open";
+
+export interface LlmHealthProfile {
+  provider: string;
+  model: string;
+  api_base: string | null;
+  state: LlmHealthState;
+}
+
+export interface LlmHealthMetrics {
+  ttft_ms_p50: number | null;
+  failover_detect_ms_p50: number | null;
+  failover_recover_ms_p50: number | null;
+  failovers: number;
+  successes: number;
+}
+
+export interface LlmHealth {
+  profiles: LlmHealthProfile[];
+  metrics: LlmHealthMetrics;
+}

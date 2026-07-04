@@ -25,6 +25,7 @@ import SettingsPage from "./pages/SettingsPage";
 import ProviderProfilesPage from "./pages/ProviderProfilesPage";
 import ApiKeysPage from "./pages/ApiKeysPage";
 import QueryPresetsPage from "./pages/QueryPresetsPage";
+import LlmHealthPage from "./pages/LlmHealthPage";
 
 export default function App() {
   return (
@@ -49,6 +50,7 @@ export default function App() {
         {/* Global aggregators (cross-KB, existing endpoints only) */}
         <Route path="/jobs" element={<JobsPage />} />
         <Route path="/cost" element={<CostPage />} />
+        <Route path="/llm-health" element={<LlmHealthPage />} />
         <Route path="/system" element={<SystemPage />} />
 
         {/* Top-level SaaS admin pages (reuse existing endpoints / components) */}
