@@ -230,6 +230,7 @@ class Orchestrator:
         job = self.repo.get_job(step.job_id)
         chunks: list[Chunk] = []
         for doc in self.repo.get_documents(job.kb_id):
+            doc_chunks = 0
             for ordinal, piece in enumerate(self.adapter.chunk_document(doc.id, doc.text or "")):
                 chunks.append(
                     Chunk(
@@ -240,6 +241,10 @@ class Orchestrator:
                         text=piece.text,
                     )
                 )
+                doc_chunks += 1
+            logger.info(
+                "chunked doc=%s into %d chunks (kb=%s)", doc.id, doc_chunks, job.kb_id
+            )
         self.repo.add_chunks(chunks)
         # Write text_units.parquet so the embeddings step can embed chunk text
         with session_scope(self.repo.engine) as s:

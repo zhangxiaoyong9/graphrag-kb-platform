@@ -561,3 +561,55 @@ def test_api_audit_logs(tmp_path, monkeypatch, capsys):
     # The formatter renders request_id with the short alias "request" (see
     # logging_config._CONTEXT_ALIASES), so assert on that form.
     assert "request=" in err, err
+
+
+# --- Task 9: realtime + chunking + doc-parse milestone logs -----------------
+
+import tempfile  # noqa: E402
+
+
+def test_doc_reader_logs_parsed(monkeypatch, capsys):
+    """read_document logs one INFO line 'parsed N chars from <filename>'."""
+    monkeypatch.setenv("KB_LOG_DIR", tempfile.mkdtemp())
+    setup_logging("worker")
+    from kb_platform.input.doc_reader import read_document
+
+    text = read_document(b"hello world text", "note.md")
+    err = capsys.readouterr().err
+    assert "parsed" in err, err
+    assert "note.md" in err, err
+    assert str(len(text)) in err, err
+
+
+@pytest.mark.asyncio
+async def test_chunk_documents_logs_per_doc(tmp_path, monkeypatch, caplog):
+    """orchestrator._chunk_documents emits one INFO 'chunked doc=..' line per doc."""
+    monkeypatch.setenv("KB_LOG_DIR", str(tmp_path))
+    setup_logging("worker")
+    repo, job_id = _seed_pending_job(tmp_path)
+    # Add a second document so chunking yields >=2 per-doc milestone lines.
+    from fastapi.testclient import TestClient  # local import to avoid cycle
+
+    from kb_platform.api.app import create_app
+
+    client = TestClient(create_app(repo, data_root=str(tmp_path)))
+    r = client.post(
+        "/kbs/1/documents",
+        json={"title": "d2", "text": "Alpha Beta Gamma Delta Epsilon Zeta " * 200},
+    )
+    assert r.status_code == 201
+
+    with caplog.at_level(logging.INFO, logger="kb_platform.engine.orchestrator"):
+        await run_worker_once(
+            repo=repo,
+            adapter_factory=lambda kb: FakeGraphAdapter(),
+            heartbeat_interval=0.01,
+        )
+
+    assert repo.get_job(job_id).status == JobStatus.SUCCEEDED
+    chunked_lines = [
+        rec.getMessage() for rec in caplog.records
+        if "chunked doc" in rec.getMessage()
+        and rec.name == "kb_platform.engine.orchestrator"
+    ]
+    assert len(chunked_lines) >= 2, chunked_lines
