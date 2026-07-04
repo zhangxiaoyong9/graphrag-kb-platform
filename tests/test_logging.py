@@ -113,3 +113,76 @@ def test_formatter_omits_absent_fields(tmp_path, monkeypatch, capsys):
     logging.getLogger("kb_platform.test_subject2").info("plain line")
     err = capsys.readouterr().err
     assert "[" not in err.split("—")[-1]  # no context block when nothing bound
+
+
+# --- Task 2: cross-platform gzip rotation ---------------------------------
+
+import gzip  # noqa: E402
+from unittest import mock  # noqa: E402
+
+from kb_platform.logging_config import (  # noqa: E402
+    GzipTimedRotatingFileHandler,
+    compress_rotated,
+)
+
+
+def _write(path: Path, text: str) -> Path:
+    path.write_text(text)
+    return path
+
+
+def test_compress_rotated_python_path(tmp_path):
+    """Force the Python-gzip fallback by pretending gzip subprocess fails."""
+    src = _write(tmp_path / "worker.log", "x" * 5000)
+    dest = tmp_path / "worker.log.2026-07-04_14-30.gz"
+    # Implementation dispatches on `sys.platform` (NOT platform.system); patch the
+    # real target so this test takes the Python-gzip branch on every OS.
+    with mock.patch("kb_platform.logging_config.sys.platform", "win32"):
+        compress_rotated(src, dest)
+    assert not src.exists()
+    assert dest.exists()
+    assert gzip.decompress(dest.read_bytes()).decode() == "x" * 5000
+
+
+def test_compress_rotated_system_gzip(tmp_path):
+    """Linux/mac path: shell out to `gzip -c`; verify .gz output + source removed."""
+    src = _write(tmp_path / "worker.log", "hello\n")
+    dest = tmp_path / "worker.log.ts.gz"
+    with mock.patch("kb_platform.logging_config.sys.platform", "linux"):
+        compress_rotated(src, dest)
+    assert not src.exists()
+    assert gzip.decompress(dest.read_bytes()).decode() == "hello\n"
+
+
+def test_compress_rotated_system_gzip_failure_falls_back(tmp_path):
+    """If `gzip` binary is missing/broken, fall back to Python gzip (no crash)."""
+    src = _write(tmp_path / "worker.log", "fallback\n")
+    dest = tmp_path / "worker.log.ts.gz"
+    with mock.patch("kb_platform.logging_config.sys.platform", "linux"), \
+         mock.patch("subprocess.run", side_effect=FileNotFoundError("no gzip")):
+        compress_rotated(src, dest)
+    assert gzip.decompress(dest.read_bytes()).decode() == "fallback\n"
+
+
+def test_file_handler_gzips_on_rollover(tmp_path, monkeypatch):
+    """Rotating produces a .gz file; pruning keeps only backupCount rotated files."""
+    import time
+
+    monkeypatch.setenv("KB_LOG_DIR", str(tmp_path))
+    monkeypatch.setenv("KB_LOG_ROTATE_WHEN", "S")
+    monkeypatch.setenv("KB_LOG_ROTATE_INTERVAL", "1")
+    monkeypatch.setenv("KB_LOG_ROTATE_BACKUP_COUNT", "2")
+    setup_logging("worker")
+    log = logging.getLogger("kb_platform.rollover_test")
+    for _ in range(3):
+        log.info("filler line " * 50)
+        # Force a rollover on each handler that supports it.
+        for h in logging.getLogger().handlers:
+            if isinstance(h, GzipTimedRotatingFileHandler):
+                h.doRollover()
+        time.sleep(0.01)
+    gz_files = list(tmp_path.glob("worker.log.*.gz"))
+    assert len(gz_files) >= 1, "rotated files should be gzipped"
+    # Pruning: at most backupCount rotated files (plus the active worker.log).
+    rotated = [p for p in tmp_path.glob("worker.log*") if p.name != "worker.log"]
+    assert len(rotated) <= 2

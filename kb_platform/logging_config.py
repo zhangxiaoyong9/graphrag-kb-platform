@@ -6,8 +6,11 @@ every LogRecord and the formatter renders them as ``[job=.. step=..]``.
 """
 from __future__ import annotations
 
+import gzip
 import logging
 import os
+import shutil
+import subprocess
 import sys
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -89,6 +92,50 @@ def get_log_context() -> dict[str, str]:
     return dict(_CTX.get({}))
 
 
+def compress_rotated(source: Path, dest: Path) -> None:
+    """Gzip ``source`` to ``dest`` and remove ``source``. Cross-platform.
+
+    Linux/macOS shell out to ``gzip -c`` (faster, native); Windows and any
+    subprocess failure fall back to Python's ``gzip`` module so logging never
+    crashes and the rotated file is never lost.
+    """
+    if sys.platform in ("linux", "darwin"):
+        try:
+            with open(dest, "wb") as out:
+                subprocess.run(
+                    ["gzip", "-c", str(source)],
+                    check=True,
+                    stdout=out,
+                    stderr=subprocess.PIPE,
+                )
+            source.unlink()
+            return
+        except (OSError, subprocess.CalledProcessError) as exc:
+            _LOGGER.warning(
+                "system gzip failed for %s; falling back to Python gzip: %s", source, exc
+            )
+    with open(source, "rb") as f_in, gzip.open(dest, "wb") as f_out:
+        shutil.copyfileobj(f_in, f_out)
+    source.unlink()
+
+
+class GzipTimedRotatingFileHandler(TimedRotatingFileHandler):
+    """TimedRotatingFileHandler that gzips each rotated file (cross-platform).
+
+    Overriding ``rotation_filename`` (append ``.gz``) and ``rotate`` (compress)
+    keeps ``getFilesToDelete`` pruning correct: it globs ``baseFilename + "*"``，
+    which matches ``.gz`` files, so backupCount retention still works.
+    """
+
+    def rotation_filename(self, default_name: str) -> str:  # type: ignore[override]
+        return super().rotation_filename(default_name) + ".gz"
+
+    def rotate(self, source: str, dest: str) -> None:  # type: ignore[override]
+        if not os.path.exists(source):
+            return
+        compress_rotated(Path(source), Path(dest))
+
+
 def _parse_log_levels(spec: str) -> dict[str, str]:
     """Parse ``a=DEBUG,b=WARNING`` into a dict. Empty/invalid entries skipped."""
     out: dict[str, str] = {}
@@ -119,8 +166,7 @@ def _build_file_handler(process: str, log_dir: Path) -> logging.Handler | None:
     backup_count = int(
         os.environ.get("KB_LOG_ROTATE_BACKUP_COUNT", str(defaults["backup_count"]))
     )
-    # GzipTimedRotatingFileHandler is swapped in by Task 2; plain handler for now.
-    fh = TimedRotatingFileHandler(
+    fh = GzipTimedRotatingFileHandler(
         filename=log_dir / f"{process}.log",
         when=when,
         interval=interval,
@@ -177,7 +223,9 @@ def setup_logging(process: Literal["server", "worker", "mcp"]) -> None:
 __all__ = [
     "ContextVarFilter",
     "ContextualFormatter",
+    "GzipTimedRotatingFileHandler",
     "bind_log_context",
+    "compress_rotated",
     "get_log_context",
     "setup_logging",
 ]
