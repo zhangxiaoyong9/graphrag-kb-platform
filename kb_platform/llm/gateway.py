@@ -7,6 +7,7 @@ extending the candidate-selection loop only."""
 from __future__ import annotations
 
 import itertools
+import logging
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field, replace
@@ -19,6 +20,8 @@ from kb_platform.llm.events import Done, Error, StreamEvent, TextDelta
 from kb_platform.llm.metrics import METRICS
 from kb_platform.llm.request import ProviderConfig, build_chat_request
 from kb_platform.llm.sse import parse_provider_stream
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -98,6 +101,9 @@ class FailoverGateway:
         last_error: str | None = None
         for idx, pk in self._candidates():
             cfg = self._cfg_with_key(pk)
+            logger.info(
+                "llm attempt provider=%s model=%s (stream)", cfg.provider, cfg.model
+            )
             url, headers, body = build_chat_request(
                 cfg, messages=req.messages, stream=True,
                 response_format=req.response_format, params=req.params,
@@ -110,6 +116,10 @@ class FailoverGateway:
                         self._on_attempt_error(idx, retriable=retriable)
                         if retriable and first_error_time is None:
                             first_error_time = time.time()
+                            logger.warning(
+                                "failover: provider=%s model=%s -> %s; reason=%s",
+                                cfg.provider, cfg.model, "next", last_error,
+                            )
                         continue
                     self._on_success(idx)
                     async for ev in parse_provider_stream(resp.aiter_lines()):
@@ -118,6 +128,10 @@ class FailoverGateway:
                             last_error = ev.message
                             if ev.retriable and first_error_time is None:
                                 first_error_time = time.time()
+                                logger.warning(
+                                    "failover: provider=%s model=%s -> %s; reason=%s",
+                                    cfg.provider, cfg.model, "next", last_error,
+                                )
                             break
                         if isinstance(ev, TextDelta) and not ttft_recorded:
                             METRICS.record_ttft((time.time() - t0) * 1000)
@@ -140,7 +154,12 @@ class FailoverGateway:
                 self._on_attempt_error(idx, retriable=True)
                 if first_error_time is None:
                     first_error_time = time.time()
+                    logger.warning(
+                        "failover: provider=%s model=%s -> %s; reason=%s",
+                        cfg.provider, cfg.model, "next", last_error,
+                    )
                 continue
+        logger.error("all %d profiles exhausted (stream)", len(self._pks))
         yield Error(message=last_error or "all profiles failed", retriable=False)
 
     @staticmethod
@@ -160,6 +179,9 @@ class FailoverGateway:
         last_error: str | None = None
         for idx, pk in self._candidates():
             cfg = self._cfg_with_key(pk)
+            logger.info(
+                "llm attempt provider=%s model=%s", cfg.provider, cfg.model
+            )
             url, headers, body = build_chat_request(
                 cfg, messages=req.messages, stream=False,
                 response_format=req.response_format, params=req.params,
@@ -172,6 +194,10 @@ class FailoverGateway:
                     self._on_attempt_error(idx, retriable=retriable)
                     if retriable and first_error_time is None:
                         first_error_time = time.time()
+                        logger.warning(
+                            "failover: provider=%s model=%s -> %s; reason=%s",
+                            cfg.provider, cfg.model, "next", last_error,
+                        )
                     continue
                 obj = resp.json()
                 content = ""
@@ -194,7 +220,12 @@ class FailoverGateway:
                 self._on_attempt_error(idx, retriable=True)
                 if first_error_time is None:
                     first_error_time = time.time()
+                    logger.warning(
+                        "failover: provider=%s model=%s -> %s; reason=%s",
+                        cfg.provider, cfg.model, "next", last_error,
+                    )
                 continue
+        logger.error("all %d profiles exhausted", len(self._pks))
         return GatewayResult(content="", usage=(0, 0), error=last_error or "all profiles failed")
 
     def _cfg_with_key(self, pk: _ProfileKeys) -> ProviderConfig:

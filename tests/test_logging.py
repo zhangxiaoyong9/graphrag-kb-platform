@@ -325,3 +325,125 @@ async def test_worker_logs_job_claim_and_done(tmp_path, monkeypatch, caplog):
 
     # unit_worker: at least one unit done-with-duration.
     assert any("done in" in m for m in unit_msgs), unit_msgs
+
+
+# --- Task 6: LLM gateway / circuit-breaker failover logs ---------------------
+
+import json  # noqa: E402
+
+import httpx  # noqa: E402
+
+from kb_platform.llm.gateway import ChatRequest, FailoverGateway  # noqa: E402
+from kb_platform.llm.circuit_breaker import CircuitBreaker  # noqa: E402
+from kb_platform.llm.request import ProviderConfig  # noqa: E402
+
+
+def test_breaker_logs_open_and_close(caplog):
+    """OPEN transition logs WARNING with the breaker name."""
+    cb = CircuitBreaker(failure_threshold=2, open_seconds=30.0, name="deepseek/main")
+    with caplog.at_level(logging.WARNING, logger="kb_platform.llm.circuit_breaker"):
+        cb.record_failure()  # 1
+        cb.record_failure()  # 2 -> OPEN
+    assert any(
+        "OPEN" in r.getMessage() and "deepseek/main" in r.getMessage()
+        for r in caplog.records
+    ), [r.getMessage() for r in caplog.records]
+
+
+def test_breaker_logs_recovery_close(caplog):
+    """open -> half_open (TTL elapsed) -> success closes with INFO."""
+    cb = CircuitBreaker(failure_threshold=1, open_seconds=30.0, name="p/m")
+    cb.record_failure()  # trips open
+    assert cb.state == "open"
+    cb._opened_at -= 31  # simulate TTL elapsed
+    assert cb.allow() is True  # -> half_open
+    with caplog.at_level(logging.INFO, logger="kb_platform.llm.circuit_breaker"):
+        cb.record_success()
+    assert any(
+        "closed" in r.getMessage() and "recovered" in r.getMessage()
+        for r in caplog.records
+    ), [r.getMessage() for r in caplog.records]
+
+
+@pytest.mark.asyncio
+async def test_gateway_logs_failover(caplog):
+    """Two profiles: first fails (5xx), second succeeds -> WARNING failover line.
+
+    Reuses the host-routed MockTransport pattern from
+    ``tests/llm/test_gateway_failover.py``: profile 0's host returns 500,
+    profile 1's host returns a 200 non-stream body.
+    """
+    primary_calls: list[int] = []
+    fallback_calls: list[int] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        host = request.url.host
+        if host == "primary.example":
+            primary_calls.append(1)
+            return httpx.Response(500, text="upstream boom")
+        if host == "fallback.example":
+            fallback_calls.append(1)
+            return httpx.Response(200, text=json.dumps({
+                "choices": [{"message": {"content": "ok"}}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 2},
+            }))
+        return httpx.Response(404, text="no route")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    profiles = [
+        ProviderConfig(provider="openai", model="gpt-4o", api_base="https://primary.example/v1",
+                       api_version=None, key="pk", ssl_verify=True),
+        ProviderConfig(provider="deepseek", model="main", api_base="https://fallback.example/v1",
+                       api_version=None, key="fk", ssl_verify=True),
+    ]
+    breakers = {i: CircuitBreaker(failure_threshold=5, open_seconds=30.0)
+                for i in range(len(profiles))}
+    gw = FailoverGateway(
+        profiles=profiles, client=client, breakers=breakers,
+        failure_threshold=5, open_seconds=30.0,
+    )
+    req = ChatRequest(messages=[], stream=False, response_format=None, params={})
+
+    with caplog.at_level(logging.INFO, logger="kb_platform.llm.gateway"):
+        res = await gw.collect(req)
+
+    assert res.error is None, res.error
+    assert primary_calls and fallback_calls == [1]
+    # Failover WARNING references the failing profile's provider/model.
+    warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any("failover" in m.lower() and "openai" in m and "gpt-4o" in m
+               for m in warnings), warnings
+    # All-exhausted ERROR is NOT emitted because fallback succeeded.
+    assert not any("exhausted" in r.getMessage() for r in caplog.records)
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_gateway_logs_all_profiles_exhausted(caplog):
+    """Both profiles fail (5xx) -> ERROR 'all profiles exhausted'."""
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="upstream boom")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    profiles = [
+        ProviderConfig(provider="openai", model="gpt-4o", api_base="https://a.example/v1",
+                       api_version=None, key="k1", ssl_verify=True),
+        ProviderConfig(provider="deepseek", model="main", api_base="https://b.example/v1",
+                       api_version=None, key="k2", ssl_verify=True),
+    ]
+    breakers = {i: CircuitBreaker(failure_threshold=5, open_seconds=30.0)
+                for i in range(len(profiles))}
+    gw = FailoverGateway(
+        profiles=profiles, client=client, breakers=breakers,
+        failure_threshold=5, open_seconds=30.0,
+    )
+    req = ChatRequest(messages=[], stream=False, response_format=None, params={})
+
+    with caplog.at_level(logging.INFO, logger="kb_platform.llm.gateway"):
+        res = await gw.collect(req)
+
+    assert res.error is not None
+    errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
+    assert any("exhausted" in m for m in errors), errors
+    await client.aclose()

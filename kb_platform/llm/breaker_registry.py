@@ -46,7 +46,9 @@ def breaker_for(
         entry = _ENTRIES.get(k)
         if entry is None:
             cb = CircuitBreaker(
-                failure_threshold=failure_threshold, open_seconds=open_seconds
+                failure_threshold=failure_threshold,
+                open_seconds=open_seconds,
+                name=f"{cfg.provider}/{cfg.model}",
             )
             entry = (cb, cfg)
             _ENTRIES[k] = entry
