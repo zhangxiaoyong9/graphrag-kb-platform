@@ -447,3 +447,64 @@ async def test_gateway_logs_all_profiles_exhausted(caplog):
     errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
     assert any("exhausted" in m for m in errors), errors
     await client.aclose()
+
+
+# --- Task 7: query-path lifecycle logs + first-token + rewrite ---------------
+
+from kb_platform.query.engine import FakeQueryEngine  # noqa: E402
+
+
+def _query_app(tmp_path):
+    """App with an injected FakeQueryEngine — same shape as tests/test_api_query.py."""
+    engine = _create_engine(f"sqlite:///{tmp_path}/t.db")
+    Base.metadata.create_all(engine)
+    return TestClient(
+        create_app(
+            Repository(engine),
+            data_root=str(tmp_path),
+            query_engine=FakeQueryEngine(),
+        )
+    )
+
+
+def test_query_route_logs_start_first_token_and_done(tmp_path, monkeypatch, capsys):
+    """POST /kbs/{id}/query logs query start (method+kb), first token, and done."""
+    monkeypatch.setenv("KB_LOG_DIR", str(tmp_path))
+    monkeypatch.setenv("KB_LOG_CONSOLE", "true")
+    setup_logging("server")
+    with _query_app(tmp_path) as client:
+        client.post("/kbs", json={"name": "kb1", "method": "standard", "settings_yaml": "{}"})
+        r = client.post("/kbs/1/query", json={"method": "local", "query": "what is ACME?"})
+        assert r.status_code == 200, r.text
+    err = capsys.readouterr().err
+    assert "query start" in err, err
+    assert "method=local" in err, err
+    assert "query first token" in err, err
+    assert "query done" in err, err
+    assert "deltas=" in err, err
+    # query_id + kb_id correlation block is present on the lifecycle lines.
+    assert "query=" in err and "kb=1" in err, err
+
+
+def test_query_route_no_first_token_when_engine_errors(tmp_path, monkeypatch, capsys):
+    """No 'query first token' when the engine build path errors out (no deltas)."""
+    monkeypatch.setenv("KB_LOG_DIR", str(tmp_path))
+    monkeypatch.setenv("KB_LOG_CONSOLE", "true")
+    setup_logging("server")
+    # No injected engine + no real KB content -> engine build fails gracefully,
+    # yielding an SSE 'error' event with NO deltas.
+    engine = _create_engine(f"sqlite:///{tmp_path}/t.db")
+    Base.metadata.create_all(engine)
+    client = TestClient(create_app(Repository(engine), data_root=str(tmp_path)))
+    client.post("/kbs", json={"name": "kb1", "method": "standard", "settings_yaml": "{}"})
+    r = client.post("/kbs/1/query", json={"method": "global", "query": "hello"})
+    assert r.status_code == 200
+    capsys.readouterr()  # discard setup noise; check the request line directly
+    # We already read; the relevant logs were already emitted. Re-assert from
+    # the captured buffer by re-driving is awkward, so just verify absence in
+    # the original capture by re-reading after a second request.
+    r2 = client.post("/kbs/1/query", json={"method": "global", "query": "again"})
+    assert r2.status_code == 200
+    err2 = capsys.readouterr().err
+    assert "query start" in err2  # start always fires
+    assert "query first token" not in err2, err2  # no delta ever yielded

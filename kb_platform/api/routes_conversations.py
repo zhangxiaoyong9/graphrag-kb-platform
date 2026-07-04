@@ -6,6 +6,9 @@ Single-shot ``POST /kbs/{id}/query`` (MCP, query-test page) is unchanged; this
 is the multi-turn path that runs ConversationService above the QueryEngine.
 """
 import json
+import logging
+import time
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request
 from starlette.responses import StreamingResponse
@@ -23,6 +26,7 @@ from kb_platform.api.sse import format_sse
 from kb_platform.conversation.service import ConversationService
 from kb_platform.query.params import resolve_query_params
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -120,51 +124,64 @@ async def send_message(conv_id: int, payload: MessageSend, request: Request):
     data_root = request.app.state.data_root
 
     async def gen():
-        # Production: resolve KB settings, build a real engine + rewriter.
-        if engine is None:
-            conv = repo.get_conversation(conv_id)
-            kb = repo.get_kb(conv.kb_id) if conv else None
-            if kb is None:
-                yield format_sse("error", {"message": f"conversation {conv_id} has no kb"})
-                return
-            from kb_platform.conversation.rewriter import LlmRewriter
-            from kb_platform.graph.graphrag_adapter import assemble_kb_settings, build_chat_complete
-            from kb_platform.query.factory import build_query_engine
+        from kb_platform.logging_config import bind_log_context
 
+        query_id = uuid4().hex[:12]
+        t0 = time.perf_counter()
+        conv = repo.get_conversation(conv_id)
+        kb_id = conv.kb_id if conv else None
+        with bind_log_context(query_id=query_id, kb_id=kb_id):
+            logger.info("conversation message start conv=%s", conv_id)
             try:
-                settings = assemble_kb_settings(kb, repo)
-                kb_settings = json.loads(kb.settings_json or "{}")
-                resolved = resolve_query_params(kb_settings, None)
-            except Exception as exc:  # noqa: BLE001 - graceful error, never 500
-                yield format_sse("error", {"message": f"settings resolution failed: {exc}"})
-                return
-            try:
-                # method defaults to "local" (MessageSend.method is optional);
-                # build_query_engine dispatches to Neo4j for cypher/hybrid when the
-                # KB has a neo4j_profile_id, else graphrag.
-                method = payload.method or "local"
-                local_engine = build_query_engine(method, kb, repo, request.app.state)
-                try:
-                    local_rewriter = LlmRewriter(build_chat_complete(settings))
-                except Exception:  # noqa: BLE001 - rewriter optional
-                    local_rewriter = None
-            except Exception as exc:  # noqa: BLE001 - graceful error, never 500
-                yield format_sse("error", {"message": f"engine build failed: {exc}"})
-                return
-        else:
-            local_engine = engine
-            local_rewriter = rewriter
-            # Injected-engine branch: no KB at hand, so resolve from empty
-            # settings (per-query=None -> all-None QueryParams).
-            resolved = resolve_query_params({}, None)
+                # Production: resolve KB settings, build a real engine + rewriter.
+                if engine is None:
+                    kb = repo.get_kb(conv.kb_id) if conv else None
+                    if kb is None:
+                        yield format_sse("error", {"message": f"conversation {conv_id} has no kb"})
+                        return
+                    from kb_platform.conversation.rewriter import LlmRewriter
+                    from kb_platform.graph.graphrag_adapter import assemble_kb_settings, build_chat_complete
+                    from kb_platform.query.factory import build_query_engine
 
-        service = ConversationService(repo, local_engine, local_rewriter, data_root)
-        async for ev in service.send_streaming(
-            conv_id, payload.content, payload.method, params=resolved
-        ):
-            if ev.type == "done" and ev.message is not None:
-                yield format_sse("done", {"message": _message_out(ev.message).model_dump(mode="json")})
-            else:
-                yield format_sse(ev.type, ev.data)
+                    try:
+                        settings = assemble_kb_settings(kb, repo)
+                        kb_settings = json.loads(kb.settings_json or "{}")
+                        resolved = resolve_query_params(kb_settings, None)
+                    except Exception as exc:  # noqa: BLE001 - graceful error, never 500
+                        yield format_sse("error", {"message": f"settings resolution failed: {exc}"})
+                        return
+                    try:
+                        # method defaults to "local" (MessageSend.method is optional);
+                        # build_query_engine dispatches to Neo4j for cypher/hybrid when the
+                        # KB has a neo4j_profile_id, else graphrag.
+                        method = payload.method or "local"
+                        local_engine = build_query_engine(method, kb, repo, request.app.state)
+                        try:
+                            local_rewriter = LlmRewriter(build_chat_complete(settings))
+                        except Exception:  # noqa: BLE001 - rewriter optional
+                            local_rewriter = None
+                    except Exception as exc:  # noqa: BLE001 - graceful error, never 500
+                        yield format_sse("error", {"message": f"engine build failed: {exc}"})
+                        return
+                else:
+                    local_engine = engine
+                    local_rewriter = rewriter
+                    # Injected-engine branch: no KB at hand, so resolve from empty
+                    # settings (per-query=None -> all-None QueryParams).
+                    resolved = resolve_query_params({}, None)
+
+                service = ConversationService(repo, local_engine, local_rewriter, data_root)
+                async for ev in service.send_streaming(
+                    conv_id, payload.content, payload.method, params=resolved
+                ):
+                    if ev.type == "done" and ev.message is not None:
+                        yield format_sse("done", {"message": _message_out(ev.message).model_dump(mode="json")})
+                    else:
+                        yield format_sse(ev.type, ev.data)
+            finally:
+                logger.info(
+                    "conversation message done in %.0fms",
+                    (time.perf_counter() - t0) * 1000,
+                )
 
     return StreamingResponse(gen(), media_type="text/event-stream")

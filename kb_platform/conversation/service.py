@@ -92,8 +92,15 @@ class ConversationService:
         (rewrote, rewrite_fell_back, prompt_tokens, output_tokens, standalone)."""
         if not history or self._rewriter is None:
             return False, False, 0, 0, content
+        import time
+
+        t0 = time.perf_counter()
         try:
             rr = await self._rewriter.rewrite(content, history)
+            logger.info(
+                "rewrite done in %.0fms -> %.60s",
+                (time.perf_counter() - t0) * 1000, rr.standalone,
+            )
             return True, False, rr.prompt_tokens, rr.output_tokens, rr.standalone
         except Exception:  # noqa: BLE001 - fall back to raw message, never block
             logger.exception("query rewrite failed; falling back to raw message")
