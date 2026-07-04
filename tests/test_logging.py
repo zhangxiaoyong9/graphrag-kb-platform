@@ -242,3 +242,91 @@ def test_middleware_logs_request_start_and_done(tmp_path, monkeypatch, capsys):
     assert "request start" in err
     assert "request done" in err
     assert "GET /kbs" in err
+
+
+# --- Task 5: job/step/unit lifecycle logs ----------------------------------
+
+from kb_platform.graph.adapter import FakeGraphAdapter  # noqa: E402
+from kb_platform.worker import run_worker_once  # noqa: E402
+from conftest import seed_profile  # noqa: E402
+from kb_platform.db.enums import JobStatus  # noqa: E402
+
+
+def _seed_pending_job(tmp_path) -> tuple:
+    """Build an in-memory-style SQLite repo with one KB + doc + pending full job.
+
+    Mirrors tests/test_e2e_backend_service.py: in-process SQLite, Base metadata
+    create_all, a provider profile (Fernet key set by autouse conftest fixture),
+    one KB, one oversized doc (so chunking yields chunks), and one pending job.
+    """
+    engine = _create_engine(f"sqlite:///{tmp_path}/kb.db")
+    Base.metadata.create_all(engine)
+    repo = Repository(engine)
+    client = TestClient(create_app(repo, data_root=str(tmp_path)))
+    pid = seed_profile(client)
+    r = client.post(
+        "/kbs",
+        json={"name": "kb1", "method": "standard", "settings_yaml": "{}", "llm_profile_id": pid},
+    )
+    assert r.status_code == 201
+    r = client.post(
+        "/kbs/1/documents",
+        json={"title": "d", "text": "ACME Org Bob Person Foo Bar Baz " * 200},
+    )
+    assert r.status_code == 201
+    job_id = client.post("/kbs/1/jobs", json={"method": "standard"}).json()["id"]
+    assert client.get(f"/jobs/{job_id}").json()["status"] == "pending"
+    return repo, job_id
+
+
+@pytest.mark.asyncio
+async def test_worker_logs_job_claim_and_done(tmp_path, monkeypatch, caplog):
+    """run_worker_once emits lifecycle logs at worker / orchestrator / unit_worker.
+
+    One end-to-end fake job covers all three layers' correlation IDs:
+    worker binds job_id (+kb_id); orchestrator's _run_step binds step_id;
+    unit_worker's _process binds unit_id.
+    """
+    monkeypatch.setenv("KB_LOG_DIR", str(tmp_path))
+    setup_logging("worker")
+    # Prior tests in this module (test_per_logger_override) may have lowered
+    # the per-logger level on kb_platform.engine.unit_worker / orchestrator and
+    # that state is process-global. Reset to NOTSET so they inherit the root
+    # INFO level set by setup_logging, letting caplog see the lifecycle logs.
+    for name in (
+        "kb_platform.engine.unit_worker",
+        "kb_platform.engine.orchestrator",
+        "kb_platform.worker",
+    ):
+        logging.getLogger(name).setLevel(logging.NOTSET)
+    repo, job_id = _seed_pending_job(tmp_path)
+
+    with caplog.at_level(logging.INFO):
+        await run_worker_once(
+            repo=repo,
+            adapter_factory=lambda kb: FakeGraphAdapter(),
+            heartbeat_interval=0.01,
+        )
+
+    assert repo.get_job(job_id).status == JobStatus.SUCCEEDED
+
+    worker_msgs = [r.getMessage() for r in caplog.records if r.name == "kb_platform.worker"]
+    orch_msgs = [
+        r.getMessage() for r in caplog.records if r.name == "kb_platform.engine.orchestrator"
+    ]
+    unit_msgs = [
+        r.getMessage() for r in caplog.records if r.name == "kb_platform.engine.unit_worker"
+    ]
+
+    # worker: claim + done-with-duration, both carrying job_id in context.
+    assert any("claimed" in m for m in worker_msgs), worker_msgs
+    assert any("done in" in m for m in worker_msgs), worker_msgs
+    claimed_records = [r for r in caplog.records if r.name == "kb_platform.worker" and "claimed" in r.getMessage()]
+    assert all(getattr(r, "job_id", None) == str(job_id) for r in claimed_records)
+
+    # orchestrator: at least one step start + one step done-with-duration.
+    assert any("start" in m for m in orch_msgs), orch_msgs
+    assert any("done in" in m for m in orch_msgs), orch_msgs
+
+    # unit_worker: at least one unit done-with-duration.
+    assert any("done in" in m for m in unit_msgs), unit_msgs
