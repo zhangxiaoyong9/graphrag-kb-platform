@@ -186,3 +186,17 @@ def test_file_handler_gzips_on_rollover(tmp_path, monkeypatch):
     # Pruning: at most backupCount rotated files (plus the active worker.log).
     rotated = [p for p in tmp_path.glob("worker.log*") if p.name != "worker.log"]
     assert len(rotated) <= 2
+
+
+# --- Task 3: entrypoint guards --------------------------------------------
+
+import sys  # noqa: E402
+
+
+def test_mcp_never_logs_to_stdout(tmp_path, monkeypatch):
+    """stdio MCP: stdout is JSON-RPC — setup_logging('mcp') must not attach a stdout handler."""
+    monkeypatch.setenv("KB_LOG_DIR", str(tmp_path))
+    setup_logging("mcp")
+    for h in logging.getLogger().handlers:
+        stream = getattr(h, "stream", None)
+        assert stream is not sys.stdout, "MCP process must never log to stdout"

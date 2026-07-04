@@ -140,6 +140,13 @@ def run_worker(
     import signal
     import threading
 
+    from kb_platform.logging_config import setup_logging
+
+    # Centralized logging for the worker process BEFORE the LLM bootstrap runs
+    # (so the bootstrap's own logs are captured). Tests call run_worker_once
+    # directly and don't want this side effect, hence it lives here only.
+    setup_logging("worker")
+
     # Register kb_native factories before any adapter is built (idempotent).
     # Import is inside run_worker so unit tests that import the worker module
     # don't pay the registry cost / trigger import-time side effects.

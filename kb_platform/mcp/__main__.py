@@ -36,6 +36,12 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    from kb_platform.logging_config import setup_logging
+
+    # stdio transport: setup_logging('mcp') attaches only stderr + file handlers,
+    # NEVER stdout (stdout is the JSON-RPC channel — see logging_config stdout guard).
+    setup_logging("mcp")
+
     server = build_mcp_server(KbApiClient(args.api_url))
     # stdio is the default; pass it explicitly for clarity and version-stability.
     server.run(transport="stdio")
