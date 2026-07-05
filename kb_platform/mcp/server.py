@@ -74,6 +74,39 @@ class KbApiClient:
         except httpx.HTTPError as exc:
             raise KbApiError(f"POST {path} failed: {exc}") from exc
 
+    async def get_kb(self, kb_id: int) -> dict:
+        """GET /kbs/{id} + /kbs/{id}/stats → {id, name, method, stats: {...}}.
+
+        Stats fields are None when the KB has no snapshot yet (unindexed).
+        """
+        detail = await self._get_json(f"/kbs/{kb_id}")
+        stats = await self._get_json(f"/kbs/{kb_id}/stats")
+        if not isinstance(detail, dict) or not isinstance(stats, dict):
+            raise KbApiError(f"unexpected response shape for kb {kb_id}")
+        return {"id": detail["id"], "name": detail["name"],
+                "method": detail["method"], "stats": stats}
+
+    async def list_documents(self, kb_id: int) -> list[dict]:
+        """GET /kbs/{id}/documents → [{id, title, status, bytes, chunk_count}, ...]."""
+        data = await self._get_json(f"/kbs/{kb_id}/documents")
+        if not isinstance(data, list):
+            raise KbApiError(f"unexpected response shape for documents of kb {kb_id}")
+        return data
+
+    async def get_document(self, kb_id: int, doc_id: int) -> dict:
+        """GET /kbs/{id}/documents/{doc_id} → {id, title, text, citations: [...], ...}."""
+        return await self._get_json(f"/kbs/{kb_id}/documents/{doc_id}")
+
+    async def search_graph(self, kb_id: int, q: str, hop: int = 1, limit: int = 200) -> dict:
+        """GET /kbs/{id}/graph?q=&hop=&limit= → {nodes: [...], edges: [...]}."""
+        from urllib.parse import quote
+
+        path = f"/kbs/{kb_id}/graph?q={quote(q)}&hop={hop}&limit={limit}"
+        data = await self._get_json(path)
+        if not isinstance(data, dict):
+            raise KbApiError(f"unexpected response shape for graph of kb {kb_id}")
+        return data
+
     async def aclose(self) -> None:
         if self._owns_http:
             await self._http.aclose()

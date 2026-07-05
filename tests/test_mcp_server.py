@@ -211,3 +211,95 @@ async def test_build_mcp_server_registers_both_tools(app):
         assert {"list_knowledge_bases", "query_knowledge_base"} <= names
     finally:
         await http.aclose()
+
+
+def _seed_kb_with_data(tmp_path, app, *, docs=True, graph=True, stats=True):
+    """Seed KB id=1 with documents/chunks (SQLite) + parquet + stats.json.
+
+    Reuses the _make_app KB rows; adds the data the new tools read. The KB's
+    data_root is tmp_path (set by _make_app), so parquet/stats land there.
+    """
+    import json as _json
+
+    import pandas as pd
+
+    from kb_platform.db.models import Chunk
+    from kb_platform.db.repository import Repository
+
+    repo = Repository(app.state.repo.engine)
+    if docs:
+        doc = repo.add_document(kb_id=1, title="Latency SLO spec", text="p99 < 200ms.")
+        repo.add_chunks([
+            Chunk(chunk_id="c1", kb_id=1, document_id=doc.id, ordinal=0,
+                  text="p99 < 200ms.", token_count=5),
+        ])
+    if graph:
+        pd.DataFrame({
+            "title": ["ACME", "Beta"], "type": ["ORG", "ORG"], "degree": [3, 1],
+        }).to_parquet(tmp_path / "entities.parquet", index=False)
+        pd.DataFrame({
+            "source": ["ACME"], "target": ["Beta"], "weight": [2.0],
+            "description": ["ACME supplies Beta"],
+        }).to_parquet(tmp_path / "relationships.parquet", index=False)
+    if stats:
+        (tmp_path / "stats.json").write_text(_json.dumps({
+            "document_count": 1, "chunk_count": 1, "entity_count": 2,
+            "relationship_count": 1, "community_count": 0,
+            "community_report_count": 0, "text_unit_count": 1,
+        }))
+
+
+# --- new read-only KbApiClient methods ---------------------------------
+
+
+async def test_client_get_kb_returns_detail_and_stats(tmp_path):
+    app = _make_app(tmp_path)
+    _seed_kb_with_data(tmp_path, app)
+    client, http = await _client_for(app)
+    try:
+        kb = await client.get_kb(kb_id=1)
+        assert kb["id"] == 1
+        assert kb["name"] == "alpha"
+        assert kb["stats"]["entity_count"] == 2
+        assert kb["stats"]["community_report_count"] == 0
+    finally:
+        await http.aclose()
+
+
+async def test_client_list_documents_returns_docs(tmp_path):
+    app = _make_app(tmp_path)
+    _seed_kb_with_data(tmp_path, app)
+    client, http = await _client_for(app)
+    try:
+        docs = await client.list_documents(kb_id=1)
+        assert len(docs) == 1
+        assert docs[0]["title"] == "Latency SLO spec"
+        assert docs[0]["chunk_count"] == 1
+    finally:
+        await http.aclose()
+
+
+async def test_client_get_document_returns_text_and_chunks(tmp_path):
+    app = _make_app(tmp_path)
+    _seed_kb_with_data(tmp_path, app)
+    client, http = await _client_for(app)
+    try:
+        doc = await client.get_document(kb_id=1, doc_id=1)
+        assert doc["title"] == "Latency SLO spec"
+        assert "p99" in doc["text"]
+        assert len(doc["citations"]) == 1
+    finally:
+        await http.aclose()
+
+
+async def test_client_search_graph_returns_nodes_and_edges(tmp_path):
+    app = _make_app(tmp_path)
+    _seed_kb_with_data(tmp_path, app)
+    client, http = await _client_for(app)
+    try:
+        g = await client.search_graph(kb_id=1, q="ACME", hop=1)
+        titles = {n["title"] for n in g["nodes"]}
+        assert "ACME" in titles
+        assert any(e["source"] == "ACME" for e in g["edges"])
+    finally:
+        await http.aclose()
