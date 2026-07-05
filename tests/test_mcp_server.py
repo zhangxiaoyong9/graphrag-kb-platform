@@ -201,14 +201,71 @@ async def test_tool_query_trims_sources_on_success():
 # --- server wiring ------------------------------------------------------
 
 
-async def test_build_mcp_server_registers_both_tools(app):
+async def test_build_mcp_server_registers_all_tools(app):
     from kb_platform.mcp.server import build_mcp_server
 
     client, http = await _client_for(app)
     try:
         server = build_mcp_server(client)
         names = {t.name for t in await server.list_tools()}
-        assert {"list_knowledge_bases", "query_knowledge_base"} <= names
+        assert {
+            "list_knowledge_bases", "query_knowledge_base",
+            "get_kb_details", "list_documents", "get_document", "search_graph",
+        } <= names
+    finally:
+        await http.aclose()
+
+
+async def test_tool_get_kb_details_returns_readiness(tmp_path):
+    from kb_platform.mcp.server import get_kb_details
+    app = _make_app(tmp_path)
+    _seed_kb_with_data(tmp_path, app)
+    client, http = await _client_for(app)
+    try:
+        out = await get_kb_details(client, kb_id=1)
+        assert out["name"] == "alpha"
+        assert out["stats"]["entity_count"] == 2
+        assert out["available_methods"] == ["local", "basic"]  # no community reports
+    finally:
+        await http.aclose()
+
+
+async def test_tool_list_documents_passes_through(tmp_path):
+    from kb_platform.mcp.server import list_documents as list_docs_tool
+    app = _make_app(tmp_path)
+    _seed_kb_with_data(tmp_path, app)
+    client, http = await _client_for(app)
+    try:
+        out = await list_docs_tool(client, kb_id=1)
+        assert out[0]["title"] == "Latency SLO spec"
+    finally:
+        await http.aclose()
+
+
+async def test_tool_get_document_trims_for_agent(tmp_path):
+    """Full text is kept; chunk citations are slimmed to {ordinal, snippet, chunk_id}."""
+    from kb_platform.mcp.server import get_document as get_doc_tool
+    app = _make_app(tmp_path)
+    _seed_kb_with_data(tmp_path, app)
+    client, http = await _client_for(app)
+    try:
+        out = await get_doc_tool(client, kb_id=1, doc_id=1)
+        assert "p99" in out["text"]
+        assert out["chunks"][0] == {"ordinal": 0, "chunk_id": "c1",
+                                     "snippet": out["chunks"][0]["snippet"]}
+        assert "label" not in out["chunks"][0]  # internal label dropped
+    finally:
+        await http.aclose()
+
+
+async def test_tool_search_graph_passes_through(tmp_path):
+    from kb_platform.mcp.server import search_graph
+    app = _make_app(tmp_path)
+    _seed_kb_with_data(tmp_path, app)
+    client, http = await _client_for(app)
+    try:
+        out = await search_graph(client, kb_id=1, q="ACME", hop=1)
+        assert any(n["title"] == "ACME" for n in out["nodes"])
     finally:
         await http.aclose()
 
