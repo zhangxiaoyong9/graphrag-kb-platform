@@ -20,3 +20,6 @@ web/playwright-report/
 
 # Playwright MCP browser snapshots (local tooling artifacts)
 .playwright-mcp/
+
+# Runtime logs (per-process rotated + gzipped by kb_platform.logging_config)
+logs/

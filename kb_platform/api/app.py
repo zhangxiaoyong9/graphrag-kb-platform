@@ -7,9 +7,12 @@ routing (e.g. `/kbs/1/jobs/5`). API routers are registered BEFORE the
 catch-all, so explicit API routes (like `GET /kbs`) always win.
 """
 
+import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse
@@ -79,6 +82,40 @@ def create_app(
     )
     app.state.rewriter = rewriter  # None = build real per-KB (production); injected in tests
 
+    @app.middleware("http")
+    async def request_id_middleware(request: Request, call_next):
+        """Bind a per-request id, log start/done, stamp X-Request-ID on the response.
+
+        NOTE: for SSE/StreamingResponse, ``call_next`` returns once headers are
+        sent; the body streams after. So the "request done" line below marks
+        dispatch time, not full stream completion. Per-stream timing lives in
+        the route generator (see routes_query). Don't double-count.
+        """
+        from kb_platform.logging_config import bind_log_context
+
+        request_id = uuid4().hex[:12]
+        api_log = logging.getLogger("kb_platform.api")
+        with bind_log_context(request_id=request_id):
+            api_log.info("request start %s %s", request.method, request.url.path)
+            t0 = time.perf_counter()
+            try:
+                response = await call_next(request)
+            except Exception:
+                api_log.exception(
+                    "request failed %s %s", request.method, request.url.path
+                )
+                raise
+            duration_ms = (time.perf_counter() - t0) * 1000
+            api_log.info(
+                "request done %s %s -> %d %.1fms",
+                request.method,
+                request.url.path,
+                response.status_code,
+                duration_ms,
+            )
+            response.headers["X-Request-ID"] = request_id
+            return response
+
     # API routers registered first -> matched before the catch-all below.
     app.include_router(router)
     app.include_router(jobs_router)
@@ -121,10 +158,16 @@ def create_app(
             ):
                 # no-store + Vary: Sec-Fetch-Mode: this URL also serves JSON to XHR,
                 # so the navigation HTML must neither be cached nor reused for a fetch.
-                return FileResponse(
-                    dist / "index.html",
-                    headers={"Cache-Control": "no-store", "Vary": "Sec-Fetch-Mode"},
-                )
+                # Forward X-Request-ID (stamped by the inner request_id_middleware)
+                # so end-to-end correlation survives the swap (spec §6.5).
+                nav_headers = {
+                    "Cache-Control": "no-store",
+                    "Vary": "Sec-Fetch-Mode",
+                }
+                request_id = response.headers.get("x-request-id")
+                if request_id:
+                    nav_headers["X-Request-ID"] = request_id
+                return FileResponse(dist / "index.html", headers=nav_headers)
             return response
 
     return app

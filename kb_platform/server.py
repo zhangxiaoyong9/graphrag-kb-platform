@@ -27,6 +27,12 @@ def main() -> None:
     from kb_platform.db.engine import create_engine
     from kb_platform.db.repository import Repository
     from kb_platform.llm.bootstrap import bootstrap as _bootstrap_llm
+    from kb_platform.logging_config import setup_logging
+
+    # Centralized logging FIRST, before any other code logs. uvicorn is told
+    # log_config=None below so it doesn't reconfigure logging; its `uvicorn` /
+    # `uvicorn.access` loggers propagate to our root handlers instead.
+    setup_logging("server")
 
     # Register kb_native completion/embedding factories before any adapter is
     # built (idempotent). Import is inside main() to keep module import clean.
@@ -43,7 +49,10 @@ def main() -> None:
     # Force the native asyncio loop: graphrag_llm runs nest_asyncio.apply()
     # at import, which cannot patch uvloop (uvicorn auto-selects uvloop when
     # installed -> "Can't patch loop of type <class 'uvloop.Loop'>").
-    uvicorn.run(app, host=host, port=port, loop="asyncio")
+    # log_config=None keeps uvicorn from reconfiguring logging so our root
+    # handlers (set up above via setup_logging) own the layout and the
+    # `uvicorn` / `uvicorn.access` loggers propagate to them.
+    uvicorn.run(app, host=host, port=port, loop="asyncio", log_config=None)
 
 
 if __name__ == "__main__":

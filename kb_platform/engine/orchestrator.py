@@ -1,6 +1,7 @@
 """Orchestrator: build the step plan and drive a job to completion."""
 
 import logging
+import time
 
 from kb_platform.db.enums import JobStatus, StepKind, StepStatus
 from kb_platform.db.models import Chunk
@@ -99,7 +100,7 @@ class Orchestrator:
         try:
             job = self.repo.get_job(job_id)
             plan_name = "plan_incremental" if job.type == "incremental" else "plan_full"
-            logger.debug("job %s using %s", job_id, plan_name)
+            logger.info("job %s using %s", job_id, plan_name)
             # plan 只用于日志/校验;steps 在 create_job_pending 时已按 type 建好
             for step in self.repo.get_steps(job_id):
                 if step.status == StepStatus.SUCCEEDED:
@@ -132,19 +133,38 @@ class Orchestrator:
             raise
 
     async def _run_step(self, step, min_success_ratio: float) -> None:
+        from kb_platform.logging_config import bind_log_context
+
         self.repo.set_step_status(step.id, StepStatus.RUNNING)
-        try:
-            await self._dispatch_step(step, min_success_ratio)
-        except Exception:
-            # A raised step must not be stranded at RUNNING. unit_fanout steps
-            # normally reach a terminal status via strategy.finalize, but a blowup
-            # before/inside finalize — and *any* atomic step failure (e.g.
-            # generate_text_embeddings when the embed endpoint is down, which has
-            # no units to record the error) — would otherwise leave the step row
-            # at RUNNING forever, hiding the failure and blocking retry. Mark it
-            # FAILED so the job-level handler and the retry path see a terminal step.
-            self.repo.set_step_status(step.id, StepStatus.FAILED)
-            raise
+        with bind_log_context(step_id=step.id):
+            logger.info(
+                "step %s [%s] start; kind=%s", step.id, step.name, step.kind
+            )
+            t0 = time.perf_counter()
+            try:
+                await self._dispatch_step(step, min_success_ratio)
+            except Exception:
+                # A raised step must not be stranded at RUNNING. unit_fanout steps
+                # normally reach a terminal status via strategy.finalize, but a blowup
+                # before/inside finalize — and *any* atomic step failure (e.g.
+                # generate_text_embeddings when the embed endpoint is down, which has
+                # no units to record the error) — would otherwise leave the step row
+                # at RUNNING forever, hiding the failure and blocking retry. Mark it
+                # FAILED so the job-level handler and the retry path see a terminal step.
+                self.repo.set_step_status(step.id, StepStatus.FAILED)
+                logger.exception("step %s [%s] failed", step.id, step.name)
+                raise
+            counts = (
+                self.repo.unit_counts_by_status(step.id)
+                if step.kind == StepKind.UNIT_FANOUT
+                else {}
+            )
+            ok = counts.get("succeeded", 0)
+            failed = counts.get("failed", 0)
+            logger.info(
+                "step %s [%s] done in %.0fms; ok=%s failed=%s",
+                step.id, step.name, (time.perf_counter() - t0) * 1000, ok, failed,
+            )
 
     async def _dispatch_step(self, step, min_success_ratio: float) -> None:
         if step.kind == StepKind.ATOMIC:
@@ -210,6 +230,7 @@ class Orchestrator:
         job = self.repo.get_job(step.job_id)
         chunks: list[Chunk] = []
         for doc in self.repo.get_documents(job.kb_id):
+            doc_chunks = 0
             for ordinal, piece in enumerate(self.adapter.chunk_document(doc.id, doc.text or "")):
                 chunks.append(
                     Chunk(
@@ -220,6 +241,10 @@ class Orchestrator:
                         text=piece.text,
                     )
                 )
+                doc_chunks += 1
+            logger.info(
+                "chunked doc=%s into %d chunks (kb=%s)", doc.id, doc_chunks, job.kb_id
+            )
         self.repo.add_chunks(chunks)
         # Write text_units.parquet so the embeddings step can embed chunk text
         with session_scope(self.repo.engine) as s:

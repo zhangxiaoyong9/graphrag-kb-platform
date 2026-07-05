@@ -119,12 +119,16 @@ class RealtimeHub:
             bc = JobBroadcaster(job_id=job_id, repo=self.repo)
             self.broadcasters[job_id] = bc
         bc.subscribers.add(ws)
+        logger.info("realtime subscribe job=%s; subscribers=%d", job_id, len(bc.subscribers))
         return bc.snapshot()
 
     def unsubscribe(self, job_id: int, ws) -> None:
         bc = self.broadcasters.get(job_id)
         if bc is not None:
             bc.subscribers.discard(ws)
+            logger.info(
+                "realtime unsubscribe job=%s; subscribers=%d", job_id, len(bc.subscribers)
+            )
             if not bc.subscribers:
                 del self.broadcasters[job_id]
 

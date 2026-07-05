@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Callable
@@ -70,36 +71,46 @@ async def run_worker_once(
     if job is None:
         return
 
-    try:
-        with session_scope(repo.engine) as s:
-            kb = s.scalar(select(KnowledgeBase).where(KnowledgeBase.id == job.kb_id))
-            if kb is None:
-                raise ValueError(f"job {job.id} references missing kb {job.kb_id}")
-            data_root = kb.data_root
-            settings_json = kb.settings_json
-            llm_profile_id = kb.llm_profile_id
-            embedding_profile_id = kb.embedding_profile_id
-            llm_fallback_profile_ids = kb.llm_fallback_profile_ids
+    from kb_platform.logging_config import bind_log_context
 
-        adapter = adapter_factory(
-            _SettingsKb(
-                settings_json=settings_json,
-                data_root=data_root,
-                llm_profile_id=llm_profile_id,
-                embedding_profile_id=embedding_profile_id,
-                llm_fallback_profile_ids=llm_fallback_profile_ids,
+    with bind_log_context(job_id=job.id, kb_id=job.kb_id):
+        t0 = time.perf_counter()
+        logger.info("job %s claimed; type=%s", job.id, getattr(job, "type", "full"))
+        try:
+            with session_scope(repo.engine) as s:
+                kb = s.scalar(select(KnowledgeBase).where(KnowledgeBase.id == job.kb_id))
+                if kb is None:
+                    raise ValueError(f"job {job.id} references missing kb {job.kb_id}")
+                data_root = kb.data_root
+                settings_json = kb.settings_json
+                llm_profile_id = kb.llm_profile_id
+                embedding_profile_id = kb.embedding_profile_id
+                llm_fallback_profile_ids = kb.llm_fallback_profile_ids
+
+            adapter = adapter_factory(
+                _SettingsKb(
+                    settings_json=settings_json,
+                    data_root=data_root,
+                    llm_profile_id=llm_profile_id,
+                    embedding_profile_id=embedding_profile_id,
+                    llm_fallback_profile_ids=llm_fallback_profile_ids,
+                )
             )
-        )
-        orch = Orchestrator(
-            repo=repo,
-            adapter=adapter,
-            data_root=data_root,
-            concurrency=_parse_concurrency(settings_json, concurrency),
-        )
-        await orch.run(job.id, min_success_ratio=_parse_min_ratio(settings_json))
-    except Exception:  # noqa: BLE001
-        logger.exception("job %s failed; marking FAILED", job.id)
-        repo.set_job_status(job.id, JobStatus.FAILED)
+            orch = Orchestrator(
+                repo=repo,
+                adapter=adapter,
+                data_root=data_root,
+                concurrency=_parse_concurrency(settings_json, concurrency),
+            )
+            await orch.run(job.id, min_success_ratio=_parse_min_ratio(settings_json))
+            final = repo.get_job(job.id).status
+            logger.info(
+                "job %s done in %.0fms; status=%s",
+                job.id, (time.perf_counter() - t0) * 1000, final,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("job %s failed; marking FAILED", job.id)
+            repo.set_job_status(job.id, JobStatus.FAILED)
 
 
 def _parse_concurrency(settings_json: str, default: int = 4) -> int:
@@ -139,6 +150,15 @@ def run_worker(
     """
     import signal
     import threading
+
+    from kb_platform.logging_config import setup_logging
+
+    # Centralized logging for the worker process BEFORE the LLM bootstrap runs
+    # (so the bootstrap's own logs are captured). Tests call run_worker_once
+    # directly and don't want this side effect, hence it lives here only.
+    setup_logging("worker")
+
+    logger.info("worker started; poll_interval=%.1fs", poll_interval)
 
     # Register kb_native factories before any adapter is built (idempotent).
     # Import is inside run_worker so unit tests that import the worker module

@@ -76,22 +76,31 @@ class UnitWorker:
                 pass
 
     async def _process(self, strategy, unit) -> None:
-        from kb_platform.graph.cost_capture import use_recorder
+        import time
 
-        try:
-            with use_recorder() as rec:
-                result = await strategy.run_unit(self.adapter, unit, self.repo)
-            if result.cost_json is None and rec:
-                result.cost_json = rec.to_json()
-            if result.llm_raw_output is None and rec:
-                result.llm_raw_output = rec.raw_output()
-            strategy.persist(self.data_root, unit, result)
-            self.repo.set_unit_succeeded(
-                unit.id,
-                input_hash=result.input_hash,
-                cost_json=result.cost_json,
-                llm_raw_output=result.llm_raw_output,
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.warning("unit %s failed: %s", unit.id, e)
-            self.repo.set_unit_failed(unit.id, str(e))
+        from kb_platform.graph.cost_capture import use_recorder
+        from kb_platform.logging_config import bind_log_context
+
+        with bind_log_context(unit_id=unit.id):
+            t0 = time.perf_counter()
+            try:
+                with use_recorder() as rec:
+                    result = await strategy.run_unit(self.adapter, unit, self.repo)
+                if result.cost_json is None and rec:
+                    result.cost_json = rec.to_json()
+                if result.llm_raw_output is None and rec:
+                    result.llm_raw_output = rec.raw_output()
+                strategy.persist(self.data_root, unit, result)
+                self.repo.set_unit_succeeded(
+                    unit.id,
+                    input_hash=result.input_hash,
+                    cost_json=result.cost_json,
+                    llm_raw_output=result.llm_raw_output,
+                )
+                logger.info(
+                    "unit %s [%s] done in %.0fms",
+                    unit.id, strategy.kind, (time.perf_counter() - t0) * 1000,
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("unit %s [%s] failed: %s", unit.id, strategy.kind, e)
+                self.repo.set_unit_failed(unit.id, str(e))

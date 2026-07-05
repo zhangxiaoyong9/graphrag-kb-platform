@@ -1,0 +1,646 @@
+"""logging_config: setup, bind, filter, formatter, env parsing, degrade."""
+import logging
+from pathlib import Path
+
+import pytest
+
+from kb_platform.logging_config import bind_log_context, get_log_context, setup_logging
+
+
+def test_setup_attaches_stderr_and_file_handlers(tmp_path, monkeypatch):
+    monkeypatch.setenv("KB_LOG_DIR", str(tmp_path))
+    monkeypatch.setenv("KB_LOG_CONSOLE", "true")
+    setup_logging("worker")
+    root = logging.getLogger()
+    stream_handlers = [h for h in root.handlers if isinstance(h, logging.StreamHandler)]
+    file_handlers = [h for h in root.handlers if isinstance(h, logging.FileHandler)]
+    assert len(stream_handlers) >= 1
+    assert len(file_handlers) == 1
+    assert (tmp_path / "worker.log") == Path(file_handlers[0].baseFilename)
+
+
+def test_setup_is_idempotent(tmp_path, monkeypatch):
+    monkeypatch.setenv("KB_LOG_DIR", str(tmp_path))
+    setup_logging("worker")
+    before = len(logging.getLogger().handlers)
+    setup_logging("worker")
+    after = len(logging.getLogger().handlers)
+    assert before == after
+
+
+def test_level_from_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("KB_LOG_DIR", str(tmp_path))
+    monkeypatch.setenv("KB_LOG_LEVEL", "DEBUG")
+    setup_logging("server")
+    assert logging.getLogger().level == logging.DEBUG
+
+
+def test_noisy_libs_quieted(tmp_path, monkeypatch):
+    monkeypatch.setenv("KB_LOG_DIR", str(tmp_path))
+    setup_logging("server")
+    for name in ("httpx", "httpcore", "urllib3", "sqlalchemy"):
+        assert logging.getLogger(name).level == logging.WARNING
+
+
+def test_per_logger_override(tmp_path, monkeypatch):
+    monkeypatch.setenv("KB_LOG_DIR", str(tmp_path))
+    monkeypatch.setenv("KB_LOG_LEVELS", "kb_platform.engine.unit_worker=WARNING,graphrag=DEBUG")
+    setup_logging("server")
+    assert logging.getLogger("kb_platform.engine.unit_worker").level == logging.WARNING
+    assert logging.getLogger("graphrag").level == logging.DEBUG
+
+
+def test_log_dir_unwritable_degrades_to_console_only(tmp_path, monkeypatch, capsys):
+    bad = tmp_path / "locked"
+    bad.mkdir()
+    bad.chmod(0o444)
+    monkeypatch.setenv("KB_LOG_DIR", str(bad / "worker.log"))
+    setup_logging("worker")
+    root = logging.getLogger()
+    # No FileHandler added when the dir isn't writable.
+    assert not any(isinstance(h, logging.FileHandler) for h in root.handlers)
+    captured = capsys.readouterr()
+    assert "file logging disabled" in captured.err
+
+
+def test_bind_log_context_sets_and_resets():
+    assert get_log_context() == {}
+    with bind_log_context(job_id=42):
+        assert get_log_context() == {"job_id": "42"}
+        with bind_log_context(step_id=2):
+            assert get_log_context() == {"job_id": "42", "step_id": "42" if False else "2"}
+        # step_id gone after inner exit
+        assert get_log_context() == {"job_id": "42"}
+    assert get_log_context() == {}
+
+
+def test_bind_log_context_drops_none():
+    with bind_log_context(job_id=1, step_id=None, unit_id=None):
+        assert get_log_context() == {"job_id": "1"}
+
+
+@pytest.mark.asyncio
+async def test_bind_isolation_across_asyncio_tasks():
+    import asyncio
+
+    seen: dict[str, str] = {}
+
+    async def child(tag: str):
+        with bind_log_context(unit_id=tag):
+            await asyncio.sleep(0.01)
+            seen[tag] = get_log_context()["unit_id"]
+
+    async with asyncio.TaskGroup() as tg:
+        tg.create_task(child("a"))
+        tg.create_task(child("b"))
+    assert seen == {"a": "a", "b": "b"}
+
+
+def test_filter_and_formatter_render_context(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("KB_LOG_DIR", str(tmp_path))
+    setup_logging("server")
+    logger = logging.getLogger("kb_platform.test_subject")
+    with bind_log_context(job_id=7, step_id=3):
+        logger.info("hello world")
+    err = capsys.readouterr().err
+    assert "hello world" in err
+    assert "[job=7 step=3]" in err
+
+
+def test_formatter_omits_absent_fields(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("KB_LOG_DIR", str(tmp_path))
+    setup_logging("server")
+    logging.getLogger("kb_platform.test_subject2").info("plain line")
+    err = capsys.readouterr().err
+    assert "[" not in err.split("—")[-1]  # no context block when nothing bound
+
+
+# --- Task 2: cross-platform gzip rotation ---------------------------------
+
+import gzip  # noqa: E402
+from unittest import mock  # noqa: E402
+
+from kb_platform.logging_config import (  # noqa: E402
+    GzipTimedRotatingFileHandler,
+    compress_rotated,
+)
+
+
+def _write(path: Path, text: str) -> Path:
+    path.write_text(text)
+    return path
+
+
+def test_compress_rotated_python_path(tmp_path):
+    """Force the Python-gzip fallback by pretending gzip subprocess fails."""
+    src = _write(tmp_path / "worker.log", "x" * 5000)
+    dest = tmp_path / "worker.log.2026-07-04_14-30.gz"
+    # Implementation dispatches on `sys.platform` (NOT platform.system); patch the
+    # real target so this test takes the Python-gzip branch on every OS.
+    with mock.patch("kb_platform.logging_config.sys.platform", "win32"):
+        compress_rotated(src, dest)
+    assert not src.exists()
+    assert dest.exists()
+    assert gzip.decompress(dest.read_bytes()).decode() == "x" * 5000
+
+
+def test_compress_rotated_system_gzip(tmp_path):
+    """Linux/mac path: shell out to `gzip -c`; verify .gz output + source removed."""
+    src = _write(tmp_path / "worker.log", "hello\n")
+    dest = tmp_path / "worker.log.ts.gz"
+    with mock.patch("kb_platform.logging_config.sys.platform", "linux"):
+        compress_rotated(src, dest)
+    assert not src.exists()
+    assert gzip.decompress(dest.read_bytes()).decode() == "hello\n"
+
+
+def test_compress_rotated_system_gzip_failure_falls_back(tmp_path):
+    """If `gzip` binary is missing/broken, fall back to Python gzip (no crash)."""
+    src = _write(tmp_path / "worker.log", "fallback\n")
+    dest = tmp_path / "worker.log.ts.gz"
+    with mock.patch("kb_platform.logging_config.sys.platform", "linux"), \
+         mock.patch("subprocess.run", side_effect=FileNotFoundError("no gzip")):
+        compress_rotated(src, dest)
+    assert gzip.decompress(dest.read_bytes()).decode() == "fallback\n"
+
+
+def test_file_handler_gzips_on_rollover(tmp_path, monkeypatch):
+    """Rotating produces a .gz file; pruning keeps only backupCount rotated files."""
+    import time
+
+    monkeypatch.setenv("KB_LOG_DIR", str(tmp_path))
+    monkeypatch.setenv("KB_LOG_ROTATE_WHEN", "S")
+    monkeypatch.setenv("KB_LOG_ROTATE_INTERVAL", "1")
+    monkeypatch.setenv("KB_LOG_ROTATE_BACKUP_COUNT", "2")
+    setup_logging("worker")
+    log = logging.getLogger("kb_platform.rollover_test")
+    for _ in range(3):
+        log.info("filler line " * 50)
+        # Force a rollover on each handler that supports it.
+        for h in logging.getLogger().handlers:
+            if isinstance(h, GzipTimedRotatingFileHandler):
+                h.doRollover()
+        time.sleep(0.01)
+    gz_files = list(tmp_path.glob("worker.log.*.gz"))
+    assert len(gz_files) >= 1, "rotated files should be gzipped"
+    # Pruning: at most backupCount rotated files (plus the active worker.log).
+    rotated = [p for p in tmp_path.glob("worker.log*") if p.name != "worker.log"]
+    assert len(rotated) <= 2
+
+
+# --- Task 3: entrypoint guards --------------------------------------------
+
+import sys  # noqa: E402
+
+
+def test_mcp_never_logs_to_stdout(tmp_path, monkeypatch):
+    """stdio MCP: stdout is JSON-RPC — setup_logging('mcp') must not attach a stdout handler."""
+    monkeypatch.setenv("KB_LOG_DIR", str(tmp_path))
+    setup_logging("mcp")
+    for h in logging.getLogger().handlers:
+        stream = getattr(h, "stream", None)
+        assert stream is not sys.stdout, "MCP process must never log to stdout"
+
+
+# --- Task 4: FastAPI request_id middleware --------------------------------
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+from kb_platform.api.app import create_app  # noqa: E402
+from kb_platform.db.engine import create_engine as _create_engine  # noqa: E402
+from kb_platform.db.models import Base  # noqa: E402
+from kb_platform.db.repository import Repository  # noqa: E402
+
+
+def _middleware_app(tmp_path):
+    """Build an app + client like the existing tests/test_api_query.py::client fixture:
+    in-process SQLite with tables created via Base.metadata.create_all.
+    """
+    engine = _create_engine(f"sqlite:///{tmp_path}/t.db")
+    Base.metadata.create_all(engine)
+    return TestClient(create_app(Repository(engine), data_root=str(tmp_path)))
+
+
+def test_middleware_binds_request_id_and_sets_header(tmp_path, monkeypatch):
+    monkeypatch.setenv("KB_LOG_DIR", str(tmp_path))
+    monkeypatch.setenv("KB_LOG_CONSOLE", "true")
+    setup_logging("server")
+    with _middleware_app(tmp_path) as client:
+        r = client.get("/kbs")
+    headers_lower = {k.lower() for k in r.headers}
+    assert "x-request-id" in headers_lower
+    assert len(r.headers["x-request-id"]) == 12
+
+
+def test_middleware_logs_request_start_and_done(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("KB_LOG_DIR", str(tmp_path))
+    monkeypatch.setenv("KB_LOG_CONSOLE", "true")
+    setup_logging("server")
+    with _middleware_app(tmp_path) as client:
+        client.get("/kbs")
+    err = capsys.readouterr().err
+    assert "request start" in err
+    assert "request done" in err
+    assert "GET /kbs" in err
+
+
+def test_spa_nav_swap_preserves_request_id_header(tmp_path, monkeypatch):
+    """Regression (final-review I1): when the outermost spa_browser_nav_fallback
+    middleware swaps an API JSON response for index.html on a browser navigation
+    (Sec-Fetch-Mode: navigate), the X-Request-ID stamped by the inner
+    request_id_middleware must survive onto the swapped FileResponse — otherwise
+    refresh / deep-link on SPA pages whose path collides with a JSON API endpoint
+    (/kbs, /query-presets) returns no request id, breaking end-to-end correlation
+    (spec §6.5).
+
+    The SPA branch is driven end-to-end via TestClient: we point WEB_DIST at a
+    tmp dir with index.html + assets/ so spa_browser_nav_fallback registers.
+    """
+    web = tmp_path / "web"
+    (web / "assets").mkdir(parents=True)
+    (web / "index.html").write_text("<html><body>SPA</body></html>")
+    monkeypatch.setattr("kb_platform.api.app.WEB_DIST", str(web))
+
+    engine = _create_engine(f"sqlite:///{tmp_path}/t.db")
+    Base.metadata.create_all(engine)
+    client = TestClient(create_app(Repository(engine), data_root=str(tmp_path)))
+
+    r = client.get("/kbs", headers={"Sec-Fetch-Mode": "navigate"})
+    assert r.status_code == 200
+    assert "text/html" in r.headers["content-type"]
+    assert "SPA" in r.text  # the swap actually happened
+    # The swapped FileResponse must carry the same X-Request-ID shape as the
+    # inner middleware stamps (12-char hex).
+    assert "x-request-id" in {k.lower() for k in r.headers}, r.headers
+    assert len(r.headers["x-request-id"]) == 12
+
+
+# --- Task 5: job/step/unit lifecycle logs ----------------------------------
+
+from kb_platform.graph.adapter import FakeGraphAdapter  # noqa: E402
+from kb_platform.worker import run_worker_once  # noqa: E402
+from conftest import seed_profile  # noqa: E402
+from kb_platform.db.enums import JobStatus  # noqa: E402
+
+
+def _seed_pending_job(tmp_path) -> tuple:
+    """Build an in-memory-style SQLite repo with one KB + doc + pending full job.
+
+    Mirrors tests/test_e2e_backend_service.py: in-process SQLite, Base metadata
+    create_all, a provider profile (Fernet key set by autouse conftest fixture),
+    one KB, one oversized doc (so chunking yields chunks), and one pending job.
+    """
+    engine = _create_engine(f"sqlite:///{tmp_path}/kb.db")
+    Base.metadata.create_all(engine)
+    repo = Repository(engine)
+    client = TestClient(create_app(repo, data_root=str(tmp_path)))
+    pid = seed_profile(client)
+    r = client.post(
+        "/kbs",
+        json={"name": "kb1", "method": "standard", "settings_yaml": "{}", "llm_profile_id": pid},
+    )
+    assert r.status_code == 201
+    r = client.post(
+        "/kbs/1/documents",
+        json={"title": "d", "text": "ACME Org Bob Person Foo Bar Baz " * 200},
+    )
+    assert r.status_code == 201
+    job_id = client.post("/kbs/1/jobs", json={"method": "standard"}).json()["id"]
+    assert client.get(f"/jobs/{job_id}").json()["status"] == "pending"
+    return repo, job_id
+
+
+@pytest.mark.asyncio
+async def test_worker_logs_job_claim_and_done(tmp_path, monkeypatch, caplog):
+    """run_worker_once emits lifecycle logs at worker / orchestrator / unit_worker.
+
+    One end-to-end fake job covers all three layers' correlation IDs:
+    worker binds job_id (+kb_id); orchestrator's _run_step binds step_id;
+    unit_worker's _process binds unit_id.
+    """
+    monkeypatch.setenv("KB_LOG_DIR", str(tmp_path))
+    setup_logging("worker")
+    # The autouse _isolate_logging fixture (tests/conftest.py) snapshots and
+    # restores the levels of all existing loggers between tests, so any
+    # per-logger overrides applied by an earlier test (e.g.
+    # test_per_logger_override via KB_LOG_LEVELS) are rolled back here and the
+    # loggers inherit setup_logging's root INFO level naturally.
+    repo, job_id = _seed_pending_job(tmp_path)
+
+    with caplog.at_level(logging.INFO):
+        await run_worker_once(
+            repo=repo,
+            adapter_factory=lambda kb: FakeGraphAdapter(),
+            heartbeat_interval=0.01,
+        )
+
+    assert repo.get_job(job_id).status == JobStatus.SUCCEEDED
+
+    worker_msgs = [r.getMessage() for r in caplog.records if r.name == "kb_platform.worker"]
+    orch_msgs = [
+        r.getMessage() for r in caplog.records if r.name == "kb_platform.engine.orchestrator"
+    ]
+    unit_msgs = [
+        r.getMessage() for r in caplog.records if r.name == "kb_platform.engine.unit_worker"
+    ]
+
+    # worker: claim + done-with-duration, both carrying job_id in context.
+    assert any("claimed" in m for m in worker_msgs), worker_msgs
+    assert any("done in" in m for m in worker_msgs), worker_msgs
+    claimed_records = [r for r in caplog.records if r.name == "kb_platform.worker" and "claimed" in r.getMessage()]
+    assert all(getattr(r, "job_id", None) == str(job_id) for r in claimed_records)
+
+    # orchestrator: at least one step start + one step done-with-duration.
+    assert any("start" in m for m in orch_msgs), orch_msgs
+    assert any("done in" in m for m in orch_msgs), orch_msgs
+
+    # unit_worker: at least one unit done-with-duration.
+    assert any("done in" in m for m in unit_msgs), unit_msgs
+
+
+# --- Task 6: LLM gateway / circuit-breaker failover logs ---------------------
+
+import json  # noqa: E402
+
+import httpx  # noqa: E402
+
+from kb_platform.llm.gateway import ChatRequest, FailoverGateway  # noqa: E402
+from kb_platform.llm.circuit_breaker import CircuitBreaker  # noqa: E402
+from kb_platform.llm.request import ProviderConfig  # noqa: E402
+
+
+def test_breaker_logs_open_and_close(caplog):
+    """OPEN transition logs WARNING with the breaker name."""
+    cb = CircuitBreaker(failure_threshold=2, open_seconds=30.0, name="deepseek/main")
+    with caplog.at_level(logging.WARNING, logger="kb_platform.llm.circuit_breaker"):
+        cb.record_failure()  # 1
+        cb.record_failure()  # 2 -> OPEN
+    assert any(
+        "OPEN" in r.getMessage() and "deepseek/main" in r.getMessage()
+        for r in caplog.records
+    ), [r.getMessage() for r in caplog.records]
+
+
+def test_breaker_logs_recovery_close(caplog):
+    """open -> half_open (TTL elapsed) -> success closes with INFO."""
+    cb = CircuitBreaker(failure_threshold=1, open_seconds=30.0, name="p/m")
+    cb.record_failure()  # trips open
+    assert cb.state == "open"
+    cb._opened_at -= 31  # simulate TTL elapsed
+    assert cb.allow() is True  # -> half_open
+    with caplog.at_level(logging.INFO, logger="kb_platform.llm.circuit_breaker"):
+        cb.record_success()
+    assert any(
+        "closed" in r.getMessage() and "recovered" in r.getMessage()
+        for r in caplog.records
+    ), [r.getMessage() for r in caplog.records]
+
+
+@pytest.mark.asyncio
+async def test_gateway_logs_failover(caplog):
+    """Two profiles: first fails (5xx), second succeeds -> WARNING failover line.
+
+    Reuses the host-routed MockTransport pattern from
+    ``tests/llm/test_gateway_failover.py``: profile 0's host returns 500,
+    profile 1's host returns a 200 non-stream body.
+    """
+    primary_calls: list[int] = []
+    fallback_calls: list[int] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        host = request.url.host
+        if host == "primary.example":
+            primary_calls.append(1)
+            return httpx.Response(500, text="upstream boom")
+        if host == "fallback.example":
+            fallback_calls.append(1)
+            return httpx.Response(200, text=json.dumps({
+                "choices": [{"message": {"content": "ok"}}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 2},
+            }))
+        return httpx.Response(404, text="no route")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    profiles = [
+        ProviderConfig(provider="openai", model="gpt-4o", api_base="https://primary.example/v1",
+                       api_version=None, key="pk", ssl_verify=True),
+        ProviderConfig(provider="deepseek", model="main", api_base="https://fallback.example/v1",
+                       api_version=None, key="fk", ssl_verify=True),
+    ]
+    breakers = {i: CircuitBreaker(failure_threshold=5, open_seconds=30.0)
+                for i in range(len(profiles))}
+    gw = FailoverGateway(
+        profiles=profiles, client=client, breakers=breakers,
+        failure_threshold=5, open_seconds=30.0,
+    )
+    req = ChatRequest(messages=[], stream=False, response_format=None, params={})
+
+    with caplog.at_level(logging.INFO, logger="kb_platform.llm.gateway"):
+        res = await gw.collect(req)
+
+    assert res.error is None, res.error
+    assert primary_calls and fallback_calls == [1]
+    # Failover WARNING references the failing profile's provider/model.
+    warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any("failover" in m.lower() and "openai" in m and "gpt-4o" in m
+               for m in warnings), warnings
+    # All-exhausted ERROR is NOT emitted because fallback succeeded.
+    assert not any("exhausted" in r.getMessage() for r in caplog.records)
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_gateway_logs_all_profiles_exhausted(caplog):
+    """Both profiles fail (5xx) -> ERROR 'all profiles exhausted'."""
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="upstream boom")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    profiles = [
+        ProviderConfig(provider="openai", model="gpt-4o", api_base="https://a.example/v1",
+                       api_version=None, key="k1", ssl_verify=True),
+        ProviderConfig(provider="deepseek", model="main", api_base="https://b.example/v1",
+                       api_version=None, key="k2", ssl_verify=True),
+    ]
+    breakers = {i: CircuitBreaker(failure_threshold=5, open_seconds=30.0)
+                for i in range(len(profiles))}
+    gw = FailoverGateway(
+        profiles=profiles, client=client, breakers=breakers,
+        failure_threshold=5, open_seconds=30.0,
+    )
+    req = ChatRequest(messages=[], stream=False, response_format=None, params={})
+
+    with caplog.at_level(logging.INFO, logger="kb_platform.llm.gateway"):
+        res = await gw.collect(req)
+
+    assert res.error is not None
+    errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
+    assert any("exhausted" in m for m in errors), errors
+    await client.aclose()
+
+
+# --- Task 7: query-path lifecycle logs + first-token + rewrite ---------------
+
+from kb_platform.query.engine import FakeQueryEngine  # noqa: E402
+
+
+def _query_app(tmp_path):
+    """App with an injected FakeQueryEngine — same shape as tests/test_api_query.py."""
+    engine = _create_engine(f"sqlite:///{tmp_path}/t.db")
+    Base.metadata.create_all(engine)
+    return TestClient(
+        create_app(
+            Repository(engine),
+            data_root=str(tmp_path),
+            query_engine=FakeQueryEngine(),
+        )
+    )
+
+
+def test_query_route_logs_start_first_token_and_done(tmp_path, monkeypatch, capsys):
+    """POST /kbs/{id}/query logs query start (method+kb), first token, and done."""
+    monkeypatch.setenv("KB_LOG_DIR", str(tmp_path))
+    monkeypatch.setenv("KB_LOG_CONSOLE", "true")
+    setup_logging("server")
+    with _query_app(tmp_path) as client:
+        client.post("/kbs", json={"name": "kb1", "method": "standard", "settings_yaml": "{}"})
+        r = client.post("/kbs/1/query", json={"method": "local", "query": "what is ACME?"})
+        assert r.status_code == 200, r.text
+    err = capsys.readouterr().err
+    assert "query start" in err, err
+    assert "method=local" in err, err
+    assert "query first token" in err, err
+    assert "query done" in err, err
+    assert "deltas=" in err, err
+    # query_id + kb_id correlation block is present on the lifecycle lines.
+    assert "query=" in err and "kb=1" in err, err
+
+
+def test_query_route_no_first_token_when_engine_errors(tmp_path, monkeypatch, capsys):
+    """No 'query first token' when the engine build path errors out (no deltas)."""
+    monkeypatch.setenv("KB_LOG_DIR", str(tmp_path))
+    monkeypatch.setenv("KB_LOG_CONSOLE", "true")
+    setup_logging("server")
+    # No injected engine + no real KB content -> engine build fails gracefully,
+    # yielding an SSE 'error' event with NO deltas.
+    engine = _create_engine(f"sqlite:///{tmp_path}/t.db")
+    Base.metadata.create_all(engine)
+    client = TestClient(create_app(Repository(engine), data_root=str(tmp_path)))
+    client.post("/kbs", json={"name": "kb1", "method": "standard", "settings_yaml": "{}"})
+    r = client.post("/kbs/1/query", json={"method": "global", "query": "hello"})
+    assert r.status_code == 200
+    capsys.readouterr()  # discard setup noise; check the request line directly
+    # We already read; the relevant logs were already emitted. Re-assert from
+    # the captured buffer by re-driving is awkward, so just verify absence in
+    # the original capture by re-reading after a second request.
+    r2 = client.post("/kbs/1/query", json={"method": "global", "query": "again"})
+    assert r2.status_code == 200
+    err2 = capsys.readouterr().err
+    assert "query start" in err2  # start always fires
+    assert "query first token" not in err2, err2  # no delta ever yielded
+
+
+# --- Task 8: API mutation audit logs --------------------------------------
+
+
+def test_api_audit_logs(tmp_path, monkeypatch, capsys):
+    """Mutating endpoints each emit one INFO audit line carrying request_id."""
+    monkeypatch.setenv("KB_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setenv("KB_LOG_CONSOLE", "true")
+    setup_logging("server")
+
+    engine = _create_engine(f"sqlite:///{tmp_path / 't.db'}")
+    Base.metadata.create_all(engine)
+    client = TestClient(create_app(Repository(engine), data_root=str(tmp_path / "data")))
+
+    # Drive a real sequence of mutations across the audited route files.
+    seed_profile(client, name="P1", provider="openai", model="gpt-4o-mini")
+    client.post(
+        "/kbs",
+        json={
+            "name": "audit-kb",
+            "method": "standard",
+            "settings_yaml": "{}",
+            "llm_profile_id": 1,
+        },
+    )
+    client.post("/kbs/1/documents", json={"title": "d1", "text": "hello world"})
+    client.post("/kbs/1/jobs", json={"method": "standard", "type": "full"})
+    client.post(
+        "/query-presets",
+        json={
+            "name": "audit-preset",
+            "method": "global",
+            "community_level": 0,
+            "response_type": "multiple paragraphs",
+            "top_k": 10,
+            "temperature": 0.0,
+        },
+    )
+
+    err = capsys.readouterr().err
+    for needle in (
+        "profile created",
+        "KB created",
+        "doc uploaded",
+        "job created",
+        "preset created",
+    ):
+        assert needle in err, f"missing audit log: {needle}\n{err}"
+    # request_id (correlation id) flows onto every audit line via ContextVarFilter.
+    # The formatter renders request_id with the short alias "request" (see
+    # logging_config._CONTEXT_ALIASES), so assert on that form.
+    assert "request=" in err, err
+
+
+# --- Task 9: realtime + chunking + doc-parse milestone logs -----------------
+
+import tempfile  # noqa: E402
+
+
+def test_doc_reader_logs_parsed(monkeypatch, capsys):
+    """read_document logs one INFO line 'parsed N chars from <filename>'."""
+    monkeypatch.setenv("KB_LOG_DIR", tempfile.mkdtemp())
+    setup_logging("worker")
+    from kb_platform.input.doc_reader import read_document
+
+    text = read_document(b"hello world text", "note.md")
+    err = capsys.readouterr().err
+    assert "parsed" in err, err
+    assert "note.md" in err, err
+    assert str(len(text)) in err, err
+
+
+@pytest.mark.asyncio
+async def test_chunk_documents_logs_per_doc(tmp_path, monkeypatch, caplog):
+    """orchestrator._chunk_documents emits one INFO 'chunked doc=..' line per doc."""
+    monkeypatch.setenv("KB_LOG_DIR", str(tmp_path))
+    setup_logging("worker")
+    repo, job_id = _seed_pending_job(tmp_path)
+    # Add a second document so chunking yields >=2 per-doc milestone lines.
+    from fastapi.testclient import TestClient  # local import to avoid cycle
+
+    from kb_platform.api.app import create_app
+
+    client = TestClient(create_app(repo, data_root=str(tmp_path)))
+    r = client.post(
+        "/kbs/1/documents",
+        json={"title": "d2", "text": "Alpha Beta Gamma Delta Epsilon Zeta " * 200},
+    )
+    assert r.status_code == 201
+
+    with caplog.at_level(logging.INFO, logger="kb_platform.engine.orchestrator"):
+        await run_worker_once(
+            repo=repo,
+            adapter_factory=lambda kb: FakeGraphAdapter(),
+            heartbeat_interval=0.01,
+        )
+
+    assert repo.get_job(job_id).status == JobStatus.SUCCEEDED
+    chunked_lines = [
+        rec.getMessage() for rec in caplog.records
+        if "chunked doc" in rec.getMessage()
+        and rec.name == "kb_platform.engine.orchestrator"
+    ]
+    assert len(chunked_lines) >= 2, chunked_lines
