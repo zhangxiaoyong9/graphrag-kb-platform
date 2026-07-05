@@ -1,16 +1,20 @@
 import pytest
 
 from kb_platform.llm.client import NativeCompletion, _AwaitableAsyncIterator
-from kb_platform.llm.events import Done, TextDelta, Usage
+from kb_platform.llm.events import Done, Error, TextDelta, Usage
 
 
 class _FakeGateway:
-    def __init__(self, events):
+    def __init__(self, events, error=None):
         self._events = events
+        self._error = error  # set to a string to simulate "all profiles exhausted"
     async def astream(self, req):
         for e in self._events:
             yield e
     async def collect(self, req):
+        if self._error is not None:
+            from kb_platform.llm.gateway import GatewayResult
+            return GatewayResult(content="", usage=(0, 0), error=self._error)
         text = "".join(e.text for e in self._events if isinstance(e, TextDelta))
         u = next((e for e in self._events if isinstance(e, Usage)), Usage(0, 0))
         from kb_platform.llm.gateway import GatewayResult
@@ -161,3 +165,30 @@ def test_ssl_verify_false_reaches_httpx(monkeypatch):
         metrics_store=None,
     )
     assert captured.get("verify") is False
+
+
+@pytest.mark.asyncio
+async def test_non_stream_raises_on_gateway_error():
+    """When the gateway exhausts all profiles (e.g. every profile 504'd), it
+    returns ``GatewayResult(content='', error='HTTP 504 ...')`` instead of
+    raising. NativeCompletion MUST surface that as an exception — otherwise
+    graphrag's extractor sees an empty ``response.content`` and silently marks
+    the unit SUCCEEDED with zero entities (the 504 → empty-extraction bug)."""
+    gw = _FakeGateway([], error="HTTP 504 Gateway Timeout")
+    c = _make_completion(gw)
+    with pytest.raises(RuntimeError, match="HTTP 504"):
+        await c.completion_async(messages=[{"role": "user", "content": "hi"}], stream=False)
+
+
+@pytest.mark.asyncio
+async def test_stream_raises_on_error_event():
+    """Streaming path: the gateway yields a terminal ``Error`` event when all
+    profiles are exhausted. NativeCompletion MUST raise on it, not end the
+    stream silently — otherwise query engines get an empty answer with no
+    signal that every upstream failed."""
+    gw = _FakeGateway([Error(message="HTTP 504 Gateway Timeout", retriable=False)])
+    c = _make_completion(gw)
+    with pytest.raises(RuntimeError, match="HTTP 504"):
+        it = await c.completion_async(messages=[], stream=True)
+        async for _chunk in it:
+            pass

@@ -198,6 +198,14 @@ class NativeCompletion(LLMCompletion):
 
     async def _non_stream(self, req: ChatRequest) -> ChatCompletion:
         res: GatewayResult = await self._gateway.collect(req)
+        # The gateway returns ``GatewayResult(error=...)`` (no exception) when every
+        # profile is exhausted (e.g. all returned 5xx/429/timeout). Surface it as an
+        # exception — otherwise graphrag's extractor sees ``response.content == ""``
+        # and silently marks the unit SUCCEEDED with zero entities (the
+        # 504 → empty-extraction bug; on_error/_raise_on_error never fires because
+        # no exception propagates from the LLM call).
+        if res.error:
+            raise RuntimeError(f"LLM gateway: {res.error}")
         # LLMCompletionResponse subclasses ChatCompletion and adds the .content /
         # .formatted_response graphrag reads (e.g. drift primer.model_response.content
         # and CommunityReportsExtractor's parsed CommunityReportResponse).
@@ -238,9 +246,11 @@ class NativeCompletion(LLMCompletion):
                 # joined text by exactly one "". The stream just ends.
                 return
             elif isinstance(ev, Error):
-                # emit a finish_reason="stop" so graphrag stops cleanly, then end.
-                yield _chunk(self.model_id, finish_reason="stop")
-                return
+                # Terminal "all profiles exhausted" event from the gateway. Raise
+                # so the consumer sees the failure — emitting a synthetic "stop"
+                # chunk here would hand query engines an empty answer with no signal
+                # that every upstream profile failed (silent degrade).
+                raise RuntimeError(f"LLM gateway stream: {ev.message}")
         # stream ended without an explicit Done/Error event -> emit a terminal chunk
         yield _chunk(self.model_id, finish_reason="stop")
 
