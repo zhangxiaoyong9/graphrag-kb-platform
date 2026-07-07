@@ -74,6 +74,39 @@ class KbApiClient:
         except httpx.HTTPError as exc:
             raise KbApiError(f"POST {path} failed: {exc}") from exc
 
+    async def get_kb(self, kb_id: int) -> dict:
+        """GET /kbs/{id} + /kbs/{id}/stats → {id, name, method, stats: {...}}.
+
+        Stats fields are None when the KB has no snapshot yet (unindexed).
+        """
+        detail = await self._get_json(f"/kbs/{kb_id}")
+        stats = await self._get_json(f"/kbs/{kb_id}/stats")
+        if not isinstance(detail, dict) or not isinstance(stats, dict):
+            raise KbApiError(f"unexpected response shape for kb {kb_id}")
+        return {"id": detail["id"], "name": detail["name"],
+                "method": detail["method"], "stats": stats}
+
+    async def list_documents(self, kb_id: int) -> list[dict]:
+        """GET /kbs/{id}/documents → [{id, title, status, bytes, chunk_count}, ...]."""
+        data = await self._get_json(f"/kbs/{kb_id}/documents")
+        if not isinstance(data, list):
+            raise KbApiError(f"unexpected response shape for documents of kb {kb_id}")
+        return data
+
+    async def get_document(self, kb_id: int, doc_id: int) -> dict:
+        """GET /kbs/{id}/documents/{doc_id} → {id, title, text, citations: [...], ...}."""
+        return await self._get_json(f"/kbs/{kb_id}/documents/{doc_id}")
+
+    async def search_graph(self, kb_id: int, q: str, hop: int = 1, limit: int = 200) -> dict:
+        """GET /kbs/{id}/graph?q=&hop=&limit= → {nodes: [...], edges: [...]}."""
+        from urllib.parse import quote
+
+        path = f"/kbs/{kb_id}/graph?q={quote(q)}&hop={hop}&limit={limit}"
+        data = await self._get_json(path)
+        if not isinstance(data, dict):
+            raise KbApiError(f"unexpected response shape for graph of kb {kb_id}")
+        return data
+
     async def aclose(self) -> None:
         if self._owns_http:
             await self._http.aclose()
@@ -136,6 +169,81 @@ async def query_knowledge_base(
     return out
 
 
+async def get_kb_details(client: KbApiClient, kb_id: int) -> dict:
+    """KB detail + readiness stats.
+
+    Returns ``{id, name, method, stats: {...}, available_methods: [...]}``.
+    ``available_methods`` reflects what's indexed: ``local``/``basic`` always;
+    ``global``/``drift`` only when community reports exist. On API failure
+    returns ``{"error": "..."}``.
+    """
+    try:
+        kb = await client.get_kb(kb_id)
+    except KbApiError as exc:
+        return {"error": str(exc)}
+    stats = kb.get("stats") or {}
+    have_reports = (stats.get("community_report_count") or 0) > 0
+    methods = ["local", "basic"]
+    if have_reports:
+        methods = ["local", "global", "drift", "basic"]
+    return {"id": kb["id"], "name": kb["name"], "method": kb["method"],
+            "stats": stats, "available_methods": methods}
+
+
+async def list_documents(client: KbApiClient, kb_id: int) -> list[dict]:
+    """List documents in a KB → ``[{id, title, status, bytes, chunk_count}, ...]``.
+
+    Empty list when the KB has no documents. ``[{"error": "..."}]`` on API failure.
+    """
+    try:
+        return await client.list_documents(kb_id)
+    except KbApiError as exc:
+        return [{"error": str(exc)}]
+
+
+async def get_document(client: KbApiClient, kb_id: int, doc_id: int) -> dict:
+    """Fetch one document: full text plus per-chunk snippets for citation.
+
+    Returns ``{id, title, status, bytes, chunk_count, text, chunks: [{ordinal,
+    chunk_id, snippet}, ...]}``. Internal citation labels are dropped. On API
+    failure returns ``{"error": "..."}``.
+    """
+    try:
+        doc = await client.get_document(kb_id, doc_id)
+    except KbApiError as exc:
+        return {"error": str(exc)}
+    chunks = [
+        {"ordinal": c.get("ordinal"), "chunk_id": c.get("chunk_id"),
+         "snippet": c.get("snippet")}
+        for c in (doc.get("citations") or [])
+    ]
+    return {
+        "id": doc.get("id"), "title": doc.get("title"),
+        "status": doc.get("status"), "bytes": doc.get("bytes", 0),
+        "chunk_count": doc.get("chunk_count", 0),
+        "text": doc.get("text", ""), "chunks": chunks,
+    }
+
+
+async def search_graph(
+    client: KbApiClient, kb_id: int, q: str, hop: int = 1, limit: int = 200,
+) -> dict:
+    """Entity-graph neighborhood search for multi-hop questions.
+
+    ``q`` is a title substring (case-insensitive); ``hop`` is BFS depth
+    (default 1, keep ≤ 2 to bound payload); ``limit`` caps the node set.
+
+    Returns ``{nodes: [{id, title, type, degree, community}, ...],
+    edges: [{source, target, weight, description}, ...]}``. Empty ``nodes``/
+    ``edges`` when nothing matches. On API failure returns
+    ``{"error": "..."}``.
+    """
+    try:
+        return await client.search_graph(kb_id, q=q, hop=hop, limit=limit)
+    except KbApiError as exc:
+        return {"error": str(exc)}
+
+
 def build_mcp_server(client: KbApiClient):
     """Register the KB query tools on an MCP server (FastMCP) and return it.
 
@@ -173,6 +281,48 @@ def build_mcp_server(client: KbApiClient):
         plus an "error" key only when something went wrong.
         """
         return await query_knowledge_base(client, kb_id=kb_id, query=query, method=method)
+
+    @mcp.tool(name="get_kb_details")
+    async def _get_kb_details_tool(kb_id: int) -> dict:
+        """Get knowledge-base detail + readiness before querying.
+
+        Call after list_knowledge_bases to confirm the KB is indexed and to
+        learn which query methods are available. Returns
+        {id, name, method, stats, available_methods}. available_methods is
+        [local, basic] when community reports are missing, or
+        [local, global, drift, basic] when present.
+        """
+        return await get_kb_details(client, kb_id=kb_id)
+
+    @mcp.tool(name="list_documents")
+    async def _list_documents_tool(kb_id: int) -> list[dict]:
+        """List documents in a knowledge base.
+
+        Use to browse what's in a KB and pick documents to scope a query to.
+        Returns one object per document: {id, title, status, bytes, chunk_count}.
+        """
+        return await list_documents(client, kb_id=kb_id)
+
+    @mcp.tool(name="get_document")
+    async def _get_document_tool(kb_id: int, doc_id: int) -> dict:
+        """Fetch one document's full text and per-chunk snippets.
+
+        Use to verify exact quotes or precise claims after a query, before
+        citing. Returns {id, title, text, chunks: [{ordinal, chunk_id, snippet}, ...], ...}.
+        """
+        return await get_document(client, kb_id=kb_id, doc_id=doc_id)
+
+    @mcp.tool(name="search_graph")
+    async def _search_graph_tool(
+        kb_id: int, q: str, hop: int = 1, limit: int = 200,
+    ) -> dict:
+        """Search the entity graph and return a multi-hop neighborhood.
+
+        For relationship questions ("how do X and Y relate?"). q is a
+        case-insensitive entity-title substring; hop is BFS depth (keep ≤ 2).
+        Returns {nodes: [...], edges: [...]}.
+        """
+        return await search_graph(client, kb_id=kb_id, q=q, hop=hop, limit=limit)
 
     return mcp
 
