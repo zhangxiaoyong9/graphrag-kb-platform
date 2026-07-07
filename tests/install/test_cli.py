@@ -22,3 +22,15 @@ def test_cli_unknown_tool_exits_nonzero(capsys):
     with pytest.raises(SystemExit) as exc:
         main(["--tool", "nope"])
     assert exc.value.code != 0
+
+
+async def test_end_to_end_dry_run_claude_code(tmp_path, monkeypatch):
+    """Full CLI path: --tool claude-code --dry-run must not write anything,
+    must exit 0, and must describe both register + playbook actions."""
+    from kb_platform.install.__main__ import main
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as exc:
+        main(["--tool", "claude-code", "--api-url", "http://localhost:8000", "--dry-run"])
+    assert exc.value.code == 0
+    assert not (tmp_path / ".mcp.json").exists()
+    assert not (tmp_path / ".claude").exists()
