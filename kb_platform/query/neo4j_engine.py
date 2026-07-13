@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import hashlib
 import re
 import time
 
@@ -236,6 +237,12 @@ class Neo4jQueryEngine:
         if method not in ("cypher", "hybrid"):
             yield StreamDone(method=method, answer="", error=f"neo4j engine does not support method '{method}'")
             return
+        query_hash = hashlib.sha256(str(query).encode("utf-8", errors="replace")).hexdigest()[:12]
+        started = time.perf_counter()
+        logger.info(
+            "neo4j.query_start method=%s query_chars=%d query_hash=%s database=%s",
+            method, len(str(query)), query_hash, self._database,
+        )
         try:
             if method == "cypher":
                 async for ev in self._cypher(query, params):
@@ -243,6 +250,10 @@ class Neo4jQueryEngine:
             else:
                 async for ev in self._hybrid(query, params):
                     yield ev
+            logger.info(
+                "neo4j.query_done method=%s duration_ms=%.0f",
+                method, (time.perf_counter() - started) * 1000,
+            )
         except Exception as e:  # noqa: BLE001 - SSE error, never raise
             logger.exception("neo4j stream_search failed for method=%s", method)
             yield StreamDone(method=method, answer="", error=str(e))
@@ -293,6 +304,12 @@ class Neo4jQueryEngine:
         # database terminates transactions that run longer than the configured
         # timeout. Params are passed positionally (NOT as kwargs) for the same
         # reason: kwargs merge into Cypher parameters.
+        cypher_hash = hashlib.sha256(cypher.encode("utf-8", errors="replace")).hexdigest()[:12]
+        started = time.perf_counter()
+        logger.info(
+            "neo4j.execute_start cypher_hash=%s timeout_s=%.1f parameter_names=%s",
+            cypher_hash, timeout_s, sorted(parameters),
+        )
         driver = self._pool.get_driver(self._uri, self._username, self._password)
         session = driver.session(database=self._database)
         try:
@@ -306,7 +323,13 @@ class Neo4jQueryEngine:
                 raise
         finally:
             await session.close()
-        return truncate_rows(rows, cap)
+        limited, truncated = truncate_rows(rows, cap)
+        logger.info(
+            "neo4j.execute_done cypher_hash=%s rows=%d returned=%d truncated=%s duration_ms=%.0f",
+            cypher_hash, len(rows), len(limited), truncated,
+            (time.perf_counter() - started) * 1000,
+        )
+        return limited, truncated
 
     async def _synthesize(self, method, query, context, sources, truncated, gen_usage):
         system = (

@@ -14,8 +14,15 @@ stdio entry point with ``python -m kb_platform.mcp``.
 from __future__ import annotations
 
 from typing import Literal
+import hashlib
+import logging
+import time
 
 import httpx
+
+from kb_platform.llm.observability import response_excerpt
+
+logger = logging.getLogger(__name__)
 
 QueryMethod = Literal["local", "global", "drift", "basic"]
 
@@ -51,12 +58,23 @@ class KbApiClient:
         from kb_platform.api.sse import iter_sse_events
 
         path = f"/kbs/{kb_id}/query"
+        query_hash = hashlib.sha256(query.encode("utf-8", errors="replace")).hexdigest()[:12]
+        started = time.perf_counter()
+        logger.info(
+            "mcp.query_start kb=%s method=%s query_chars=%d query_hash=%s",
+            kb_id, method, len(query), query_hash,
+        )
         try:
             async with self._http.stream(
                 "POST", path, json={"method": method, "query": query}
             ) as resp:
                 if resp.status_code >= 400:
                     body = (await resp.aread()).decode(errors="replace")[:200]
+                    logger.error(
+                        "mcp.query_http_error kb=%s method=%s status=%d duration_ms=%.0f response=%r",
+                        kb_id, method, resp.status_code,
+                        (time.perf_counter() - started) * 1000, response_excerpt(body),
+                    )
                     raise KbApiError(f"POST {path} -> {resp.status_code}: {body}")
                 answer_parts: list[str] = []
                 result: dict = {"answer": "", "method": method}
@@ -70,8 +88,19 @@ class KbApiClient:
                 result["answer"] = result.get("answer") or "".join(answer_parts)
                 if not result.get("method"):
                     result["method"] = method
+                logger.info(
+                    "mcp.query_done kb=%s method=%s answer_chars=%d sources=%d duration_ms=%.0f error=%s",
+                    kb_id, method, len(result.get("answer") or ""),
+                    len(result.get("sources") or []), (time.perf_counter() - started) * 1000,
+                    bool(result.get("error")),
+                )
                 return result
         except httpx.HTTPError as exc:
+            logger.warning(
+                "mcp.query_transport_error kb=%s method=%s duration_ms=%.0f error_type=%s error=%r",
+                kb_id, method, (time.perf_counter() - started) * 1000,
+                type(exc).__name__, response_excerpt(exc),
+            )
             raise KbApiError(f"POST {path} failed: {exc}") from exc
 
     async def get_kb(self, kb_id: int) -> dict:
@@ -112,12 +141,26 @@ class KbApiClient:
             await self._http.aclose()
 
     async def _get_json(self, path: str) -> list | dict:
+        started = time.perf_counter()
         try:
             resp = await self._http.get(path)
         except httpx.HTTPError as exc:  # connection refused, timeout, DNS, ...
+            logger.warning(
+                "mcp.http_transport_error method=GET path=%s duration_ms=%.0f error_type=%s",
+                path, (time.perf_counter() - started) * 1000, type(exc).__name__,
+            )
             raise KbApiError(f"GET {path} failed: {exc}") from exc
         if resp.status_code >= 400:
+            logger.error(
+                "mcp.http_error method=GET path=%s status=%d duration_ms=%.0f response=%r",
+                path, resp.status_code, (time.perf_counter() - started) * 1000,
+                response_excerpt(resp.text),
+            )
             raise KbApiError(f"GET {path} -> {resp.status_code}: {resp.text[:200]}")
+        logger.debug(
+            "mcp.http_done method=GET path=%s status=%d duration_ms=%.0f",
+            path, resp.status_code, (time.perf_counter() - started) * 1000,
+        )
         return resp.json()
 
     async def _post_json(self, path: str, body: dict) -> dict:

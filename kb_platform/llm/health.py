@@ -13,12 +13,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Awaitable, Callable
 
 import httpx
 
 from kb_platform.llm.breaker_registry import snapshot
 from kb_platform.llm.request import ProviderConfig, build_chat_request
+from kb_platform.llm.observability import response_excerpt, safe_endpoint
 
 logger = logging.getLogger(__name__)
 
@@ -62,11 +64,23 @@ class HealthProbe:
                 response_format=None,
                 params={"max_tokens": 1},
             )
+            started = time.perf_counter()
             resp = await client.post(url, headers=headers, json=body)
             # 4xx auth/quota issues are NOT endpoint-health: treat only
             # 5xx + 429 as unhealthy (matches the gateway's retriable rule).
-            return resp.status_code < 500 and resp.status_code != 429
-        except (httpx.TimeoutException, httpx.TransportError):
+            ok = resp.status_code < 500 and resp.status_code != 429
+            logger.debug(
+                "llm.probe_result provider=%s model=%s endpoint=%s status=%d healthy=%s "
+                "duration_ms=%.0f",
+                cfg.provider, cfg.model, safe_endpoint(url), resp.status_code, ok,
+                (time.perf_counter() - started) * 1000,
+            )
+            return ok
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            logger.warning(
+                "llm.probe_transport_error provider=%s model=%s error_type=%s error=%r",
+                cfg.provider, cfg.model, type(exc).__name__, response_excerpt(exc),
+            )
             return False
         except Exception:  # noqa: BLE001 - probe must never crash the loop
             logger.debug("probe error for %s", cfg.model, exc_info=True)

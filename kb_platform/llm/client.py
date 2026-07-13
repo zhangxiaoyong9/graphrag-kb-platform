@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import time
 import uuid
+import logging
 from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
@@ -36,6 +37,8 @@ except Exception:  # pragma: no cover - graphrag-llm always present in prod
 from kb_platform.llm.events import Done, Error, TextDelta, Usage
 from kb_platform.llm.gateway import ChatRequest, FailoverGateway, GatewayResult
 from kb_platform.llm.request import ProviderConfig
+
+logger = logging.getLogger(__name__)
 
 
 class _AwaitableAsyncIterator:
@@ -197,7 +200,12 @@ class NativeCompletion(LLMCompletion):
         return self._non_stream(req)
 
     async def _non_stream(self, req: ChatRequest) -> ChatCompletion:
-        res: GatewayResult = await self._gateway.collect(req)
+        from kb_platform.llm.observability import new_call_id, response_excerpt
+        from kb_platform.logging_config import bind_log_context
+
+        call_id = new_call_id("llm")
+        with bind_log_context(llm_call_id=call_id, operation="completion"):
+            res: GatewayResult = await self._gateway.collect(req)
         # The gateway returns ``GatewayResult(error=...)`` (no exception) when every
         # profile is exhausted (e.g. all returned 5xx/429/timeout). Surface it as an
         # exception — otherwise graphrag's extractor sees ``response.content == ""``
@@ -229,28 +237,37 @@ class NativeCompletion(LLMCompletion):
 
             try:
                 response.formatted_response = structure_completion_response(res.content, rf)
-            except Exception:  # noqa: BLE001 - graphrag tolerates None
+            except Exception as exc:  # noqa: BLE001 - graphrag tolerates None
+                logger.warning(
+                    "llm.structured_parse_error model=%s output_chars=%d error_type=%s error=%r",
+                    self.model_id, len(res.content), type(exc).__name__, response_excerpt(exc),
+                )
                 response.formatted_response = None
         return response
 
     async def _stream_chunks(self, req: ChatRequest) -> AsyncIterator[ChatCompletionChunk]:
-        async for ev in self._gateway.astream(req):
-            if isinstance(ev, TextDelta):
-                yield _chunk(self.model_id, content=ev.text)
-            elif isinstance(ev, Usage):
-                yield _chunk(self.model_id, usage=ev)
-            elif isinstance(ev, Done):
+        from kb_platform.llm.observability import new_call_id
+        from kb_platform.logging_config import bind_log_context
+
+        call_id = new_call_id("llm")
+        with bind_log_context(llm_call_id=call_id, operation="completion_stream"):
+            async for ev in self._gateway.astream(req):
+                if isinstance(ev, TextDelta):
+                    yield _chunk(self.model_id, content=ev.text)
+                elif isinstance(ev, Usage):
+                    yield _chunk(self.model_id, usage=ev)
+                elif isinstance(ev, Done):
                 # terminal marker from gateway — stop. We do NOT emit a synthetic
                 # finish chunk here; graphrag's engines read choices[0].delta.content
                 # and stop on their own, and an extra empty delta would change the
                 # joined text by exactly one "". The stream just ends.
-                return
-            elif isinstance(ev, Error):
+                    return
+                elif isinstance(ev, Error):
                 # Terminal "all profiles exhausted" event from the gateway. Raise
                 # so the consumer sees the failure — emitting a synthetic "stop"
                 # chunk here would hand query engines an empty answer with no signal
                 # that every upstream profile failed (silent degrade).
-                raise RuntimeError(f"LLM gateway stream: {ev.message}")
+                    raise RuntimeError(f"LLM gateway stream: {ev.message}")
         # stream ended without an explicit Done/Error event -> emit a terminal chunk
         yield _chunk(self.model_id, finish_reason="stop")
 

@@ -4,7 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from kb_platform.logging_config import bind_log_context, get_log_context, setup_logging
+from kb_platform.logging_config import (
+    bind_log_context,
+    get_log_context,
+    redact_text,
+    setup_logging,
+)
 
 
 def test_setup_attaches_stderr_and_file_handlers(tmp_path, monkeypatch):
@@ -113,6 +118,25 @@ def test_formatter_omits_absent_fields(tmp_path, monkeypatch, capsys):
     logging.getLogger("kb_platform.test_subject2").info("plain line")
     err = capsys.readouterr().err
     assert "[" not in err.split("—")[-1]  # no context block when nothing bound
+
+
+def test_formatter_adds_service_and_redacts_secrets(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("KB_LOG_DIR", str(tmp_path))
+    setup_logging("worker")
+    logging.getLogger("kb_platform.secret_test").error(
+        "Authorization: Bearer super-secret-token api_key=sk-abcdefghijklmnop"
+    )
+    err = capsys.readouterr().err
+    assert "service=worker" in err
+    assert "super-secret-token" not in err
+    assert "sk-abcdefghijklmnop" not in err
+    assert "[REDACTED]" in err
+
+
+def test_redact_text_flattens_and_bounds():
+    value = redact_text("first\nAuthorization=Bearer abcdefghijklmnopqrstuvwxyz", limit=30)
+    assert "\n" not in value
+    assert len(value) <= 30
 
 
 # --- Task 2: cross-platform gzip rotation ---------------------------------
@@ -230,6 +254,14 @@ def test_middleware_binds_request_id_and_sets_header(tmp_path, monkeypatch):
     headers_lower = {k.lower() for k in r.headers}
     assert "x-request-id" in headers_lower
     assert len(r.headers["x-request-id"]) == 12
+
+
+def test_middleware_accepts_safe_incoming_request_id(tmp_path, monkeypatch):
+    monkeypatch.setenv("KB_LOG_DIR", str(tmp_path))
+    setup_logging("server")
+    with _middleware_app(tmp_path) as client:
+        response = client.get("/kbs", headers={"X-Request-ID": "edge-request-42"})
+    assert response.headers["X-Request-ID"] == "edge-request-42"
 
 
 def test_middleware_logs_request_start_and_done(tmp_path, monkeypatch, capsys):
@@ -515,6 +547,8 @@ def test_query_route_logs_start_first_token_and_done(tmp_path, monkeypatch, caps
     assert "deltas=" in err, err
     # query_id + kb_id correlation block is present on the lifecycle lines.
     assert "query=" in err and "kb=1" in err, err
+    assert "what is ACME?" not in err
+    assert "query_chars=13" in err
 
 
 def test_query_route_no_first_token_when_engine_errors(tmp_path, monkeypatch, capsys):

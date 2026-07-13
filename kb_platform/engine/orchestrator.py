@@ -215,7 +215,7 @@ class Orchestrator:
 
             vs = self.vector_store or build_vector_store(self.data_root)
             vs.connect()
-            atomic_steps.generate_text_embeddings(self.repo, self.adapter, step, vs)
+            await atomic_steps.generate_text_embeddings(self.repo, self.adapter, step, vs)
         else:
             msg = f"unknown atomic step: {step.name}"
             raise ValueError(msg)

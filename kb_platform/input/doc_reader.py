@@ -27,8 +27,11 @@ def read_document(data: bytes, filename: str) -> str:
 
         result = MarkItDown().convert(io.BytesIO(data))
         text = getattr(result, "text_content", None) or ""
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "document.parse_fallback filename=%r bytes=%d error_type=%s",
+            filename, len(data), type(exc).__name__, exc_info=True,
+        )
     if not text:
         text = data.decode("utf-8", errors="replace")
     logger.info("parsed %d chars from %s", len(text), filename)

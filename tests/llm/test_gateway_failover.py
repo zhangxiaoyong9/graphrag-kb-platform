@@ -101,7 +101,7 @@ async def test_astream_fails_over_to_fallback_and_trips_primary_breaker():
 
 
 @pytest.mark.asyncio
-async def test_collect_fails_over_to_fallback():
+async def test_collect_fails_over_to_fallback(caplog):
     primary_calls: list[int] = []
     fallback_calls: list[int] = []
 
@@ -122,11 +122,19 @@ async def test_collect_fails_over_to_fallback():
     gw = _gateway(client, threshold=1)
 
     req = ChatRequest(messages=[], stream=False, response_format=None, params={})
-    res = await gw.collect(req)
+    with caplog.at_level("INFO", logger="kb_platform.llm.gateway"):
+        res = await gw.collect(req)
 
     assert res.error is None
     assert res.content == "collected"
     assert res.usage == (1, 4)
     assert gw._breakers[0].state == "open"
     assert gw._breakers[1].state == "closed"
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("llm.error" in message and "upstream boom" in message for message in messages)
+    assert any(
+        "llm.success" in message and "prompt_tokens=1" in message
+        and "output_tokens=4" in message
+        for message in messages
+    )
     await client.aclose()

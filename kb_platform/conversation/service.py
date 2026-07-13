@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import hashlib
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
@@ -97,9 +98,14 @@ class ConversationService:
         t0 = time.perf_counter()
         try:
             rr = await self._rewriter.rewrite(content, history)
+            standalone = rr.standalone or ""
+            standalone_hash = hashlib.sha256(
+                standalone.encode("utf-8", errors="replace")
+            ).hexdigest()[:12]
             logger.info(
-                "rewrite done in %.0fms -> %.60s",
-                (time.perf_counter() - t0) * 1000, rr.standalone,
+                "rewrite done in %.0fms; input_chars=%d output_chars=%d output_hash=%s",
+                (time.perf_counter() - t0) * 1000, len(content), len(standalone),
+                standalone_hash,
             )
             return True, False, rr.prompt_tokens, rr.output_tokens, rr.standalone
         except Exception:  # noqa: BLE001 - fall back to raw message, never block

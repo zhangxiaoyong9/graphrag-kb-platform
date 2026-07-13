@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -15,6 +16,7 @@ from kb_platform.graph.adapter import ChunkText, CommunityReport, ExtractionResu
 # 400 Bad Request / 58s hang at /api/embed. Keep batches small so each call
 # finishes well under any HTTP timeout.
 _EMBED_BATCH_SIZE = 64
+logger = logging.getLogger(__name__)
 
 
 class GraphRagAdapter:
@@ -163,7 +165,7 @@ class GraphRagAdapter:
             )
         return e, rr
 
-    def embed_items(self, texts: list[str]) -> list[list[float]]:
+    async def embed_items(self, texts: list[str]) -> list[list[float]]:
         """Embed texts via graphrag-llm's configured embedding model, in batches.
 
         graphrag-llm's LiteLLMEmbedding.embedding takes ``input=list[str]``
@@ -180,10 +182,19 @@ class GraphRagAdapter:
         if not texts:
             return []
         embedder = self._embed_factory()
+        if hasattr(embedder, "embed_many_async"):
+            return (await embedder.embed_many_async(texts)).embeddings
+        # Compatibility for third-party synchronous embedders. Keep blocking work
+        # off the worker's event loop; kb_native always takes the async branch above.
+        logger.warning(
+            "embedding.sync_fallback embedder_type=%s items=%d",
+            type(embedder).__name__, len(texts),
+        )
         out: list[list[float]] = []
         for start in range(0, len(texts), _EMBED_BATCH_SIZE):
             batch = texts[start : start + _EMBED_BATCH_SIZE]
-            out.extend(embedder.embedding(input=batch).embeddings)
+            response = await asyncio.to_thread(embedder.embedding, input=batch)
+            out.extend(response.embeddings)
         return out
 
 
@@ -202,8 +213,17 @@ def _parse_report_json(text: str, context: dict) -> CommunityReport:
     if m:
         try:
             data = json.loads(m.group(0))
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "llm.report_parse_error community=%s output_chars=%d error_type=%s",
+                context.get("community"), len(text), type(exc).__name__,
+            )
             data = {}
+    elif text:
+        logger.warning(
+            "llm.report_parse_error community=%s output_chars=%d error_type=no_json_object",
+            context.get("community"), len(text),
+        )
     title = str(data.get("title") or f"Community {context['community']}")
     summary = str(data.get("summary") or title)
     findings = data.get("findings") or [summary]
@@ -461,6 +481,11 @@ def build_default_adapter(
             return embedder
 
     except Exception:  # noqa: BLE001 — embedding optional (not every config supports it)
+        logger.exception(
+            "embedding.factory_error provider=%s model=%s",
+            getattr(embed_model_config or model_config, "model_provider", "unknown"),
+            getattr(embed_model_config or model_config, "model", "unknown"),
+        )
         embed_factory = None
 
     return GraphRagAdapter(

@@ -12,10 +12,12 @@ without the ``[neo4j]`` extra. ``close_all`` is wired into bootstrap.close_clien
 from __future__ import annotations
 
 import threading
+import logging
 from typing import Any
 
 _LOCK = threading.Lock()
 _DRIVERS: dict[tuple[str, str, str], Any] = {}
+logger = logging.getLogger(__name__)
 
 
 def _build_driver(uri: str, username: str, password: str):
@@ -32,6 +34,7 @@ def get_driver(uri: str, username: str, password: str):
     with _LOCK:
         d = _DRIVERS.get(key)
         if d is None:
+            logger.info("neo4j.driver_create uri=%s username=%s", uri, username)
             d = _build_driver(uri, username, password)
             _DRIVERS[key] = d
         return d
@@ -44,6 +47,8 @@ async def close_all() -> None:
         _DRIVERS.clear()
     for d in drivers:
         await d.close()
+    if drivers:
+        logger.info("neo4j.drivers_closed count=%d", len(drivers))
 
 
 def _reset_for_test() -> None:

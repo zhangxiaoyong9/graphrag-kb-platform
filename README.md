@@ -361,6 +361,27 @@ The MCP query tool currently exposes the four GraphRAG methods (`local`, `global
 
 > The MCP server is a peer of the API server and carries no auth of its own; isolate it at the network layer (same as a local Ollama). HTTP transport for remote agents can be added later. Implementation: `kb_platform/mcp/`.
 
+## Logging and troubleshooting
+
+Server, worker, and MCP logs are written to stderr and `logs/<process>.log`.
+Every line includes `service=...`; request/query/job/step/unit/LLM-call IDs are
+added when available. LLM and embedding logs record safe metadata, latency,
+tokens, retry/failover decisions, HTTP error excerpts, embedding batch progress,
+and vector dimensions—never prompts, document text, vectors, or API keys.
+
+```bash
+# Inspect one embedding call
+rg 'llm_call=emb-|embedding\.' logs/worker.log
+
+# Temporarily increase LLM detail
+KB_LOG_LEVELS=kb_platform.llm=DEBUG uv run python -m kb_platform.worker kb.db
+```
+
+Embedding batches retry 429, 5xx, timeout, and transport errors up to three
+times by default; configure this with `KB_EMBED_MAX_ATTEMPTS`. See
+[Logging and observability](docs/logging-observability.md) for the event catalog,
+correlation model, module audit, redaction behavior, and all environment variables.
+
 ## Development
 
 ```bash

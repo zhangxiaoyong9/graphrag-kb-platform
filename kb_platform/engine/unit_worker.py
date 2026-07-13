@@ -102,5 +102,8 @@ class UnitWorker:
                     unit.id, strategy.kind, (time.perf_counter() - t0) * 1000,
                 )
             except Exception as e:  # noqa: BLE001
-                logger.warning("unit %s [%s] failed: %s", unit.id, strategy.kind, e)
+                logger.exception(
+                    "unit %s [%s] failed; error_type=%s", unit.id, strategy.kind,
+                    type(e).__name__,
+                )
                 self.repo.set_unit_failed(unit.id, str(e))

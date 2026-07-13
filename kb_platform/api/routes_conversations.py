@@ -130,7 +130,8 @@ async def send_message(conv_id: int, payload: MessageSend, request: Request):
         t0 = time.perf_counter()
         conv = repo.get_conversation(conv_id)
         kb_id = conv.kb_id if conv else None
-        with bind_log_context(query_id=query_id, kb_id=kb_id):
+        request_id = getattr(request.state, "request_id", None)
+        with bind_log_context(request_id=request_id, query_id=query_id, kb_id=kb_id):
             logger.info("conversation message start conv=%s", conv_id)
             try:
                 # Production: resolve KB settings, build a real engine + rewriter.
@@ -148,6 +149,7 @@ async def send_message(conv_id: int, payload: MessageSend, request: Request):
                         kb_settings = json.loads(kb.settings_json or "{}")
                         resolved = resolve_query_params(kb_settings, None)
                     except Exception as exc:  # noqa: BLE001 - graceful error, never 500
+                        logger.exception("conversation settings resolution failed")
                         yield format_sse("error", {"message": f"settings resolution failed: {exc}"})
                         return
                     try:
@@ -159,8 +161,12 @@ async def send_message(conv_id: int, payload: MessageSend, request: Request):
                         try:
                             local_rewriter = LlmRewriter(build_chat_complete(settings))
                         except Exception:  # noqa: BLE001 - rewriter optional
+                            logger.exception(
+                                "conversation rewriter build failed; continuing without rewrite"
+                            )
                             local_rewriter = None
                     except Exception as exc:  # noqa: BLE001 - graceful error, never 500
+                        logger.exception("conversation engine build failed")
                         yield format_sse("error", {"message": f"engine build failed: {exc}"})
                         return
                 else:

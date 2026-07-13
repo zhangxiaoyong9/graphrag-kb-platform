@@ -10,6 +10,7 @@ catch-all, so explicit API routes (like `GET /kbs`) always win.
 import logging
 import os
 import time
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
@@ -93,7 +94,9 @@ def create_app(
         """
         from kb_platform.logging_config import bind_log_context
 
-        request_id = uuid4().hex[:12]
+        incoming = request.headers.get("x-request-id", "")
+        request_id = incoming if re.fullmatch(r"[A-Za-z0-9._-]{1,64}", incoming) else uuid4().hex[:12]
+        request.state.request_id = request_id
         api_log = logging.getLogger("kb_platform.api")
         with bind_log_context(request_id=request_id):
             api_log.info("request start %s %s", request.method, request.url.path)
@@ -106,7 +109,12 @@ def create_app(
                 )
                 raise
             duration_ms = (time.perf_counter() - t0) * 1000
-            api_log.info(
+            log_method = api_log.info
+            if response.status_code >= 500:
+                log_method = api_log.error
+            elif response.status_code >= 400:
+                log_method = api_log.warning
+            log_method(
                 "request done %s %s -> %d %.1fms",
                 request.method,
                 request.url.path,

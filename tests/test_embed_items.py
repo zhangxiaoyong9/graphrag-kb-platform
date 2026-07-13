@@ -5,6 +5,8 @@ embed_items must BATCH a large input: a single embedding(input=[thousands]) call
 overwhelms providers (Ollama /api/embed returns 400 / times out past ~hundreds),
 so it chunks to _EMBED_BATCH_SIZE and concatenates the vectors in input order.
 """
+import pytest
+
 from kb_platform.graph import graphrag_adapter
 from kb_platform.graph.graphrag_adapter import GraphRagAdapter
 
@@ -38,22 +40,25 @@ def _make_adapter(embedder: _FakeEmbedder) -> GraphRagAdapter:
     )
 
 
-def test_embed_items_uses_embedding_api():
+@pytest.mark.asyncio
+async def test_embed_items_uses_embedding_api():
     embedder = _FakeEmbedder()
     adapter = _make_adapter(embedder)
-    out = adapter.embed_items(["a", "b"])
+    out = await adapter.embed_items(["a", "b"])
     assert embedder.calls == [["a", "b"]]
     assert out == [[0.0, 0.1], [0.0, 0.1]]
 
 
-def test_embed_items_empty_returns_empty():
+@pytest.mark.asyncio
+async def test_embed_items_empty_returns_empty():
     embedder = _FakeEmbedder()
     adapter = _make_adapter(embedder)
-    assert adapter.embed_items([]) == []
+    assert await adapter.embed_items([]) == []
     assert embedder.calls == []  # not called for empty input
 
 
-def test_embed_items_batches_large_input(monkeypatch):
+@pytest.mark.asyncio
+async def test_embed_items_batches_large_input(monkeypatch):
     """Large inputs are split into _EMBED_BATCH_SIZE-sized calls, vectors
     concatenated in order. Guards against the timeout/400 from sending the
     whole collection in one embedding() call."""
@@ -72,7 +77,7 @@ def test_embed_items_batches_large_input(monkeypatch):
     adapter = _make_adapter(embedder)
     items = [f"t{i}" for i in range(8)]  # 8 / batch=3 -> [3, 3, 2]
 
-    out = adapter.embed_items(items)
+    out = await adapter.embed_items(items)
 
     assert [len(c) for c in embedder.calls] == [3, 3, 2]
     assert embedder.calls[0] == ["t0", "t1", "t2"]

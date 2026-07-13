@@ -265,6 +265,26 @@ uv run python -m kb_platform.mcp --api-url http://127.0.0.1:8000
 
 > MCP Server 本身没有认证，请仅在本机或可信网络中运行。
 
+## 日志与故障排查
+
+Server、Worker 和 MCP 日志会输出到 stderr 及 `logs/<process>.log`。每条日志
+都包含 `service=...`；在相应链路中还会带 request、query、job、step、unit
+和 LLM 调用 ID。LLM/Embedding 日志记录安全的请求摘要、耗时、Token、
+重试/故障转移、HTTP 错误摘要、Embedding 批次进度和向量维度，不记录
+Prompt、文档正文、向量或 API Key。
+
+```bash
+# 查看一次 Embedding 调用的完整链路
+rg 'llm_call=emb-|embedding\.' logs/worker.log
+
+# 临时提高 LLM 模块日志级别
+KB_LOG_LEVELS=kb_platform.llm=DEBUG uv run python -m kb_platform.worker kb.db
+```
+
+Embedding 批次默认会对 429、5xx、超时和网络错误最多尝试三次，可通过
+`KB_EMBED_MAX_ATTEMPTS` 调整。事件目录、关联模型、逐模块审计、脱敏规则和
+全部环境变量参见 [Logging and observability](docs/logging-observability.md)。
+
 ## 开发与测试
 
 ```bash
