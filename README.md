@@ -53,7 +53,38 @@ uv sync                              # install Python dependencies
 uv run alembic upgrade head
 ```
 
-Run **two** processes (separate terminals):
+**One-command startup (Linux / macOS):**
+
+```bash
+chmod +x scripts/start.sh
+./scripts/start.sh
+```
+
+**One-command startup (Windows PowerShell / CMD):**
+
+```powershell
+.\scripts\start.ps1
+# or from Command Prompt:
+.\scripts\start.cmd
+```
+
+The scripts install missing dependencies, build `web/dist` when needed, apply database migrations, and supervise both the API server and worker. Press `Ctrl+C` to stop both processes.
+
+Common options:
+
+```bash
+./scripts/start.sh --db kb.db --data-root ./data --host 127.0.0.1 --port 8000
+./scripts/start.sh --skip-install --skip-build
+```
+
+```powershell
+.\scripts\start.ps1 -DbPath kb.db -DataRoot .\data -HostAddress 127.0.0.1 -Port 8000
+.\scripts\start.ps1 -SkipInstall -SkipBuild
+```
+
+Equivalent environment variables are `KB_DB_PATH`, `KB_DATA_ROOT`, `KB_HOST`, and `KB_PORT`.
+
+**Manual startup:** run **two** processes in separate terminals:
 
 ```bash
 # Terminal 1 — API server: REST endpoints + hosts the built SPA
