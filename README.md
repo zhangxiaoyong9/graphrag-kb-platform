@@ -1,10 +1,31 @@
 # KB Platform
 
-Knowledge base management platform built on top of Microsoft [GraphRAG](https://github.com/microsoft/graphrag). Provides a REST API + a React dashboard for creating knowledge bases, indexing documents, tracking every chunk and pipeline step, and querying the graph with local / global / drift / basic search.
+[English](README.md) | [简体中文](README.zh-CN.md)
 
-- **Control plane:** SQLite (jobs / steps / units / documents / retries).
-- **Data plane:** parquet (entities / relationships / communities / reports / text units) + LanceDB vectors.
-- **Two processes:** an HTTP API server (also hosts the built SPA) + an independent background worker that runs indexing. The server never runs indexing; the worker never serves HTTP.
+A production-oriented knowledge base management platform built on Microsoft [GraphRAG](https://github.com/microsoft/graphrag). It combines a REST API, a React dashboard, an observable indexing pipeline, and an optional MCP server for AI agents.
+
+Create and manage knowledge bases, ingest documents, inspect every chunk and pipeline step, retry failed work, track token cost, explore the entity graph, and query with six strategies: **local, global, drift, basic, cypher, and hybrid**.
+
+- **Control plane:** SQLite for knowledge bases, documents, jobs, steps, units, retries, conversations, and provider profiles.
+- **Data plane:** Parquet for GraphRAG artifacts, LanceDB for vectors, and optional Neo4j for Cypher/hybrid retrieval.
+- **Process isolation:** the API server hosts REST endpoints and the built SPA; an independent worker runs indexing; the optional MCP server proxies agent requests to the API.
+- **Observable by design:** unit-level progress, targeted retries, real citations, token usage, elapsed time, and cost breakdowns.
+
+> **Project status:** active early-stage software (`0.1.0`). It is best suited to local or trusted-network deployments. Add authentication, authorization, and network isolation before exposing it publicly.
+
+## Contents
+
+- [Requirements](#requirements)
+- [Quick start](#quick-start)
+- [Configuration](#configuration-provider-profiles--kb-content)
+- [Creating and indexing a KB](#creating-a-kb--indexing)
+- [Dashboard](#dashboard)
+- [API](#api)
+- [Indexing pipeline](#indexing-pipeline)
+- [Query strategies](#query-strategies)
+- [MCP server](#mcp-query-server-for-external-agents)
+- [Development](#development)
+- [Project structure](#project-structure)
 
 ---
 
@@ -14,10 +35,11 @@ Knowledge base management platform built on top of Microsoft [GraphRAG](https://
 - Node 18+ (only to build the dashboard; not needed at runtime if you use a prebuilt `web/dist/`)
 - An LLM provider key, entered in the dashboard (**Provider 配置** page) and stored **Fernet-encrypted in the DB**. No env-var keys. The encryption master key is auto-generated next to the DB (`.kb_secret_key`, chmod 600), or set via `KB_SECRET_KEY`.
 - _(Optional)_ [Ollama](https://ollama.com) for local embeddings — needed if your LLM provider has no embedding model (e.g. DeepSeek).
+- _(Optional)_ Neo4j 5.20+ for `cypher` and `hybrid` query methods; install backend support with `uv sync --extra neo4j`.
 
 ---
 
-## Deployment
+## Quick start
 
 ### 1. Backend (API server + worker)
 
@@ -240,16 +262,20 @@ Every LLM step is tracked at the chunk/entity/community level (unit): `pending �
 
 **DeepSeek community reports:** set `structured_output: false` on the KB's **LLM provider profile** → plain-text completion + lenient JSON parse (DeepSeek rejects `response_format: json_schema`). Default `true` (graphrag structured output, for OpenAI/GPT-4o). `structured_output` follows the LLM profile, not the KB.
 
-## Query
+## Query strategies
 
-| Method | Needs community reports | Needs embeddings | Description |
-|--------|------------------------|------------------|-------------|
-| `local` | no | yes (entity) | Entity-grounded retrieval + community summaries |
-| `global` | yes | no | Map-reduce over community reports |
-| `drift` | yes | yes | Dense retrieval focused search |
-| `basic` | no | yes (text-unit) | Text-unit vector search (simplest, fastest) |
+| Method | Community reports | Embeddings | Neo4j | Best for |
+|--------|-------------------|------------|--------|----------|
+| `local` | No | Entity | No | Entity-grounded questions with nearby graph context |
+| `global` | Yes | No | No | Corpus-wide themes and summaries |
+| `drift` | Yes | Yes | No | Focused exploration that expands from dense retrieval |
+| `basic` | No | Text unit | No | Fast, straightforward semantic search |
+| `cypher` | No | No | Yes | Explicit graph traversal and auditable generated Cypher |
+| `hybrid` | No | Yes | Yes | Vector retrieval combined with multi-hop graph context |
 
-The query endpoint resolves the LLM from the KB's **LLM provider profile** and the embedder from its **embedding provider profile** (so Ollama works for the vector methods). The response carries real server-side `elapsed_ms`, token usage, and extracted source entities / text snippets.
+The query endpoint resolves the LLM from the KB's **LLM provider profile** and the embedder from its **embedding provider profile**. Ollama therefore works for vector-based methods even when the chat provider has no embedding model. Responses include real server-side elapsed time, token usage, citations, and—where applicable—generated Cypher and truncation metadata.
+
+> `global` and `drift` require community reports. `cypher` and `hybrid` require the optional Neo4j integration and a synchronized graph snapshot.
 
 ### Multi-turn chat
 
@@ -276,10 +302,16 @@ uv run python -m kb_platform.mcp --api-url http://127.0.0.1:8000
 
 **Exposed tools:**
 
-| tool | purpose |
+| Tool | Purpose |
 |------|---------|
-| `list_knowledge_bases` | Lists every KB (`{id, name, method}`); call this first to discover queryable KBs |
-| `query_knowledge_base(kb_id, query, method?)` | Searches one KB, returns `{answer, method, sources}`; `method` defaults to `local`, can be `global` / `drift` / `basic` |
+| `list_knowledge_bases` | Discover available KBs and their IDs |
+| `get_kb_details(kb_id)` | Check index statistics and available query methods |
+| `query_knowledge_base(kb_id, query, method?)` | Query a KB and return an answer with cited sources |
+| `list_documents(kb_id)` | Browse the documents contained in a KB |
+| `get_document(kb_id, doc_id)` | Retrieve full document text and chunk snippets for verification |
+| `search_graph(kb_id, q, hop?, limit?)` | Inspect an entity's multi-hop graph neighborhood |
+
+The MCP query tool currently exposes the four GraphRAG methods (`local`, `global`, `drift`, and `basic`). Use the REST API or dashboard for Neo4j-backed `cypher` and `hybrid` queries.
 
 **Wire into Claude Desktop / Claude Code** (edit your MCP client config):
 
