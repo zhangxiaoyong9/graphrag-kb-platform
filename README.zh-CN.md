@@ -55,7 +55,40 @@ uv sync --extra mcp
 uv sync --extra neo4j
 ```
 
-### 2. 启动 API Server 和 Worker
+### 2. 一键启动
+
+Linux / macOS：
+
+```bash
+chmod +x scripts/start.sh
+./scripts/start.sh
+```
+
+Windows PowerShell / CMD：
+
+```powershell
+.\scripts\start.ps1
+# 或在命令提示符中执行：
+.\scripts\start.cmd
+```
+
+脚本会自动安装缺失的依赖、在需要时构建 `web/dist`、执行数据库迁移，并同时管理 API Server 和 Worker。按 `Ctrl+C` 会停止两个进程。
+
+常用参数：
+
+```bash
+./scripts/start.sh --db kb.db --data-root ./data --host 127.0.0.1 --port 8000
+./scripts/start.sh --skip-install --skip-build
+```
+
+```powershell
+.\scripts\start.ps1 -DbPath kb.db -DataRoot .\data -HostAddress 127.0.0.1 -Port 8000
+.\scripts\start.ps1 -SkipInstall -SkipBuild
+```
+
+也可以使用 `KB_DB_PATH`、`KB_DATA_ROOT`、`KB_HOST` 和 `KB_PORT` 环境变量。
+
+### 3. 手动启动 API Server 和 Worker
 
 需要分别启动两个进程：
 
@@ -75,7 +108,7 @@ python -m kb_platform.server [db_path] [data_root] [host] [port]
 
 默认值为 `kb.db . 127.0.0.1 8000`。`data_root` 用于保存 Parquet 索引数据及 `vectors/` 下的 LanceDB 表。
 
-### 3. 构建前端
+### 4. 构建前端
 
 ```bash
 cd web
