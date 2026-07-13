@@ -34,11 +34,13 @@ def build_query_engine(method, kb, repo, app_state):
     data_root = getattr(app_state, "data_root", None) or kb.data_root
 
     if method in ("cypher", "hybrid"):
+        logger.info("query.engine_select method=%s engine=neo4j kb=%s", method, kb.id)
         return _build_neo4j_engine(method, kb, repo, data_root)
 
     from kb_platform.query.graphrag_engine import GraphRagQueryEngine  # noqa: PLC0415
 
     model_config = _assemble_kb_settings(kb, repo)
+    logger.info("query.engine_select method=%s engine=graphrag kb=%s", method, kb.id)
     return GraphRagQueryEngine(data_root=data_root, model_config=model_config)
 
 
@@ -98,6 +100,11 @@ def _build_neo4j_engine(method, kb, repo, data_root):
             # loop that binds the shared httpx.AsyncClient to it, breaking the
             # subsequent streaming synthesis ("bound to a different event loop").
             return await native_embed.embed_async(text)
+
+    logger.info(
+        "query.neo4j_engine_ready method=%s kb=%s neo4j_profile=%s llm_model=%s embedding=%s",
+        method, kb.id, kb.neo4j_profile_id, model_id, bool(embed),
+    )
 
     return Neo4jQueryEngine(
         uri=uri, username=username, password=password,

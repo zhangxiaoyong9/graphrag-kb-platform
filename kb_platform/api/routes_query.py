@@ -3,6 +3,7 @@
 import logging
 import time
 from uuid import uuid4
+import hashlib
 
 from fastapi import APIRouter, Request
 from sqlalchemy import select
@@ -37,9 +38,13 @@ async def query_kb(kb_id: int, payload: QueryRequest, request: Request):
         t0 = time.perf_counter()
         delta_count = 0
         first_token_ms: float | None = None
-        with bind_log_context(query_id=query_id, kb_id=kb_id):
+        request_id = getattr(request.state, "request_id", None)
+        query_text = payload.query or ""
+        query_hash = hashlib.sha256(query_text.encode("utf-8", errors="replace")).hexdigest()[:12]
+        with bind_log_context(request_id=request_id, query_id=query_id, kb_id=kb_id):
             logger.info(
-                "query start method=%s q=%.80s", payload.method, payload.query or ""
+                "query start method=%s query_chars=%d query_hash=%s",
+                payload.method, len(query_text), query_hash,
             )
             try:
                 per_query = (

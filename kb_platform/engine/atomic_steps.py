@@ -2,6 +2,7 @@
 
 import json
 import logging
+import inspect
 from pathlib import Path
 
 import pandas as pd
@@ -128,7 +129,7 @@ def _as_text(value) -> str:
     return str(value) if value is not None else ""
 
 
-def generate_text_embeddings(repo: Repository, adapter, step, vector_store) -> None:
+async def generate_text_embeddings(repo: Repository, adapter, step, vector_store) -> None:
     """Read 3 parquet collections → batch embed via ``adapter.embed_items`` →
     upsert into ``vector_store``.
 
@@ -161,15 +162,25 @@ def generate_text_embeddings(repo: Repository, adapter, step, vector_store) -> N
     ]
     for index_name, parquet_path, id_fn, text_fn in collections:
         if not parquet_path.exists():
+            logger.info("embedding.collection_skip index=%s reason=missing_parquet", index_name)
             continue
         df = pd.read_parquet(parquet_path)
         if df.empty:
+            logger.info("embedding.collection_skip index=%s reason=empty_parquet", index_name)
             continue
         records = df.to_dict("records")
         texts = [text_fn(row) for row in records]
-        vectors = adapter.embed_items(texts)
+        logger.info("embedding.collection_start index=%s items=%d", index_name, len(texts))
+        maybe_vectors = adapter.embed_items(texts)
+        vectors = await maybe_vectors if inspect.isawaitable(maybe_vectors) else maybe_vectors
+        if len(vectors) != len(records):
+            raise RuntimeError(
+                f"embedding collection {index_name} expected {len(records)} vectors, "
+                f"got {len(vectors)}"
+            )
         items = [
             {"id": id_fn(records[i]), "text": texts[i], "vector": vectors[i]}
             for i in range(len(records))
         ]
         vector_store.upsert(index_name, items)
+        logger.info("embedding.collection_done index=%s items=%d", index_name, len(items))

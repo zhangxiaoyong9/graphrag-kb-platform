@@ -16,8 +16,9 @@ from typing import Any
 import httpx
 
 from kb_platform.llm.circuit_breaker import CircuitBreaker
-from kb_platform.llm.events import Done, Error, StreamEvent, TextDelta
+from kb_platform.llm.events import Done, Error, StreamEvent, TextDelta, Usage
 from kb_platform.llm.metrics import METRICS
+from kb_platform.llm.observability import message_stats, response_excerpt, safe_endpoint
 from kb_platform.llm.request import ProviderConfig, build_chat_request
 from kb_platform.llm.sse import parse_provider_stream
 
@@ -96,13 +97,21 @@ class FailoverGateway:
     # --- streaming ---
     async def astream(self, req: ChatRequest) -> AsyncIterator[StreamEvent]:
         t0 = time.time()
+        message_count, input_chars, input_hash = message_stats(req.messages)
         first_error_time: float | None = None
         ttft_recorded = False
         last_error: str | None = None
         for idx, pk in self._candidates():
             cfg = self._cfg_with_key(pk)
+            attempt_t0 = time.time()
+            output_chars = 0
+            prompt_tokens = 0
+            output_tokens = 0
             logger.info(
-                "llm attempt provider=%s model=%s (stream)", cfg.provider, cfg.model
+                "llm.start provider=%s model=%s endpoint=%s attempt=%d/%d stream=true "
+                "messages=%d input_chars=%d input_hash=%s",
+                cfg.provider, cfg.model, safe_endpoint(_chat_endpoint(cfg)), idx + 1,
+                len(self._pks), message_count, input_chars, input_hash,
             )
             url, headers, body = build_chat_request(
                 cfg, messages=req.messages, stream=True,
@@ -111,9 +120,19 @@ class FailoverGateway:
             try:
                 async with self._client.stream("POST", url, headers=headers, json=body) as resp:
                     if resp.status_code >= 400:
-                        last_error = f"HTTP {resp.status_code}"
+                        raw = (await resp.aread()).decode(errors="replace")
+                        last_error = f"HTTP {resp.status_code}: {response_excerpt(raw)}"
                         retriable = resp.status_code >= 500 or resp.status_code == 429
                         self._on_attempt_error(idx, retriable=retriable)
+                        logger.log(
+                            logging.WARNING if retriable else logging.ERROR,
+                            "llm.error provider=%s model=%s status=%d retriable=%s "
+                            "duration_ms=%.0f upstream_request_id=%s response=%r",
+                            cfg.provider, cfg.model, resp.status_code, retriable,
+                            (time.time() - attempt_t0) * 1000,
+                            resp.headers.get("x-request-id") or resp.headers.get("request-id") or "-",
+                            response_excerpt(raw),
+                        )
                         if retriable and first_error_time is None:
                             first_error_time = time.time()
                             logger.warning(
@@ -126,6 +145,13 @@ class FailoverGateway:
                         if isinstance(ev, Error):
                             self._on_attempt_error(idx, retriable=ev.retriable)
                             last_error = ev.message
+                            logger.error(
+                                "llm.stream_error provider=%s model=%s retriable=%s "
+                                "duration_ms=%.0f error=%r",
+                                cfg.provider, cfg.model, ev.retriable,
+                                (time.time() - attempt_t0) * 1000,
+                                response_excerpt(ev.message),
+                            )
                             if ev.retriable and first_error_time is None:
                                 first_error_time = time.time()
                                 logger.warning(
@@ -136,12 +162,23 @@ class FailoverGateway:
                         if isinstance(ev, TextDelta) and not ttft_recorded:
                             METRICS.record_ttft((time.time() - t0) * 1000)
                             ttft_recorded = True
+                        if isinstance(ev, TextDelta):
+                            output_chars += len(ev.text)
+                        elif isinstance(ev, Usage):
+                            prompt_tokens = ev.prompt_tokens
+                            output_tokens = ev.completion_tokens
                         # Record BEFORE yielding Done: NativeCompletion._stream_chunks
                         # stops consuming the gateway once it sees Done (it returns after
                         # emitting its own finish chunk), so post-yield code would never
                         # run and streaming successes/failovers would go unrecorded.
                         if isinstance(ev, Done):
                             self._record_failover_and_success(t0, first_error_time)
+                            logger.info(
+                                "llm.success provider=%s model=%s stream=true duration_ms=%.0f "
+                                "prompt_tokens=%d output_tokens=%d output_chars=%d",
+                                cfg.provider, cfg.model, (time.time() - attempt_t0) * 1000,
+                                prompt_tokens, output_tokens, output_chars,
+                            )
                         yield ev
                         if isinstance(ev, Done):
                             return
@@ -152,6 +189,12 @@ class FailoverGateway:
             except (httpx.TimeoutException, httpx.TransportError) as exc:
                 last_error = str(exc)
                 self._on_attempt_error(idx, retriable=True)
+                logger.warning(
+                    "llm.transport_error provider=%s model=%s error_type=%s "
+                    "duration_ms=%.0f error=%r",
+                    cfg.provider, cfg.model, type(exc).__name__,
+                    (time.time() - attempt_t0) * 1000, response_excerpt(exc),
+                )
                 if first_error_time is None:
                     first_error_time = time.time()
                     logger.warning(
@@ -159,7 +202,10 @@ class FailoverGateway:
                         cfg.provider, cfg.model, "next", last_error,
                     )
                 continue
-        logger.error("all %d profiles exhausted (stream)", len(self._pks))
+        logger.error(
+            "llm.exhausted profiles=%d stream=true duration_ms=%.0f last_error=%r",
+            len(self._pks), (time.time() - t0) * 1000, response_excerpt(last_error),
+        )
         yield Error(message=last_error or "all profiles failed", retriable=False)
 
     @staticmethod
@@ -175,12 +221,17 @@ class FailoverGateway:
     # --- non-streaming ---
     async def collect(self, req: ChatRequest) -> GatewayResult:
         t0 = time.time()
+        message_count, input_chars, input_hash = message_stats(req.messages)
         first_error_time: float | None = None
         last_error: str | None = None
         for idx, pk in self._candidates():
             cfg = self._cfg_with_key(pk)
+            attempt_t0 = time.time()
             logger.info(
-                "llm attempt provider=%s model=%s", cfg.provider, cfg.model
+                "llm.start provider=%s model=%s endpoint=%s attempt=%d/%d stream=false "
+                "messages=%d input_chars=%d input_hash=%s",
+                cfg.provider, cfg.model, safe_endpoint(_chat_endpoint(cfg)), idx + 1,
+                len(self._pks), message_count, input_chars, input_hash,
             )
             url, headers, body = build_chat_request(
                 cfg, messages=req.messages, stream=False,
@@ -189,9 +240,19 @@ class FailoverGateway:
             try:
                 resp = await self._client.post(url, headers=headers, json=body)
                 if resp.status_code >= 400:
-                    last_error = f"HTTP {resp.status_code}"
+                    raw = resp.text
+                    last_error = f"HTTP {resp.status_code}: {response_excerpt(raw)}"
                     retriable = resp.status_code >= 500 or resp.status_code == 429
                     self._on_attempt_error(idx, retriable=retriable)
+                    logger.log(
+                        logging.WARNING if retriable else logging.ERROR,
+                        "llm.error provider=%s model=%s status=%d retriable=%s "
+                        "duration_ms=%.0f upstream_request_id=%s response=%r",
+                        cfg.provider, cfg.model, resp.status_code, retriable,
+                        (time.time() - attempt_t0) * 1000,
+                        resp.headers.get("x-request-id") or resp.headers.get("request-id") or "-",
+                        response_excerpt(raw),
+                    )
                     if retriable and first_error_time is None:
                         first_error_time = time.time()
                         logger.warning(
@@ -199,7 +260,18 @@ class FailoverGateway:
                             cfg.provider, cfg.model, "next", last_error,
                         )
                     continue
-                obj = resp.json()
+                try:
+                    obj = resp.json()
+                except Exception as exc:  # noqa: BLE001
+                    last_error = f"invalid JSON response: {exc}"
+                    logger.error(
+                        "llm.invalid_response provider=%s model=%s status=%d "
+                        "duration_ms=%.0f content_type=%s response=%r",
+                        cfg.provider, cfg.model, resp.status_code,
+                        (time.time() - attempt_t0) * 1000,
+                        resp.headers.get("content-type", "-"), response_excerpt(resp.text),
+                    )
+                    continue
                 content = ""
                 choices = obj.get("choices") or []
                 if choices:
@@ -208,6 +280,13 @@ class FailoverGateway:
                 usage = obj.get("usage") or {}
                 self._on_success(idx)
                 self._record_failover_and_success(t0, first_error_time)
+                logger.info(
+                    "llm.success provider=%s model=%s stream=false duration_ms=%.0f "
+                    "prompt_tokens=%d output_tokens=%d output_chars=%d",
+                    cfg.provider, cfg.model, (time.time() - attempt_t0) * 1000,
+                    int(usage.get("prompt_tokens", 0) or 0),
+                    int(usage.get("completion_tokens", 0) or 0), len(content),
+                )
                 return GatewayResult(
                     content=content,
                     usage=(
@@ -218,6 +297,12 @@ class FailoverGateway:
             except (httpx.TimeoutException, httpx.TransportError) as exc:
                 last_error = str(exc)
                 self._on_attempt_error(idx, retriable=True)
+                logger.warning(
+                    "llm.transport_error provider=%s model=%s error_type=%s "
+                    "duration_ms=%.0f error=%r",
+                    cfg.provider, cfg.model, type(exc).__name__,
+                    (time.time() - attempt_t0) * 1000, response_excerpt(exc),
+                )
                 if first_error_time is None:
                     first_error_time = time.time()
                     logger.warning(
@@ -225,8 +310,19 @@ class FailoverGateway:
                         cfg.provider, cfg.model, "next", last_error,
                     )
                 continue
-        logger.error("all %d profiles exhausted", len(self._pks))
+        logger.error(
+            "llm.exhausted profiles=%d stream=false duration_ms=%.0f last_error=%r",
+            len(self._pks), (time.time() - t0) * 1000, response_excerpt(last_error),
+        )
         return GatewayResult(content="", usage=(0, 0), error=last_error or "all profiles failed")
 
     def _cfg_with_key(self, pk: _ProfileKeys) -> ProviderConfig:
         return replace(pk.cfg, key=pk.next_key())
+
+
+def _chat_endpoint(cfg: ProviderConfig) -> str:
+    """Build only for safe diagnostic display; credentials are never included."""
+    url, _, _ = build_chat_request(
+        cfg, messages=[], stream=False, response_format=None, params={}
+    )
+    return url

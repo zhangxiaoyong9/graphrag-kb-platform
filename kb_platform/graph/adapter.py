@@ -3,6 +3,7 @@
 import hashlib
 from dataclasses import dataclass, field
 from typing import Protocol
+from collections.abc import Awaitable
 
 import pandas as pd
 
@@ -67,7 +68,9 @@ class GraphAdapter(Protocol):
 
     # --- Phase 3b (Task 1) extension: embeddings ---
 
-    def embed_items(self, texts: list[str]) -> list[list[float]]: ...
+    def embed_items(
+        self, texts: list[str]
+    ) -> list[list[float]] | Awaitable[list[list[float]]]: ...
 
 
 def _hash(text: str) -> str:

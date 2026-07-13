@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 from kb_platform.db.engine import create_engine, session_scope
 from kb_platform.db.enums import StepKind
@@ -10,7 +11,8 @@ from kb_platform.graph.adapter import FakeGraphAdapter
 from kb_platform.graph.vector_store import FakeVectorStore
 
 
-def test_embeddings_writes_three_indexes(tmp_path):
+@pytest.mark.asyncio
+async def test_embeddings_writes_three_indexes(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path}/t.db")
     Base.metadata.create_all(engine)
     with session_scope(engine) as s:
@@ -55,7 +57,7 @@ def test_embeddings_writes_three_indexes(tmp_path):
     ).steps[0]
     vs = FakeVectorStore(dim=8)
     vs.connect()
-    generate_text_embeddings(repo, FakeGraphAdapter(), step, vs)
+    await generate_text_embeddings(repo, FakeGraphAdapter(), step, vs)
     # Canonical graphrag embedding names (graphrag.config.embeddings)
     assert len(vs._store["text_unit_text"]) >= 1
     assert len(vs._store["entity_description"]) >= 1
