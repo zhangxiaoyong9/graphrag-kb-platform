@@ -1,5 +1,7 @@
 # KB Platform
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 A production-oriented knowledge base management platform built on Microsoft [GraphRAG](https://github.com/microsoft/graphrag). It combines a REST API, a React dashboard, an observable indexing pipeline, and an optional MCP server for AI agents.
 
 Create and manage knowledge bases, ingest documents, inspect every chunk and pipeline step, retry failed work, track token cost, explore the entity graph, and query with six strategies: **local, global, drift, basic, cypher, and hybrid**.
