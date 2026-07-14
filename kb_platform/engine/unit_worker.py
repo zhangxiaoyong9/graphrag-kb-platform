@@ -5,8 +5,9 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
-from kb_platform.db.enums import UnitStatus
+from kb_platform.db.enums import StepStatus, UnitStatus
 from kb_platform.db.repository import Repository
+from kb_platform.engine.failure_diagnostics import collect_failure_diagnostics
 from kb_platform.engine.strategy import Subject
 from kb_platform.graph.adapter import GraphAdapter
 
@@ -38,7 +39,9 @@ class UnitWorker:
         while (batch := strategy.next_units_batch(self.repo, step)) is not None:
             await self._run_batch(strategy, step, batch)
         status = strategy.finalize(self.repo, self.adapter, step, self.data_root, min_success_ratio)
-        self.repo.set_step_status(step.id, status)
+        diagnostics = collect_failure_diagnostics(self.repo, step.id)
+        error = diagnostics.summary if status != StepStatus.SUCCEEDED else None
+        self.repo.set_step_status(step.id, status, error=error)
 
     async def _run_batch(self, strategy, step, subjects: list[Subject]) -> None:
         units = []
@@ -102,8 +105,9 @@ class UnitWorker:
                     unit.id, strategy.kind, (time.perf_counter() - t0) * 1000,
                 )
             except Exception as e:  # noqa: BLE001
+                error = f"{type(e).__name__}: {e}"
                 logger.exception(
-                    "unit %s [%s] failed; error_type=%s", unit.id, strategy.kind,
-                    type(e).__name__,
+                    "unit %s [%s] failed; error_type=%s error=%r",
+                    unit.id, strategy.kind, type(e).__name__, error,
                 )
-                self.repo.set_unit_failed(unit.id, str(e))
+                self.repo.set_unit_failed(unit.id, error)

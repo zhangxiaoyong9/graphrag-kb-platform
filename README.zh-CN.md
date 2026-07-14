@@ -285,6 +285,11 @@ Embedding 批次默认会对 429、5xx、超时和网络错误最多尝试三次
 `KB_EMBED_MAX_ATTEMPTS` 调整。事件目录、关联模型、逐模块审计、脱敏规则和
 全部环境变量参见 [Logging and observability](docs/logging-observability.md)。
 
+对于 `unit_fanout` 步骤，即使失败单元来自上一次执行、恢复时没有重新抛出
+异常，Worker 也会重新输出最多 10 条 `unit.failure_summary`，包括 unit ID、
+subject 哈希、尝试次数、错误类型和脱敏后的错误原因；step/job 终态日志会同时
+指出失败步骤及聚合原因。
+
 ## 开发与测试
 
 ```bash

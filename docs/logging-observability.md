@@ -59,6 +59,26 @@ transport failures. `KB_EMBED_MAX_ATTEMPTS` controls the per-batch attempt cap
 Input hashes are diagnostic fingerprints, not cache keys. They allow operators
 to tell whether two failures used the same input without recording private text.
 
+## Fan-out failure events
+
+Failed unit diagnostics are persisted and emitted again when a recovered job
+reaches its terminal step. This matters when a resumed step contains old failed
+units: no exception is raised in the new process, but the original reason still
+appears in the current worker log.
+
+| Event | Important fields |
+|---|---|
+| `unit ... failed` | live exception type, bounded error and traceback |
+| `unit.failure_summary` | persisted unit ID, subject type/hash, attempt and redacted error |
+| `step ... done` | terminal status, all unit counts, failure types and first redacted reason |
+| `job ... stopping at step` | failing step ID/name/status and persisted reason |
+| `job ... done` | failing step and reason when the final job status is failed |
+
+At most ten failed-unit samples are logged per step. Additional failures are
+reported as an omitted count and remain available from the job units API. Raw
+subject values are never logged because entity subjects may contain document
+content.
+
 ## Module audit
 
 | Area | Logged boundaries | Intentionally omitted |
@@ -104,6 +124,7 @@ uv run python -m kb_platform.worker kb.db
 ```bash
 rg 'llm_call=emb-|embedding\.' logs/worker.log
 rg 'request=<id>|query=<id>' logs/server.log
+rg 'unit\.failure_summary|status=partially_failed|status=failed' logs/worker.log
 ```
 
 ## Redaction

@@ -169,8 +169,10 @@ class Repository:
         with session_scope(self.engine) as s:
             step = s.get(Step, step_id)
             step.status = status
-            if error is not None:
-                step.error = error
+            # A retry must not retain a stale failure after returning to RUNNING
+            # or SUCCEEDED. Callers that set a failure state pass its current
+            # bounded diagnostic explicitly.
+            step.error = error
 
     def set_job_status(self, job_id: int, status: JobStatus) -> None:
         with session_scope(self.engine) as s:
