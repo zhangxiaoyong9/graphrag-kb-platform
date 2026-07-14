@@ -104,10 +104,26 @@ async def run_worker_once(
             )
             await orch.run(job.id, min_success_ratio=_parse_min_ratio(settings_json))
             final = repo.get_job(job.id).status
-            logger.info(
-                "job %s done in %.0fms; status=%s",
-                job.id, (time.perf_counter() - t0) * 1000, final,
-            )
+            if final == JobStatus.FAILED:
+                failed_steps = [
+                    step for step in repo.get_steps(job.id)
+                    if step.status != "succeeded"
+                ]
+                failed_step = failed_steps[0] if failed_steps else None
+                logger.error(
+                    "job %s done in %.0fms; status=%s failed_step=%s "
+                    "step_name=%s step_status=%s reason=%r",
+                    job.id, (time.perf_counter() - t0) * 1000, final,
+                    getattr(failed_step, "id", "-"),
+                    getattr(failed_step, "name", "-"),
+                    getattr(failed_step, "status", "-"),
+                    getattr(failed_step, "error", None) or "step did not succeed",
+                )
+            else:
+                logger.info(
+                    "job %s done in %.0fms; status=%s",
+                    job.id, (time.perf_counter() - t0) * 1000, final,
+                )
         except Exception:  # noqa: BLE001
             logger.exception("job %s failed; marking FAILED", job.id)
             repo.set_job_status(job.id, JobStatus.FAILED)

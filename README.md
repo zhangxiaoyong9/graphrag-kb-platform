@@ -382,6 +382,12 @@ times by default; configure this with `KB_EMBED_MAX_ATTEMPTS`. See
 [Logging and observability](docs/logging-observability.md) for the event catalog,
 correlation model, module audit, redaction behavior, and all environment variables.
 
+For `unit_fanout` steps, the worker re-emits up to ten persisted
+`unit.failure_summary` events even when a recovered run does not raise those old
+exceptions again. Each event includes the unit ID, subject hash, attempt, error
+type, and redacted reason; terminal step/job logs identify the failing step and
+aggregate reason.
+
 ## Development
 
 ```bash

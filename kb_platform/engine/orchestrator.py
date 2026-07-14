@@ -6,6 +6,7 @@ import time
 from kb_platform.db.enums import JobStatus, StepKind, StepStatus
 from kb_platform.db.models import Chunk
 from kb_platform.db.repository import Repository
+from kb_platform.engine.failure_diagnostics import collect_failure_diagnostics
 from kb_platform.engine.spec import StepSpec
 from kb_platform.graph.adapter import GraphAdapter
 
@@ -109,7 +110,16 @@ class Orchestrator:
                     # inserts) is not re-run on resume.
                     continue
                 await self._run_step(step, min_success_ratio)
-                if self.repo.get_step(step.id).status != StepStatus.SUCCEEDED:
+                current_step = self.repo.get_step(step.id)
+                if current_step.status != StepStatus.SUCCEEDED:
+                    counts = self.repo.unit_counts_by_status(step.id)
+                    logger.error(
+                        "job %s stopping at step %s [%s]; step_status=%s "
+                        "ok=%s failed=%s reason=%r",
+                        job_id, step.id, step.name, current_step.status,
+                        counts.get("succeeded", 0), counts.get("failed", 0),
+                        current_step.error or "step did not succeed",
+                    )
                     self.repo.set_job_status(job_id, JobStatus.FAILED)
                     return
             self.repo.set_job_status(job_id, JobStatus.SUCCEEDED)
@@ -143,7 +153,7 @@ class Orchestrator:
             t0 = time.perf_counter()
             try:
                 await self._dispatch_step(step, min_success_ratio)
-            except Exception:
+            except Exception as exc:
                 # A raised step must not be stranded at RUNNING. unit_fanout steps
                 # normally reach a terminal status via strategy.finalize, but a blowup
                 # before/inside finalize — and *any* atomic step failure (e.g.
@@ -151,7 +161,10 @@ class Orchestrator:
                 # no units to record the error) — would otherwise leave the step row
                 # at RUNNING forever, hiding the failure and blocking retry. Mark it
                 # FAILED so the job-level handler and the retry path see a terminal step.
-                self.repo.set_step_status(step.id, StepStatus.FAILED)
+                from kb_platform.logging_config import redact_text
+
+                error = redact_text(f"{type(exc).__name__}: {exc}", limit=900)
+                self.repo.set_step_status(step.id, StepStatus.FAILED, error=error)
                 logger.exception("step %s [%s] failed", step.id, step.name)
                 raise
             counts = (
@@ -161,9 +174,33 @@ class Orchestrator:
             )
             ok = counts.get("succeeded", 0)
             failed = counts.get("failed", 0)
-            logger.info(
-                "step %s [%s] done in %.0fms; ok=%s failed=%s",
-                step.id, step.name, (time.perf_counter() - t0) * 1000, ok, failed,
+            current_step = self.repo.get_step(step.id)
+            log_method = logger.info
+            if failed:
+                diagnostics = collect_failure_diagnostics(self.repo, step.id)
+                log_method = (
+                    logger.error
+                    if current_step.status != StepStatus.SUCCEEDED
+                    else logger.warning
+                )
+                for sample in diagnostics.samples:
+                    log_method(
+                        "unit.failure_summary unit=%s subject_type=%s subject_hash=%s "
+                        "attempt=%s error_type=%s error=%r",
+                        sample.unit_id, sample.subject_type, sample.subject_hash,
+                        sample.attempt_no, sample.error_type, sample.error,
+                    )
+                if diagnostics.omitted:
+                    log_method(
+                        "unit.failure_summary omitted=%s; inspect failed units via API",
+                        diagnostics.omitted,
+                    )
+            log_method(
+                "step %s [%s] done in %.0fms; status=%s ok=%s failed=%s "
+                "pending=%s running=%s reason=%r",
+                step.id, step.name, (time.perf_counter() - t0) * 1000,
+                current_step.status, ok, failed, counts.get("pending", 0),
+                counts.get("running", 0), current_step.error or "-",
             )
 
     async def _dispatch_step(self, step, min_success_ratio: float) -> None:
