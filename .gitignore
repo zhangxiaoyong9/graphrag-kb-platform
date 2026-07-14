@@ -23,3 +23,18 @@ web/playwright-report/
 
 # Runtime logs (per-process rotated + gzipped by kb_platform.logging_config)
 logs/
+
+# Local OMX runtime state
+.omx/
+
+# Accidental root-level GraphRAG data-plane output
+/communities.parquet
+/entities.parquet
+/relationships.parquet
+/text_units.parquet
+/extractions/
+/summaries/
+
+# Root-level smoke/E2E screenshots (curated records belong under docs/)
+/smoke-*.png
+/ui-*.png
